@@ -1,0 +1,23 @@
+# Environment variables and secrets
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+.pytest_cache/
+.ruff_cache/
+
+# Node.js and Next.js
+node_modules/
+.next/
+out/
+
+# Java and Gradle
+.gradle/
+build/
+target/

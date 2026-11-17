@@ -1,0 +1,39 @@
+{$CADDY_DOMAIN::80} {
+    handle /api/ag-ui* {
+        reverse_proxy supervisor-agent:8000 {
+            flush_interval -1
+        }
+    }
+
+    handle_path /a2a/log-agent* {
+        reverse_proxy log-analyzer-agent:8001 {
+            flush_interval -1
+        }
+    }
+
+    handle_path /a2a/remediation-agent* {
+        reverse_proxy remediation-agent:8002 {
+            flush_interval -1
+        }
+    }
+
+    handle /sse* {
+        reverse_proxy backend:8080 {
+            flush_interval -1
+        }
+    }
+
+    handle /mcp* {
+        reverse_proxy backend:8080 {
+            flush_interval -1
+        }
+    }
+
+    handle /api/* {
+        reverse_proxy backend:8080
+    }
+
+    handle {
+        reverse_proxy frontend:3000
+    }
+}

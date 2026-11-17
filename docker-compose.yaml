@@ -1,0 +1,117 @@
+services:
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: incident-ops-backend
+    restart: unless-stopped
+    environment:
+      SPRING_PROFILES_ACTIVE: ${SPRING_PROFILES_ACTIVE:-docker}
+      SERVER_PORT: 8080
+      SPRING_DATASOURCE_URL: ${SPRING_DATASOURCE_URL}
+      SPRING_DATASOURCE_USERNAME: ${SPRING_DATASOURCE_USERNAME}
+      SPRING_DATASOURCE_PASSWORD: ${SPRING_DATASOURCE_PASSWORD}
+      SPRING_DATA_REDIS_HOST: ${REDIS_HOST:-redis}
+      SPRING_DATA_REDIS_PORT: 6379
+      INTERNAL_SERVICE_TOKEN: ${INTERNAL_SERVICE_TOKEN}
+    ports:
+      - "${BACKEND_PORT:-8080}:8080"
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q --spider http://localhost:8080/actuator/health || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 25s
+    networks:
+      - incident-ops-net
+
+  log-analyzer-agent:
+    build:
+      context: ./agent
+      dockerfile: Dockerfile
+    container_name: incident-ops-log-agent
+    restart: unless-stopped
+    command: ["uvicorn", "log_agent.main:app", "--host", "0.0.0.0", "--port", "8001"]
+    environment:
+      OPENAI_API_KEY: ${OPENAI_API_KEY}
+      OPENAI_MODEL: ${OPENAI_MODEL:-gpt-4o-mini}
+      REDIS_URL: ${REDIS_URL:-redis://redis:6379/0}
+      SPRING_MCP_SSE_URL: ${SPRING_MCP_SSE_URL:-http://backend:8080/sse}
+      DR_DCI_MAX_CHUNK_CHARS: ${DR_DCI_MAX_CHUNK_CHARS:-4000}
+      DR_DCI_MAX_PULL_STEPS: ${DR_DCI_MAX_PULL_STEPS:-5}
+      INTERNAL_SERVICE_TOKEN: ${INTERNAL_SERVICE_TOKEN}
+    ports:
+      - "${LOG_AGENT_PORT:-8001}:8001"
+    depends_on:
+      backend:
+        condition: service_healthy
+    networks:
+      - incident-ops-net
+
+  remediation-agent:
+    build:
+      context: ./agent
+      dockerfile: Dockerfile
+    container_name: incident-ops-remediation-agent
+    restart: unless-stopped
+    command: ["uvicorn", "remediation_agent.main:app", "--host", "0.0.0.0", "--port", "8002"]
+    environment:
+      OPENAI_API_KEY: ${OPENAI_API_KEY}
+      OPENAI_MODEL: ${OPENAI_MODEL:-gpt-4o-mini}
+      REDIS_URL: ${REDIS_URL:-redis://redis:6379/0}
+      SPRING_MCP_SSE_URL: ${SPRING_MCP_SSE_URL:-http://backend:8080/sse}
+      DR_DCI_MAX_CHUNK_CHARS: ${DR_DCI_MAX_CHUNK_CHARS:-4000}
+      DR_DCI_MAX_PULL_STEPS: ${DR_DCI_MAX_PULL_STEPS:-5}
+      INTERNAL_SERVICE_TOKEN: ${INTERNAL_SERVICE_TOKEN}
+    ports:
+      - "${REMEDIATION_AGENT_PORT:-8002}:8002"
+    depends_on:
+      backend:
+        condition: service_healthy
+    networks:
+      - incident-ops-net
+
+  supervisor-agent:
+    build:
+      context: ./agent
+      dockerfile: Dockerfile
+    container_name: incident-ops-supervisor
+    restart: unless-stopped
+    command: ["uvicorn", "supervisor.main:app", "--host", "0.0.0.0", "--port", "8000"]
+    environment:
+      OPENAI_API_KEY: ${OPENAI_API_KEY}
+      OPENAI_MODEL: ${OPENAI_MODEL:-gpt-4o-mini}
+      REDIS_URL: ${REDIS_URL:-redis://redis:6379/0}
+      LOG_AGENT_A2A_URL: ${LOG_AGENT_A2A_URL:-http://log-analyzer-agent:8001}
+      REMEDIATION_AGENT_A2A_URL: ${REMEDIATION_AGENT_A2A_URL:-http://remediation-agent:8002}
+      SPRING_MCP_SSE_URL: ${SPRING_MCP_SSE_URL:-http://backend:8080/sse}
+      INTERNAL_SERVICE_TOKEN: ${INTERNAL_SERVICE_TOKEN}
+    ports:
+      - "${SUPERVISOR_PORT:-8000}:8000"
+    depends_on:
+      - log-analyzer-agent
+      - remediation-agent
+    networks:
+      - incident-ops-net
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+      args:
+        NEXT_PUBLIC_GATEWAY_URL: ${NEXT_PUBLIC_GATEWAY_URL:-http://localhost}
+        NEXT_PUBLIC_AG_UI_PATH: ${NEXT_PUBLIC_AG_UI_PATH:-/api/ag-ui}
+        NEXT_PUBLIC_INCIDENT_API_PATH: ${NEXT_PUBLIC_INCIDENT_API_PATH:-/api/incidents}
+    container_name: incident-ops-frontend
+    restart: unless-stopped
+    ports:
+      - "${FRONTEND_PORT:-3000}:3000"
+    depends_on:
+      - backend
+      - supervisor-agent
+    networks:
+      - incident-ops-net
+
+networks:
+  incident-ops-net:
+    external: true
