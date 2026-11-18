@@ -21,3 +21,12 @@ out/
 .gradle/
 build/
 target/
+
+# STS & Build Output
+.metadata/
+.settings/
+.classpath
+.project
+.factorypath
+.recommenders/
+bin/
