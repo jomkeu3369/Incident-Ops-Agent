@@ -1,0 +1,50 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+        "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.incidentops.backend.mapper.RemediationMapper">
+
+    <select id="findApprovalById" resultType="RemediationApproval">
+        SELECT id, approval_id, incident_code, action_command, proposed_by, approved_by, decision, created_at, decided_at
+        FROM remediation_approvals
+        WHERE approval_id = #{approvalId}
+    </select>
+
+    <select id="findApprovalsByIncidentCode" resultType="RemediationApproval">
+        SELECT id, approval_id, incident_code, action_command, proposed_by, approved_by, decision, created_at, decided_at
+        FROM remediation_approvals
+        WHERE incident_code = #{incidentCode}
+        ORDER BY created_at ASC
+    </select>
+
+    <insert id="insertApproval" parameterType="RemediationApproval" useGeneratedKeys="true" keyProperty="id">
+        INSERT INTO remediation_approvals (approval_id, incident_code, action_command, proposed_by, decision)
+        VALUES (#{approvalId}, #{incidentCode}, #{actionCommand}, #{proposedBy}, #{decision})
+    </insert>
+
+    <update id="updateApprovalDecision">
+        UPDATE remediation_approvals
+        SET approved_by = #{approvedBy},
+            decision = #{decision},
+            decided_at = NOW()
+        WHERE approval_id = #{approvalId}
+    </update>
+
+    <select id="findExecutionByApprovalId" resultType="RemediationExecution">
+        SELECT id, approval_id, incident_code, action_command, executed_by, execution_status, execution_output, executed_at
+        FROM remediation_executions
+        WHERE approval_id = #{approvalId}
+    </select>
+
+    <select id="findExecutionsByIncidentCode" resultType="RemediationExecution">
+        SELECT id, approval_id, incident_code, action_command, executed_by, execution_status, execution_output, executed_at
+        FROM remediation_executions
+        WHERE incident_code = #{incidentCode}
+        ORDER BY executed_at ASC
+    </select>
+
+    <insert id="insertExecution" parameterType="RemediationExecution" useGeneratedKeys="true" keyProperty="id">
+        INSERT INTO remediation_executions (approval_id, incident_code, action_command, executed_by, execution_status, execution_output)
+        VALUES (#{approvalId}, #{incidentCode}, #{actionCommand}, #{executedBy}, #{executionStatus}, #{executionOutput})
+    </insert>
+
+</mapper>

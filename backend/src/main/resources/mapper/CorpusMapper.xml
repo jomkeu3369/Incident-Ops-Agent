@@ -1,0 +1,32 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+        "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.incidentops.backend.mapper.CorpusMapper">
+
+    <select id="searchMetadata" resultType="CorpusChunk">
+        SELECT id, chunk_id, corpus_type, service_name, title, keywords, sequence_order,
+               CHAR_LENGTH(content) AS content_length
+        FROM corpus_chunks
+        <where>
+            <if test="corpusType != null and corpusType != ''">
+                AND corpus_type = #{corpusType}
+            </if>
+            <if test="keyword != null and keyword != ''">
+                AND (
+                    title LIKE CONCAT('%', #{keyword}, '%')
+                    OR keywords LIKE CONCAT('%', #{keyword}, '%')
+                    OR service_name LIKE CONCAT('%', #{keyword}, '%')
+                )
+            </if>
+        </where>
+        ORDER BY sequence_order ASC
+    </select>
+
+    <select id="findByChunkId" resultType="CorpusChunk">
+        SELECT id, chunk_id, corpus_type, service_name, title, keywords, content, sequence_order,
+               CHAR_LENGTH(content) AS content_length
+        FROM corpus_chunks
+        WHERE chunk_id = #{chunkId}
+    </select>
+
+</mapper>

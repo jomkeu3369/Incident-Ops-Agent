@@ -1,0 +1,29 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+        "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.incidentops.backend.mapper.IncidentMapper">
+
+    <select id="findAll" resultType="Incident">
+        SELECT id, incident_code, title, service_name, severity, status, summary, created_at, updated_at
+        FROM incidents
+        ORDER BY created_at DESC
+    </select>
+
+    <select id="findByIncidentCode" resultType="Incident">
+        SELECT id, incident_code, title, service_name, severity, status, summary, created_at, updated_at
+        FROM incidents
+        WHERE incident_code = #{incidentCode}
+    </select>
+
+    <insert id="insert" parameterType="Incident" useGeneratedKeys="true" keyProperty="id">
+        INSERT INTO incidents (incident_code, title, service_name, severity, status, summary)
+        VALUES (#{incidentCode}, #{title}, #{serviceName}, #{severity}, #{status}, #{summary})
+    </insert>
+
+    <update id="updateStatus">
+        UPDATE incidents
+        SET status = #{status}
+        WHERE incident_code = #{incidentCode}
+    </update>
+
+</mapper>

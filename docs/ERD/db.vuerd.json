@@ -5,13 +5,13 @@
     "originX": 0,
     "originY": 0,
     "zoomLevel": 1,
-    "show": 431,
+    "show": 509,
     "database": 4,
     "databaseName": "incident_ops",
     "canvasType": "ERD",
     "language": 1,
-    "tableNameCase": 4,
-    "columnNameCase": 2,
+    "tableNameCase": 8,
+    "columnNameCase": 8,
     "bracketType": 1,
     "relationshipDataTypeSync": true,
     "columnOrder": [
@@ -28,30 +28,632 @@
   },
   "doc": {
     "tableIds": [
-      "03h935gwlbxrinvselvnn80hr"
+      "incidents",
+      "corpus_chunks",
+      "remediation_plans",
+      "remediation_approvals",
+      "remediation_executions",
+      "post_mortems"
+    ],
+    "relationshipIds": [
+      "fk_corpus_chunks__incident_code",
+      "fk_remediation_plans__incident_code",
+      "fk_remediation_approvals__plan_id",
+      "fk_remediation_executions__approval_id",
+      "fk_post_mortems__incident_code"
     ]
   },
   "collections": {
     "tableEntities": {
-      "03h935gwlbxrinvselvnn80hr": {
-        "id": "03h935gwlbxrinvselvnn80hr",
-        "name": "user",
+      "corpus_chunks": {
+        "id": "corpus_chunks",
+        "name": "corpus_chunks",
+        "comment": "DR-DCI 대상 로그 및 런북 코퍼스",
         "columnIds": [
-          "03h935i4n6a0sy92ycwb11vnv"
+          "column_corpus_chunks__id",
+          "column_corpus_chunks__chunk_id",
+          "column_corpus_chunks__corpus_type",
+          "column_corpus_chunks__incident_code",
+          "column_corpus_chunks__service_name",
+          "column_corpus_chunks__title",
+          "column_corpus_chunks__keywords",
+          "column_corpus_chunks__content",
+          "column_corpus_chunks__sequence_order"
         ],
         "ui": {
-          "x": 290,
-          "y": 570
+          "x": -55.319,
+          "y": 51.064
+        }
+      },
+      "incidents": {
+        "id": "incidents",
+        "name": "incidents",
+        "comment": "장애 티켓",
+        "columnIds": [
+          "column_incidents__id",
+          "column_incidents__incident_code",
+          "column_incidents__title",
+          "column_incidents__service_name",
+          "column_incidents__severity",
+          "column_incidents__status",
+          "column_incidents__summary",
+          "column_incidents__created_at",
+          "column_incidents__updated_at"
+        ],
+        "ui": {
+          "x": 480,
+          "y": 50
+        }
+      },
+      "post_mortems": {
+        "id": "post_mortems",
+        "name": "post_mortems",
+        "comment": "사후 장애 분석 리포트",
+        "columnIds": [
+          "column_post_mortems__id",
+          "column_post_mortems__incident_code",
+          "column_post_mortems__root_cause",
+          "column_post_mortems__timeline_markdown",
+          "column_post_mortems__remediation_summary",
+          "column_post_mortems__prevention_items",
+          "column_post_mortems__created_at"
+        ],
+        "ui": {
+          "x": -56.3827,
+          "y": 414.2552
+        }
+      },
+      "remediation_approvals": {
+        "id": "remediation_approvals",
+        "name": "remediation_approvals",
+        "comment": "HITL 승인 원장",
+        "columnIds": [
+          "column_remediation_approvals__id",
+          "column_remediation_approvals__approval_id",
+          "column_remediation_approvals__plan_id",
+          "column_remediation_approvals__step_no",
+          "column_remediation_approvals__action_command",
+          "column_remediation_approvals__proposed_by",
+          "column_remediation_approvals__approved_by",
+          "column_remediation_approvals__decision",
+          "column_remediation_approvals__created_at",
+          "column_remediation_approvals__decided_at"
+        ],
+        "ui": {
+          "x": 1057.5304,
+          "y": 378.7877
+        }
+      },
+      "remediation_executions": {
+        "id": "remediation_executions",
+        "name": "remediation_executions",
+        "comment": "복구 실행 및 멱등성 감사 로그",
+        "columnIds": [
+          "column_remediation_executions__id",
+          "column_remediation_executions__approval_id",
+          "column_remediation_executions__action_command",
+          "column_remediation_executions__executed_by",
+          "column_remediation_executions__execution_status",
+          "column_remediation_executions__execution_output",
+          "column_remediation_executions__verification_summary",
+          "column_remediation_executions__executed_at"
+        ],
+        "ui": {
+          "x": 483.8749,
+          "y": 402.1915
+        }
+      },
+      "remediation_plans": {
+        "id": "remediation_plans",
+        "name": "remediation_plans",
+        "comment": "복구 계획",
+        "columnIds": [
+          "column_remediation_plans__id",
+          "column_remediation_plans__plan_id",
+          "column_remediation_plans__incident_code",
+          "column_remediation_plans__steps",
+          "column_remediation_plans__verification_criteria",
+          "column_remediation_plans__created_by",
+          "column_remediation_plans__created_at"
+        ],
+        "ui": {
+          "x": 1053.6171,
+          "y": 72.34
         }
       }
     },
     "tableColumnEntities": {
-      "03h935i4n6a0sy92ycwb11vnv": {
-        "id": "03h935i4n6a0sy92ycwb11vnv",
-        "tableId": "03h935gwlbxrinvselvnn80hr",
-        "name": "id",
-        "dataType": "BIGINT",
+      "column_corpus_chunks__chunk_id": {
+        "id": "column_corpus_chunks__chunk_id",
+        "tableId": "corpus_chunks",
+        "name": "chunk_id",
+        "comment": "청크 식별자 (예: LOG-101, RUNBOOK-01)",
+        "dataType": "VARCHAR(32)",
+        "options": 12
+      },
+      "column_corpus_chunks__content": {
+        "id": "column_corpus_chunks__content",
+        "tableId": "corpus_chunks",
+        "name": "content",
+        "comment": "실제 로그 또는 매뉴얼 본문",
+        "dataType": "MEDIUMTEXT",
         "options": 8
+      },
+      "column_corpus_chunks__corpus_type": {
+        "id": "column_corpus_chunks__corpus_type",
+        "tableId": "corpus_chunks",
+        "name": "corpus_type",
+        "comment": "LOG 또는 RUNBOOK",
+        "dataType": "VARCHAR(16)",
+        "options": 8
+      },
+      "column_corpus_chunks__id": {
+        "id": "column_corpus_chunks__id",
+        "tableId": "corpus_chunks",
+        "name": "id",
+        "comment": "내부 식별자",
+        "dataType": "BIGINT",
+        "options": 11
+      },
+      "column_corpus_chunks__incident_code": {
+        "id": "column_corpus_chunks__incident_code",
+        "tableId": "corpus_chunks",
+        "name": "incident_code",
+        "comment": "로그는 소속 장애 필수, 런북은 NULL",
+        "dataType": "VARCHAR(32)",
+        "options": 0
+      },
+      "column_corpus_chunks__keywords": {
+        "id": "column_corpus_chunks__keywords",
+        "tableId": "corpus_chunks",
+        "name": "keywords",
+        "comment": "검색용 키워드",
+        "dataType": "VARCHAR(255)",
+        "options": 0
+      },
+      "column_corpus_chunks__sequence_order": {
+        "id": "column_corpus_chunks__sequence_order",
+        "tableId": "corpus_chunks",
+        "name": "sequence_order",
+        "comment": "정렬 순서",
+        "dataType": "INT",
+        "options": 8
+      },
+      "column_corpus_chunks__service_name": {
+        "id": "column_corpus_chunks__service_name",
+        "tableId": "corpus_chunks",
+        "name": "service_name",
+        "comment": "관련 서비스명",
+        "dataType": "VARCHAR(100)",
+        "options": 8
+      },
+      "column_corpus_chunks__title": {
+        "id": "column_corpus_chunks__title",
+        "tableId": "corpus_chunks",
+        "name": "title",
+        "comment": "청크 제목 / 구간 요약",
+        "dataType": "VARCHAR(200)",
+        "options": 8
+      },
+      "column_incidents__created_at": {
+        "id": "column_incidents__created_at",
+        "tableId": "incidents",
+        "name": "created_at",
+        "comment": "생성 일시",
+        "dataType": "DATETIME",
+        "options": 8
+      },
+      "column_incidents__id": {
+        "id": "column_incidents__id",
+        "tableId": "incidents",
+        "name": "id",
+        "comment": "내부 식별자",
+        "dataType": "BIGINT",
+        "options": 11
+      },
+      "column_incidents__incident_code": {
+        "id": "column_incidents__incident_code",
+        "tableId": "incidents",
+        "name": "incident_code",
+        "comment": "비즈니스 식별자 (예: INC-2026-001)",
+        "dataType": "VARCHAR(32)",
+        "options": 12
+      },
+      "column_incidents__service_name": {
+        "id": "column_incidents__service_name",
+        "tableId": "incidents",
+        "name": "service_name",
+        "comment": "대상 서비스명 (예: payment-service)",
+        "dataType": "VARCHAR(100)",
+        "options": 8
+      },
+      "column_incidents__severity": {
+        "id": "column_incidents__severity",
+        "tableId": "incidents",
+        "name": "severity",
+        "comment": "SEV1, SEV2, SEV3",
+        "dataType": "VARCHAR(16)",
+        "options": 8
+      },
+      "column_incidents__status": {
+        "id": "column_incidents__status",
+        "tableId": "incidents",
+        "name": "status",
+        "comment": "OPEN, ANALYZING, WAITING_APPROVAL, RESOLVED",
+        "dataType": "VARCHAR(32)",
+        "options": 8
+      },
+      "column_incidents__summary": {
+        "id": "column_incidents__summary",
+        "tableId": "incidents",
+        "name": "summary",
+        "comment": "장애 요약",
+        "dataType": "TEXT",
+        "options": 0
+      },
+      "column_incidents__title": {
+        "id": "column_incidents__title",
+        "tableId": "incidents",
+        "name": "title",
+        "comment": "장애 제목",
+        "dataType": "VARCHAR(200)",
+        "options": 8
+      },
+      "column_incidents__updated_at": {
+        "id": "column_incidents__updated_at",
+        "tableId": "incidents",
+        "name": "updated_at",
+        "comment": "수정 일시",
+        "dataType": "DATETIME",
+        "options": 8
+      },
+      "column_post_mortems__created_at": {
+        "id": "column_post_mortems__created_at",
+        "tableId": "post_mortems",
+        "name": "created_at",
+        "comment": "생성 일시",
+        "dataType": "DATETIME",
+        "options": 8
+      },
+      "column_post_mortems__id": {
+        "id": "column_post_mortems__id",
+        "tableId": "post_mortems",
+        "name": "id",
+        "comment": "내부 식별자",
+        "dataType": "BIGINT",
+        "options": 11
+      },
+      "column_post_mortems__incident_code": {
+        "id": "column_post_mortems__incident_code",
+        "tableId": "post_mortems",
+        "name": "incident_code",
+        "comment": "장애당 포스트모템은 최대 1건",
+        "dataType": "VARCHAR(32)",
+        "options": 12
+      },
+      "column_post_mortems__prevention_items": {
+        "id": "column_post_mortems__prevention_items",
+        "tableId": "post_mortems",
+        "name": "prevention_items",
+        "comment": "재발 방지 대책",
+        "dataType": "TEXT",
+        "options": 8
+      },
+      "column_post_mortems__remediation_summary": {
+        "id": "column_post_mortems__remediation_summary",
+        "tableId": "post_mortems",
+        "name": "remediation_summary",
+        "comment": "수행된 복구 조치 요약",
+        "dataType": "TEXT",
+        "options": 8
+      },
+      "column_post_mortems__root_cause": {
+        "id": "column_post_mortems__root_cause",
+        "tableId": "post_mortems",
+        "name": "root_cause",
+        "comment": "근본 원인(RCA) 요약",
+        "dataType": "TEXT",
+        "options": 8
+      },
+      "column_post_mortems__timeline_markdown": {
+        "id": "column_post_mortems__timeline_markdown",
+        "tableId": "post_mortems",
+        "name": "timeline_markdown",
+        "comment": "장애 대응 타임라인 (Markdown)",
+        "dataType": "TEXT",
+        "options": 8
+      },
+      "column_remediation_approvals__action_command": {
+        "id": "column_remediation_approvals__action_command",
+        "tableId": "remediation_approvals",
+        "name": "action_command",
+        "comment": "승인 요청 시 복사한 해당 단계의 명령어",
+        "dataType": "TEXT",
+        "options": 8
+      },
+      "column_remediation_approvals__approval_id": {
+        "id": "column_remediation_approvals__approval_id",
+        "tableId": "remediation_approvals",
+        "name": "approval_id",
+        "comment": "승인 요청 식별자 (예: APR-2026-001)",
+        "dataType": "VARCHAR(64)",
+        "options": 12
+      },
+      "column_remediation_approvals__approved_by": {
+        "id": "column_remediation_approvals__approved_by",
+        "tableId": "remediation_approvals",
+        "name": "approved_by",
+        "comment": "승인/거절 처리자",
+        "dataType": "VARCHAR(100)",
+        "options": 0
+      },
+      "column_remediation_approvals__created_at": {
+        "id": "column_remediation_approvals__created_at",
+        "tableId": "remediation_approvals",
+        "name": "created_at",
+        "comment": "요청 일시",
+        "dataType": "DATETIME",
+        "options": 8
+      },
+      "column_remediation_approvals__decided_at": {
+        "id": "column_remediation_approvals__decided_at",
+        "tableId": "remediation_approvals",
+        "name": "decided_at",
+        "comment": "승인/거절 결정 일시",
+        "dataType": "DATETIME",
+        "options": 0
+      },
+      "column_remediation_approvals__decision": {
+        "id": "column_remediation_approvals__decision",
+        "tableId": "remediation_approvals",
+        "name": "decision",
+        "comment": "PENDING, APPROVED, REJECTED",
+        "dataType": "VARCHAR(16)",
+        "options": 8
+      },
+      "column_remediation_approvals__id": {
+        "id": "column_remediation_approvals__id",
+        "tableId": "remediation_approvals",
+        "name": "id",
+        "comment": "내부 식별자",
+        "dataType": "BIGINT",
+        "options": 11
+      },
+      "column_remediation_approvals__plan_id": {
+        "id": "column_remediation_approvals__plan_id",
+        "tableId": "remediation_approvals",
+        "name": "plan_id",
+        "comment": "운영자가 검토할 계획",
+        "dataType": "VARCHAR(64)",
+        "options": 8
+      },
+      "column_remediation_approvals__proposed_by": {
+        "id": "column_remediation_approvals__proposed_by",
+        "tableId": "remediation_approvals",
+        "name": "proposed_by",
+        "comment": "제안 주체 (예: supervisor-agent)",
+        "dataType": "VARCHAR(100)",
+        "options": 8
+      },
+      "column_remediation_approvals__step_no": {
+        "id": "column_remediation_approvals__step_no",
+        "tableId": "remediation_approvals",
+        "name": "step_no",
+        "comment": "계획의 승인 대상 단계 번호",
+        "dataType": "INT",
+        "options": 8
+      },
+      "column_remediation_executions__action_command": {
+        "id": "column_remediation_executions__action_command",
+        "tableId": "remediation_executions",
+        "name": "action_command",
+        "comment": "실제 실행된 명령어",
+        "dataType": "TEXT",
+        "options": 8
+      },
+      "column_remediation_executions__approval_id": {
+        "id": "column_remediation_executions__approval_id",
+        "tableId": "remediation_executions",
+        "name": "approval_id",
+        "comment": "승인당 실행 결과는 최대 1건",
+        "dataType": "VARCHAR(64)",
+        "options": 12
+      },
+      "column_remediation_executions__executed_at": {
+        "id": "column_remediation_executions__executed_at",
+        "tableId": "remediation_executions",
+        "name": "executed_at",
+        "comment": "실행 일시",
+        "dataType": "DATETIME",
+        "options": 8
+      },
+      "column_remediation_executions__executed_by": {
+        "id": "column_remediation_executions__executed_by",
+        "tableId": "remediation_executions",
+        "name": "executed_by",
+        "comment": "실행 주체",
+        "dataType": "VARCHAR(100)",
+        "options": 8
+      },
+      "column_remediation_executions__execution_output": {
+        "id": "column_remediation_executions__execution_output",
+        "tableId": "remediation_executions",
+        "name": "execution_output",
+        "comment": "실행 결과 로그",
+        "dataType": "TEXT",
+        "options": 0
+      },
+      "column_remediation_executions__execution_status": {
+        "id": "column_remediation_executions__execution_status",
+        "tableId": "remediation_executions",
+        "name": "execution_status",
+        "comment": "SUCCESS 또는 FAILED",
+        "dataType": "VARCHAR(16)",
+        "options": 8
+      },
+      "column_remediation_executions__id": {
+        "id": "column_remediation_executions__id",
+        "tableId": "remediation_executions",
+        "name": "id",
+        "comment": "내부 식별자",
+        "dataType": "BIGINT",
+        "options": 11
+      },
+      "column_remediation_executions__verification_summary": {
+        "id": "column_remediation_executions__verification_summary",
+        "tableId": "remediation_executions",
+        "name": "verification_summary",
+        "comment": "계획의 복구 확인 기준을 검사한 결과. 성공 시 필수",
+        "dataType": "TEXT",
+        "options": 0
+      },
+      "column_remediation_plans__created_at": {
+        "id": "column_remediation_plans__created_at",
+        "tableId": "remediation_plans",
+        "name": "created_at",
+        "comment": "계획 생성 일시",
+        "dataType": "DATETIME",
+        "options": 8
+      },
+      "column_remediation_plans__created_by": {
+        "id": "column_remediation_plans__created_by",
+        "tableId": "remediation_plans",
+        "name": "created_by",
+        "comment": "계획 제안 주체",
+        "dataType": "VARCHAR(100)",
+        "options": 8
+      },
+      "column_remediation_plans__id": {
+        "id": "column_remediation_plans__id",
+        "tableId": "remediation_plans",
+        "name": "id",
+        "comment": "내부 식별자",
+        "dataType": "BIGINT",
+        "options": 11
+      },
+      "column_remediation_plans__incident_code": {
+        "id": "column_remediation_plans__incident_code",
+        "tableId": "remediation_plans",
+        "name": "incident_code",
+        "comment": "대상 장애 코드",
+        "dataType": "VARCHAR(32)",
+        "options": 8
+      },
+      "column_remediation_plans__plan_id": {
+        "id": "column_remediation_plans__plan_id",
+        "tableId": "remediation_plans",
+        "name": "plan_id",
+        "comment": "운영자가 검토하는 계획의 식별자",
+        "dataType": "VARCHAR(64)",
+        "options": 12
+      },
+      "column_remediation_plans__steps": {
+        "id": "column_remediation_plans__steps",
+        "tableId": "remediation_plans",
+        "name": "steps",
+        "comment": "단계 순서, 진행 조건, 조치, 근거 청크 ID",
+        "dataType": "JSON",
+        "options": 8
+      },
+      "column_remediation_plans__verification_criteria": {
+        "id": "column_remediation_plans__verification_criteria",
+        "tableId": "remediation_plans",
+        "name": "verification_criteria",
+        "comment": "복구 여부를 판단할 기준",
+        "dataType": "TEXT",
+        "options": 8
+      }
+    },
+    "relationshipEntities": {
+      "fk_corpus_chunks__incident_code": {
+        "id": "fk_corpus_chunks__incident_code",
+        "relationshipType": 4,
+        "onDelete": 32,
+        "onUpdate": 32,
+        "start": {
+          "tableId": "incidents",
+          "columnIds": [
+            "column_incidents__incident_code"
+          ]
+        },
+        "end": {
+          "tableId": "corpus_chunks",
+          "columnIds": [
+            "column_corpus_chunks__incident_code"
+          ]
+        }
+      },
+      "fk_post_mortems__incident_code": {
+        "id": "fk_post_mortems__incident_code",
+        "relationshipType": 2,
+        "onDelete": 32,
+        "onUpdate": 32,
+        "start": {
+          "tableId": "incidents",
+          "columnIds": [
+            "column_incidents__incident_code"
+          ]
+        },
+        "end": {
+          "tableId": "post_mortems",
+          "columnIds": [
+            "column_post_mortems__incident_code"
+          ]
+        }
+      },
+      "fk_remediation_approvals__plan_id": {
+        "id": "fk_remediation_approvals__plan_id",
+        "relationshipType": 4,
+        "onDelete": 32,
+        "onUpdate": 32,
+        "start": {
+          "tableId": "remediation_plans",
+          "columnIds": [
+            "column_remediation_plans__plan_id"
+          ]
+        },
+        "end": {
+          "tableId": "remediation_approvals",
+          "columnIds": [
+            "column_remediation_approvals__plan_id"
+          ]
+        }
+      },
+      "fk_remediation_executions__approval_id": {
+        "id": "fk_remediation_executions__approval_id",
+        "relationshipType": 2,
+        "onDelete": 32,
+        "onUpdate": 32,
+        "start": {
+          "tableId": "remediation_approvals",
+          "columnIds": [
+            "column_remediation_approvals__approval_id"
+          ]
+        },
+        "end": {
+          "tableId": "remediation_executions",
+          "columnIds": [
+            "column_remediation_executions__approval_id"
+          ]
+        }
+      },
+      "fk_remediation_plans__incident_code": {
+        "id": "fk_remediation_plans__incident_code",
+        "relationshipType": 4,
+        "onDelete": 32,
+        "onUpdate": 32,
+        "start": {
+          "tableId": "incidents",
+          "columnIds": [
+            "column_incidents__incident_code"
+          ]
+        },
+        "end": {
+          "tableId": "remediation_plans",
+          "columnIds": [
+            "column_remediation_plans__incident_code"
+          ]
+        }
       }
     }
   }

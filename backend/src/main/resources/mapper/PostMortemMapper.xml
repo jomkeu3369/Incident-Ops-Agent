@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+        "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.incidentops.backend.mapper.PostMortemMapper">
+
+    <select id="findByIncidentCode" resultType="PostMortem">
+        SELECT id, incident_code, approval_id, root_cause, timeline_markdown, remediation_summary, prevention_items, created_at
+        FROM post_mortems
+        WHERE incident_code = #{incidentCode}
+    </select>
+
+    <insert id="insert" parameterType="PostMortem" useGeneratedKeys="true" keyProperty="id">
+        INSERT INTO post_mortems (incident_code, approval_id, root_cause, timeline_markdown, remediation_summary, prevention_items)
+        VALUES (#{incidentCode}, #{approvalId}, #{rootCause}, #{timelineMarkdown}, #{remediationSummary}, #{preventionItems})
+    </insert>
+
+</mapper>
