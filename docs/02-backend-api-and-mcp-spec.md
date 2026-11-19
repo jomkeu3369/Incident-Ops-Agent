@@ -130,7 +130,40 @@
 
 | 도구명 | 입력 파라미터 | 반환값 및 동작 |
 | :--- | :--- | :--- |
-| `searchCorpusIndex` | `incidentCode`, `corpusType` (`LOG` \| `RUNBOOK`), `keyword` | `CorpusMapper.searchMetadata` 호출. 해당 장애의 로그 또는 해당 서비스의 런북 메타데이터 반환 |
+| `searchCorpusIndex` | `incidentCode`, `corpusType` (`LOG` \| `RUNBOOK`), `keyword` (선택) | `CorpusMapper.searchMetadata` 호출. 해당 장애의 로그 또는 해당 서비스의 런북 메타데이터 반환. 검색어는 제목·키워드·서비스명에 적용 |
 | `pullCorpusChunk` | `incidentCode`, `chunkId` | `CorpusMapper.findByChunkId` 호출. 범위에 포함된 청크의 메타데이터와 `content` 원문 반환 |
 | `getIncidentDetail` | `incidentCode` | `IncidentService.getIncidentDetail` 호출. 장애 상세 정보 반환 |
 | `completeIncidentWithPostMortem` | `approvalId`, `incidentCode`, `actionCommand`, `executedBy`, `executionStatus`, `executionOutput`, `verificationSummary`, `rootCause`, `timelineMarkdown`, `preventionItems` | `IncidentService.completeIncidentWithPostMortem` 호출. 승인과 성공 요청의 복구 확인 결과를 검사하고 장애 상태와 포스트모템을 반영 |
+
+`searchCorpusIndex` 응답에는 청크 ID와 본문 길이가 포함된다. 원문은 `pullCorpusChunk`에서 조회한다. 같은 서비스에서 발생한 두 장애는 런북을 공유하고, 각 장애의 로그는 연결된 장애에서만 조회한다.
+
+새 `SUCCESS` 결과를 기록할 때는 `verificationSummary`, `rootCause`, `timelineMarkdown`, `preventionItems`가 필요하다. 도구 결과는 MCP `content`의 `text`에 JSON으로 전달된다. 입력 검증이나 상태 검사에서 실패하면 `isError: true`가 반환된다.
+
+### SSE로 연결하기
+
+로컬에서는 `http://localhost:8080/sse`, Compose 내부에서는 `http://backend:8080/sse`에 연결한다. 서버는 SSE 연결에서 `/mcp/message`의 세션 URL을 알린다. 연결 요청과 메시지 전송에 모두 `X-Internal-Token` 헤더를 넣는다.
+
+Python MCP SDK의 `sse_client`에 헤더를 넘기면 두 요청에 적용된다. 실행 환경에는 백엔드와 동일한 `INTERNAL_SERVICE_TOKEN`을 설정한다.
+
+```python
+import asyncio
+import os
+
+from mcp import ClientSession
+from mcp.client.sse import sse_client
+
+
+async def main() -> None:
+    headers = {"X-Internal-Token": os.environ["INTERNAL_SERVICE_TOKEN"]}
+    async with (
+        sse_client("http://localhost:8080/sse", headers=headers) as (read, write),
+        ClientSession(read, write) as session,
+    ):
+        await session.initialize()
+        tools = await session.list_tools()
+        print([tool.name for tool in tools.tools])
+
+
+if __name__ == "__main__":
+    asyncio.run(main())
+```

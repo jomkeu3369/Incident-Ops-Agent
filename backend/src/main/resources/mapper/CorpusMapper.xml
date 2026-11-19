@@ -3,38 +3,40 @@
         "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
 <mapper namespace="com.incidentops.backend.mapper.CorpusMapper">
 
+    <sql id="incidentScope">
+        service_name = #{serviceName}
+        AND ((corpus_type = 'LOG' AND incident_code = #{incidentCode})
+          OR (corpus_type = 'RUNBOOK' AND incident_code IS NULL))
+    </sql>
+
     <select id="searchMetadata" resultType="CorpusChunk">
         SELECT id, chunk_id, corpus_type, service_name, title, keywords, sequence_order,
                CHAR_LENGTH(content) AS content_length
         FROM corpus_chunks
-        <where>
-            <if test="corpusType != null and corpusType != ''">
-                AND corpus_type = #{corpusType}
-            </if>
-            <if test="keyword != null and keyword != ''">
-                AND (
-                    title LIKE CONCAT('%', #{keyword}, '%')
-                    OR keywords LIKE CONCAT('%', #{keyword}, '%')
-                    OR service_name LIKE CONCAT('%', #{keyword}, '%')
-                )
-            </if>
-        </where>
-        ORDER BY sequence_order ASC
+        WHERE <include refid="incidentScope"/>
+          AND corpus_type = #{corpusType}
+        <if test="keyword != null and keyword != ''">
+          AND (
+              INSTR(title, #{keyword}) > 0
+              OR INSTR(keywords, #{keyword}) > 0
+              OR INSTR(service_name, #{keyword}) > 0
+          )
+        </if>
+        ORDER BY sequence_order, chunk_id
     </select>
 
     <select id="findByChunkId" resultType="CorpusChunk">
         SELECT id, chunk_id, corpus_type, service_name, title, keywords, content, sequence_order,
                CHAR_LENGTH(content) AS content_length
         FROM corpus_chunks
-        WHERE chunk_id = #{chunkId}
+        WHERE <include refid="incidentScope"/>
+          AND chunk_id = #{chunkId}
     </select>
 
     <select id="findScopedChunkIds" resultType="string">
         SELECT chunk_id
         FROM corpus_chunks
-        WHERE service_name = #{serviceName}
-          AND ((corpus_type = 'LOG' AND incident_code = #{incidentCode})
-            OR (corpus_type = 'RUNBOOK' AND incident_code IS NULL))
+        WHERE <include refid="incidentScope"/>
           AND chunk_id IN
         <foreach collection="chunkIds" item="chunkId" open="(" separator="," close=")">
             #{chunkId}

@@ -44,8 +44,13 @@ public class IncidentService {
     }
 
     @Transactional(readOnly = true)
+    public Incident getIncident(String incidentCode) {
+        return requireIncident(incidentCode, incidentMapper.findByIncidentCode(incidentCode));
+    }
+
+    @Transactional(readOnly = true)
     public IncidentDetailResponse getIncidentDetail(String incidentCode) {
-        Incident incident = getIncidentOrThrow(incidentCode);
+        Incident incident = getIncident(incidentCode);
         List<RemediationPlan> plans = remediationMapper.findPlansByIncidentCode(incidentCode);
         List<RemediationApproval> approvals = remediationMapper.findApprovalsByIncidentCode(incidentCode);
         List<RemediationExecution> executions = remediationMapper.findExecutionsByIncidentCode(incidentCode);
@@ -240,7 +245,7 @@ public class IncidentService {
 
     @Transactional(readOnly = true)
     public PostMortem getPostMortem(String incidentCode) {
-        getIncidentOrThrow(incidentCode);
+        getIncident(incidentCode);
         PostMortem postMortem = postMortemMapper.findByIncidentCode(incidentCode);
         if (postMortem == null) {
             throw new ResourceNotFoundException("포스트모템이 아직 생성되지 않았습니다: " + incidentCode);
@@ -310,10 +315,6 @@ public class IncidentService {
         if ("RESOLVED".equals(incident.getStatus())) {
             throw new ConflictException("이미 종료된 장애입니다.");
         }
-    }
-
-    private Incident getIncidentOrThrow(String incidentCode) {
-        return requireIncident(incidentCode, incidentMapper.findByIncidentCode(incidentCode));
     }
 
     private Incident requireIncident(String incidentCode, Incident incident) {
