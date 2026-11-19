@@ -29,4 +29,16 @@
         WHERE chunk_id = #{chunkId}
     </select>
 
+    <select id="findScopedChunkIds" resultType="string">
+        SELECT chunk_id
+        FROM corpus_chunks
+        WHERE service_name = #{serviceName}
+          AND ((corpus_type = 'LOG' AND incident_code = #{incidentCode})
+            OR (corpus_type = 'RUNBOOK' AND incident_code IS NULL))
+          AND chunk_id IN
+        <foreach collection="chunkIds" item="chunkId" open="(" separator="," close=")">
+            #{chunkId}
+        </foreach>
+    </select>
+
 </mapper>

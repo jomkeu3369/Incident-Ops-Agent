@@ -38,6 +38,22 @@
 ### 2.4 복구 계획 등록
 * **Endpoint:** `POST /api/incidents/{incidentCode}/plans`
 * **Request Body:** `planId`, `createdBy`, `steps`, `verificationCriteria`
+  ```json
+  {
+    "planId": "PLAN-2026-002",
+    "createdBy": "supervisor-agent",
+    "steps": [
+      {
+        "stepNo": 1,
+        "description": "결제 서비스 배포를 직전 버전으로 되돌린다.",
+        "condition": "배포 후 커넥션 누수를 확인했고 담당자가 승인했다.",
+        "actionCommand": "kubectl rollout undo deployment/payment-service",
+        "evidenceChunkIds": ["LOG-104", "RUNBOOK-01"]
+      }
+    ],
+    "verificationCriteria": "결제 오류율과 DB 커넥션 대기 시간이 정상 범위로 돌아온다."
+  }
+  ```
 * **동작:** 장애에 계획을 연결하고 단계 번호, 승인 대상 조치 수, 근거의 조회 범위를 검증한다. 상세 형식은 [복구 계획 스키마](01-architecture-and-db.md#23-remediation_plans-복구-계획)를 따른다.
 * **Response:** `201 Created` — 저장된 계획
 
@@ -99,7 +115,8 @@
    * 승인에 연결된 계획의 `incident_code`와 요청의 `incidentCode`가 일치해야 한다.
    * 승인 레코드의 `action_command` 와 요청된 `actionCommand` 가 일치해야 한다.
 2. **멱등성과 상태 검증:**
-   * 해당 `approvalId`의 실행 결과가 있으면 그대로 반환하고, 새 결과를 처리할 때 장애가 이미 `RESOLVED`이면 `409 Conflict`를 반환한다.
+   * 승인 소속과 명령어를 검증한 뒤, 같은 `approvalId`와 실행 상태로 재요청하면 저장된 결과를 반환한다. 이미 기록된 실행 상태와 다른 값이거나, 종료된 장애에 새 결과를 보내면 `409 Conflict`를 반환한다.
+   * 계획 도입 전 승인에 실행 결과가 남아 있으면 같은 소속·명령·상태 조건으로 재조회할 수 있다. 새 실행 결과를 저장하려면 계획에 연결된 새 승인이 필요하다.
 3. **실행 결과 분기 및 단일 `@Transactional` 원자성:**
    * `executionStatus == FAILED`인 경우: 실패 로그만 기록한다. 실제 재시도에는 새 승인이 필요하다.
    * `executionStatus == SUCCESS`인 경우: 호출자가 계획의 복구 확인 기준 충족 여부를 확인하고 `verificationSummary`에 결과를 전달해야 한다. 아래 3개 작업을 **하나의 `@Transactional`** 안에서 실행하며, 중간 실패 시 전체 롤백된다.

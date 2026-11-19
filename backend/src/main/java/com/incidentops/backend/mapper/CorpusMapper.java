@@ -2,6 +2,7 @@ package com.incidentops.backend.mapper;
 
 import com.incidentops.backend.domain.CorpusChunk;
 import java.util.List;
+import java.util.Set;
 import org.apache.ibatis.annotations.Mapper;
 import org.apache.ibatis.annotations.Param;
 
@@ -9,4 +10,9 @@ import org.apache.ibatis.annotations.Param;
 public interface CorpusMapper {
     List<CorpusChunk> searchMetadata(@Param("corpusType") String corpusType, @Param("keyword") String keyword);
     CorpusChunk findByChunkId(@Param("chunkId") String chunkId);
+    List<String> findScopedChunkIds(
+            @Param("incidentCode") String incidentCode,
+            @Param("serviceName") String serviceName,
+            @Param("chunkIds") Set<String> chunkIds
+    );
 }

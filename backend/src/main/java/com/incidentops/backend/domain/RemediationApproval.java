@@ -14,6 +14,8 @@ public class RemediationApproval {
     private Long id;
     private String approvalId;
     private String incidentCode;
+    private String planId;
+    private Integer stepNo;
     private String actionCommand;
     private String proposedBy;
     private String approvedBy;

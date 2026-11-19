@@ -13,18 +13,21 @@ import org.springframework.web.filter.OncePerRequestFilter;
 @Component
 public class InternalTokenFilter extends OncePerRequestFilter {
 
-    private static final String HEADER_NAME = "X-Internal-Token";
-    private static final String LOCAL_DEV_DEFAULT = "local-dev-token";
+    static final String HEADER_NAME = "X-Internal-Token";
 
-    @Value("${app.internal-service-token:local-dev-token}")
-    private String expectedToken;
+    private final String expectedToken;
+
+    public InternalTokenFilter(@Value("${app.internal-service-token:}") String expectedToken) {
+        this.expectedToken = expectedToken;
+    }
 
     @Override
     protected boolean shouldNotFilter(HttpServletRequest request) {
-        String path = request.getRequestURI();
-        return path.startsWith("/actuator/health")
-                || path.startsWith("/swagger-ui")
-                || path.startsWith("/v3/api-docs");
+        String path = request.getServletPath();
+        return path.equals("/actuator/health") || path.startsWith("/actuator/health/")
+                || path.equals("/swagger-ui.html") || path.startsWith("/swagger-ui/")
+                || path.equals("/v3/api-docs") || path.startsWith("/v3/api-docs/")
+                || path.equals("/v3/api-docs.yaml");
     }
 
     @Override
@@ -35,12 +38,7 @@ public class InternalTokenFilter extends OncePerRequestFilter {
 
         String providedToken = request.getHeader(HEADER_NAME);
 
-        if (LOCAL_DEV_DEFAULT.equals(expectedToken) && (providedToken == null || providedToken.isBlank())) {
-            filterChain.doFilter(request, response);
-            return;
-        }
-
-        if (providedToken == null || !expectedToken.equals(providedToken)) {
+        if (expectedToken.isBlank() || !expectedToken.equals(providedToken)) {
             response.setStatus(HttpServletResponse.SC_UNAUTHORIZED);
             response.setContentType(MediaType.APPLICATION_JSON_VALUE);
             response.setCharacterEncoding("UTF-8");
