@@ -1,0 +1,219 @@
+{
+  "sessionId": "sample-normal-001",
+  "events": [
+    {
+      "sessionId": "sample-normal-001",
+      "eventType": "step_started",
+      "timestamp": "2026-11-19T05:34:21.874067+00:00",
+      "payload": {
+        "step": "analyze"
+      }
+    },
+    {
+      "sessionId": "sample-normal-001",
+      "eventType": "llm_decision",
+      "timestamp": "2026-11-19T05:34:21.874067+00:00",
+      "payload": {
+        "step": "analyze",
+        "intent": "plan_remediation",
+        "reason": "장애 근거 조사 및 복구 계획 수립·검증이 필요한 요청입니다."
+      }
+    },
+    {
+      "sessionId": "sample-normal-001",
+      "eventType": "step_finished",
+      "timestamp": "2026-11-19T05:34:21.874067+00:00",
+      "payload": {
+        "step": "analyze",
+        "intent": "plan_remediation"
+      }
+    },
+    {
+      "sessionId": "sample-normal-001",
+      "eventType": "step_started",
+      "timestamp": "2026-11-19T05:34:21.877576+00:00",
+      "payload": {
+        "step": "plan",
+        "replanCount": 0
+      }
+    },
+    {
+      "sessionId": "sample-normal-001",
+      "eventType": "step_finished",
+      "timestamp": "2026-11-19T05:34:21.877576+00:00",
+      "payload": {
+        "step": "plan",
+        "steps": [
+          "a2a:log-analyzer-agent",
+          "a2a:remediation-agent"
+        ]
+      }
+    },
+    {
+      "sessionId": "sample-normal-001",
+      "eventType": "step_started",
+      "timestamp": "2026-11-19T05:34:21.877576+00:00",
+      "payload": {
+        "step": "execute",
+        "replanCount": 0
+      }
+    },
+    {
+      "sessionId": "sample-normal-001",
+      "eventType": "tool_call",
+      "timestamp": "2026-11-19T05:34:21.888688+00:00",
+      "payload": {
+        "tool": "a2a:log-analyzer-agent",
+        "args": {
+          "incidentCode": "INC-2026-001",
+          "excludeCount": 0
+        },
+        "ok": true,
+        "elapsedMs": 7.3
+      }
+    },
+    {
+      "sessionId": "sample-normal-001",
+      "eventType": "tool_call",
+      "timestamp": "2026-11-19T05:34:21.898242+00:00",
+      "payload": {
+        "tool": "list_rollback_candidates",
+        "args": {
+          "serviceName": "payment-service",
+          "incidentStartedAt": "2026-11-18T14:04:00+09:00"
+        },
+        "ok": true,
+        "errorCode": null,
+        "elapsedMs": 1.1
+      }
+    },
+    {
+      "sessionId": "sample-normal-001",
+      "eventType": "tool_call",
+      "timestamp": "2026-11-19T05:34:21.898242+00:00",
+      "payload": {
+        "tool": "get_release_metrics",
+        "args": {
+          "serviceName": "payment-service",
+          "gitSha": "sha-v42",
+          "from": "2026-11-18T14:05:00+09:00",
+          "to": "2026-11-18T14:10:00+09:00"
+        },
+        "ok": true,
+        "errorCode": null,
+        "elapsedMs": 0.8
+      }
+    },
+    {
+      "sessionId": "sample-normal-001",
+      "eventType": "tool_call",
+      "timestamp": "2026-11-19T05:34:21.898242+00:00",
+      "payload": {
+        "tool": "get_release_metrics",
+        "args": {
+          "serviceName": "payment-service",
+          "gitSha": "sha-v41",
+          "from": "2026-11-18T14:05:00+09:00",
+          "to": "2026-11-18T14:10:00+09:00"
+        },
+        "ok": true,
+        "errorCode": null,
+        "elapsedMs": 0.7
+      }
+    },
+    {
+      "sessionId": "sample-normal-001",
+      "eventType": "tool_call",
+      "timestamp": "2026-11-19T05:34:21.898242+00:00",
+      "payload": {
+        "tool": "get_change_freeze_windows",
+        "args": {
+          "serviceName": "payment-service",
+          "windowStart": "2026-11-18T14:28:00+09:00",
+          "windowEnd": "2026-11-18T14:50:00+09:00"
+        },
+        "ok": true,
+        "errorCode": null,
+        "elapsedMs": 0.2
+      }
+    },
+    {
+      "sessionId": "sample-normal-001",
+      "eventType": "tool_call",
+      "timestamp": "2026-11-19T05:34:21.898242+00:00",
+      "payload": {
+        "tool": "a2a:remediation-agent",
+        "args": {
+          "incidentCode": "INC-2026-001"
+        },
+        "ok": true,
+        "status": "READY_FOR_APPROVAL",
+        "verdict": "SUPPORTED",
+        "elapsedMs": 10.2
+      }
+    },
+    {
+      "sessionId": "sample-normal-001",
+      "eventType": "step_finished",
+      "timestamp": "2026-11-19T05:34:21.898242+00:00",
+      "payload": {
+        "step": "execute"
+      }
+    },
+    {
+      "sessionId": "sample-normal-001",
+      "eventType": "step_started",
+      "timestamp": "2026-11-19T05:34:21.898242+00:00",
+      "payload": {
+        "step": "evaluate"
+      }
+    },
+    {
+      "sessionId": "sample-normal-001",
+      "eventType": "step_finished",
+      "timestamp": "2026-11-19T05:34:21.898242+00:00",
+      "payload": {
+        "step": "evaluate",
+        "workflowStatus": "AWAITING_APPROVAL"
+      }
+    },
+    {
+      "sessionId": "sample-normal-001",
+      "eventType": "step_started",
+      "timestamp": "2026-11-19T05:34:21.902787+00:00",
+      "payload": {
+        "step": "respond"
+      }
+    },
+    {
+      "sessionId": "sample-normal-001",
+      "eventType": "step_finished",
+      "timestamp": "2026-11-19T05:34:21.902787+00:00",
+      "payload": {
+        "step": "respond",
+        "workflowStatus": "AWAITING_APPROVAL"
+      }
+    },
+    {
+      "sessionId": "sample-normal-001",
+      "eventType": "approval_decided",
+      "timestamp": "2026-11-19T05:34:21.947116+00:00",
+      "payload": {
+        "incidentCode": "INC-2026-001",
+        "approvalId": "APR-INC-2026-001-C2B25E",
+        "decision": "APPROVED",
+        "approvedBy": "oncall-operator"
+      }
+    },
+    {
+      "sessionId": "sample-normal-001",
+      "eventType": "execution_completed",
+      "timestamp": "2026-11-19T05:34:21.955417+00:00",
+      "payload": {
+        "incidentCode": "INC-2026-001",
+        "approvalId": "APR-INC-2026-001-C2B25E",
+        "finalStatus": "RESOLVED"
+      }
+    }
+  ]
+}

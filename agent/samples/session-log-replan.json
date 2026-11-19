@@ -1,0 +1,214 @@
+{
+  "sessionId": "sample-replan-001",
+  "events": [
+    {
+      "sessionId": "sample-replan-001",
+      "eventType": "step_started",
+      "timestamp": "2026-11-19T05:34:23.504245+00:00",
+      "payload": {
+        "step": "analyze"
+      }
+    },
+    {
+      "sessionId": "sample-replan-001",
+      "eventType": "llm_decision",
+      "timestamp": "2026-11-19T05:34:23.505001+00:00",
+      "payload": {
+        "step": "analyze",
+        "intent": "plan_remediation",
+        "reason": "장애 근거 조사 및 복구 계획 수립·검증이 필요한 요청입니다."
+      }
+    },
+    {
+      "sessionId": "sample-replan-001",
+      "eventType": "step_finished",
+      "timestamp": "2026-11-19T05:34:23.505001+00:00",
+      "payload": {
+        "step": "analyze",
+        "intent": "plan_remediation"
+      }
+    },
+    {
+      "sessionId": "sample-replan-001",
+      "eventType": "step_started",
+      "timestamp": "2026-11-19T05:34:23.505513+00:00",
+      "payload": {
+        "step": "plan",
+        "replanCount": 0
+      }
+    },
+    {
+      "sessionId": "sample-replan-001",
+      "eventType": "step_finished",
+      "timestamp": "2026-11-19T05:34:23.505513+00:00",
+      "payload": {
+        "step": "plan",
+        "steps": [
+          "a2a:log-analyzer-agent",
+          "a2a:remediation-agent"
+        ]
+      }
+    },
+    {
+      "sessionId": "sample-replan-001",
+      "eventType": "step_started",
+      "timestamp": "2026-11-19T05:34:23.505513+00:00",
+      "payload": {
+        "step": "execute",
+        "replanCount": 0
+      }
+    },
+    {
+      "sessionId": "sample-replan-001",
+      "eventType": "tool_call",
+      "timestamp": "2026-11-19T05:34:23.508140+00:00",
+      "payload": {
+        "tool": "a2a:log-analyzer-agent",
+        "args": {
+          "incidentCode": "INC-2026-001",
+          "excludeCount": 0
+        },
+        "ok": true,
+        "elapsedMs": 5.8
+      }
+    },
+    {
+      "sessionId": "sample-replan-001",
+      "eventType": "tool_call",
+      "timestamp": "2026-11-19T05:34:23.522403+00:00",
+      "payload": {
+        "tool": "list_rollback_candidates",
+        "args": {
+          "serviceName": "payment-service",
+          "incidentStartedAt": "2026-11-18T14:04:00+09:00"
+        },
+        "ok": true,
+        "errorCode": null,
+        "elapsedMs": 0.8
+      }
+    },
+    {
+      "sessionId": "sample-replan-001",
+      "eventType": "tool_call",
+      "timestamp": "2026-11-19T05:34:23.522403+00:00",
+      "payload": {
+        "tool": "get_release_metrics",
+        "args": {
+          "serviceName": "payment-service",
+          "gitSha": "sha-v42",
+          "from": "2026-11-18T14:05:00+09:00",
+          "to": "2026-11-18T14:10:00+09:00"
+        },
+        "ok": true,
+        "errorCode": null,
+        "elapsedMs": 0.6
+      }
+    },
+    {
+      "sessionId": "sample-replan-001",
+      "eventType": "tool_call",
+      "timestamp": "2026-11-19T05:34:23.522403+00:00",
+      "payload": {
+        "tool": "get_release_metrics",
+        "args": {
+          "serviceName": "payment-service",
+          "gitSha": "sha-v41",
+          "from": "2026-11-18T14:05:00+09:00",
+          "to": "2026-11-18T14:10:00+09:00"
+        },
+        "ok": true,
+        "errorCode": null,
+        "elapsedMs": 0.6
+      }
+    },
+    {
+      "sessionId": "sample-replan-001",
+      "eventType": "tool_call",
+      "timestamp": "2026-11-19T05:34:23.522403+00:00",
+      "payload": {
+        "tool": "get_change_freeze_windows",
+        "args": {
+          "serviceName": "payment-service",
+          "windowStart": "2026-11-18T14:28:00+09:00",
+          "windowEnd": "2026-11-18T14:50:00+09:00"
+        },
+        "ok": true,
+        "errorCode": null,
+        "elapsedMs": 0.2
+      }
+    },
+    {
+      "sessionId": "sample-replan-001",
+      "eventType": "tool_call",
+      "timestamp": "2026-11-19T05:34:23.522403+00:00",
+      "payload": {
+        "tool": "a2a:remediation-agent",
+        "args": {
+          "incidentCode": "INC-2026-001"
+        },
+        "ok": true,
+        "status": "READY_FOR_APPROVAL",
+        "verdict": "SUPPORTED",
+        "elapsedMs": 9.3
+      }
+    },
+    {
+      "sessionId": "sample-replan-001",
+      "eventType": "step_finished",
+      "timestamp": "2026-11-19T05:34:23.522403+00:00",
+      "payload": {
+        "step": "execute"
+      }
+    },
+    {
+      "sessionId": "sample-replan-001",
+      "eventType": "step_started",
+      "timestamp": "2026-11-19T05:34:23.522403+00:00",
+      "payload": {
+        "step": "evaluate"
+      }
+    },
+    {
+      "sessionId": "sample-replan-001",
+      "eventType": "replan",
+      "timestamp": "2026-11-19T05:34:23.522403+00:00",
+      "payload": {
+        "reason": "변경 금지 시간과 겹칩니다.",
+        "previousWindow": {
+          "start": "2026-11-18T14:28:00+09:00",
+          "end": "2026-11-18T14:33:00+09:00"
+        },
+        "nextWindow": {
+          "start": "2026-11-18T14:40:00+09:00",
+          "end": "2026-11-18T14:45:00+09:00"
+        }
+      }
+    },
+    {
+      "sessionId": "sample-replan-001",
+      "eventType": "step_finished",
+      "timestamp": "2026-11-19T05:34:23.522403+00:00",
+      "payload": {
+        "step": "evaluate",
+        "workflowStatus": "AWAITING_APPROVAL"
+      }
+    },
+    {
+      "sessionId": "sample-replan-001",
+      "eventType": "step_started",
+      "timestamp": "2026-11-19T05:34:23.525148+00:00",
+      "payload": {
+        "step": "respond"
+      }
+    },
+    {
+      "sessionId": "sample-replan-001",
+      "eventType": "step_finished",
+      "timestamp": "2026-11-19T05:34:23.525148+00:00",
+      "payload": {
+        "step": "respond",
+        "workflowStatus": "AWAITING_APPROVAL"
+      }
+    }
+  ]
+}
