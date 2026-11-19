@@ -1,0 +1,32 @@
+/* Hallmark · shape: app screen · genre: modern-minimal · theme: Console (deal 3/3)
+ * nav: workbench top bar · signature: payment rollback window comparison · states: ready, planning, pending, approved, rejected, error · console: graphite
+ * axes: dark/grotesk-sans/chromatic-amber · posture: restrained · contrast: pass · v2.0.0 */
+/* Hallmark · pre-emit critique: P4 H4 E4 S4 R4 V4 · weakest: hierarchy, the rollback window is the largest reading in its panel */
+@import url("./tokens.css");
+
+*, *::before, *::after { box-sizing: border-box; }
+html, body { overflow-x: clip; }
+body {
+  margin: 0;
+  background: var(--color-paper-3);
+  color: var(--color-ink);
+  font-family: var(--font-body);
+  font-size: var(--text-sm);
+  line-height: 1.6;
+}
+h1, h2, h3, p, dl, dd { margin: 0; }
+h1, h2, h3 { overflow-wrap: break-word; min-width: 0; line-height: 1.3; text-wrap: balance; }
+h1 { font-size: var(--text-3xl); font-weight: 600; }
+h2 { font-size: var(--text-md); font-weight: 600; }
+h3 { font-size: var(--text-sm); font-weight: 600; }
+button { font: inherit; }
+button:enabled, summary { cursor: pointer; }
+:focus-visible { outline: 2px solid var(--color-focus); outline-offset: 3px; }
+html { scrollbar-color: var(--color-rule-2) var(--color-paper-3); }
+::selection { color: var(--color-accent-ink); background: var(--color-accent); }
+a { color: inherit; }
+code { font-family: var(--font-outlier); }
+svg { display: block; flex: none; }
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { animation-duration: 0.01ms !important; transition-duration: 0.01ms !important; }
+}
