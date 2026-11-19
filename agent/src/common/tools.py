@@ -107,13 +107,10 @@ class ExternalToolsClient:
                 statuses = st_resp.json()
                 if not isinstance(statuses, list):
                     continue
-                # 배포 생성일이 아니라 state=success 상태 기록 시각을 사용한다
-                success_times = [parse_rfc3339(st["created_at"]) for st in statuses if st.get("state") == "success" and st.get("created_at")]
-                if not success_times:
-                    continue
-                succeeded_at = max(success_times)
-                if succeeded_at <= started_dt:
-                    succeeded.append({"deploymentId": int(dep_id), "gitSha": str(sha), "ref": str(dep.get("ref") or ""), "succeededAt": succeeded_at})
+                # 배포 생성일이 아니라 장애 시작 시각 이전(<=)의 state=success 기록 중 최신 시각을 사용한다
+                eligible_times = [ts for st in statuses if st.get("state") == "success" and st.get("created_at") and (ts := parse_rfc3339(st["created_at"])) <= started_dt]
+                if eligible_times:
+                    succeeded.append({"deploymentId": int(dep_id), "gitSha": str(sha), "ref": str(dep.get("ref") or ""), "succeededAt": max(eligible_times)})
         except httpx.HTTPError:
             return _err("UPSTREAM_ERROR", "GitHub API 요청 중 네트워크 오류가 발생했습니다.")
         except (ValueError, KeyError, TypeError):

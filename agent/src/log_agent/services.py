@@ -85,8 +85,6 @@ async def run_dr_dci_investigation(backend: BackendClient, settings: Settings, r
     else:
         targets.extend(ranked_logs[:budget])
 
-    target_ids = {t.get("chunkId") for t in targets}
-    remaining_ids = [str(m["chunkId"]) for m in (ranked_logs + ranked_runbooks) if m.get("chunkId") not in target_ids]
     evidence: list[EvidenceItem] = []
     runbook_summaries: list[str] = []
     recommended_command: str | None = None
@@ -108,6 +106,10 @@ async def run_dr_dci_investigation(backend: BackendClient, settings: Settings, r
             runbook_summaries.append(_summarize_chunk(raw_content, max_chars))
             if recommended_command is None:
                 recommended_command = _extract_command(raw_content)
+
+    # 일시 오류로 인출에 실패한 청크는 재계획에서 다시 시도할 수 있도록 remainingChunkIds에 유지한다
+    pulled_ids = {item.chunkId for item in evidence}
+    remaining_ids = [str(m["chunkId"]) for m in (ranked_logs + ranked_runbooks) if m.get("chunkId") not in pulled_ids]
 
     return LogInvestigationResponse(
         ok=True,

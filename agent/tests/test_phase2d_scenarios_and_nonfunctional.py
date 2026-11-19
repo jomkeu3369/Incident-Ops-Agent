@@ -560,7 +560,29 @@ async def test_review_fixes_log_broaden_and_redis_reconcile_and_live_stream() ->
         chunk = await asyncio.wait_for(gen.__anext__(), timeout=2.0)
         seen_before_gate.extend(e["type"] for e in _parse_sse(chunk))
     assert "RUN_STARTED" in seen_before_gate and "STEP_STARTED" in seen_before_gate
-    gate.set()
-    async for _ in gen:
-        pass
+    # 스트림 소비자가 중간에 연결을 끊어도 백그라운드 그래프 태스크가 누수 없이 취소된다
+    await gen.aclose()
 
+    # 4) GitHub 배포 상태에 장애 전·후 성공 기록이 섞여 있어도 장애 전 최신 성공 기록을 유지한다
+    def gh_handler(req: httpx.Request) -> httpx.Response:
+        if req.url.path.endswith("/deployments"):
+            return httpx.Response(200, json=[{"id": 42, "sha": "sha-v42", "ref": "v42"}, {"id": 41, "sha": "sha-v41", "ref": "v41"}])
+        if "/42/" in req.url.path:
+            return httpx.Response(200, json=[{"state": "success", "created_at": "2026-11-18T13:00:00Z"}, {"state": "success", "created_at": "2026-11-18T15:00:00Z"}])
+        return httpx.Response(200, json=[{"state": "success", "created_at": "2026-11-18T12:00:00Z"}])
+
+    gh_tools = ExternalToolsClient(settings, httpx.AsyncClient(transport=httpx.MockTransport(gh_handler)))
+    cand_out = await gh_tools.list_rollback_candidates("payment-service", "2026-11-18T14:00:00Z")
+    assert cand_out["ok"] and cand_out["data"]["referenceDeployment"]["gitSha"] == "sha-v42"
+
+    # 5) 청크 인출 일시 실패 시 해당 chunkId가 remainingChunkIds에 남아 재계획할 수 있다
+    async def mcp_pull_fail(tool_name: str, args: dict[str, Any]) -> Any:
+        if tool_name == "searchCorpusIndex" and args["corpusType"] == "LOG":
+            return [{"chunkId": "LOG-FAIL", "corpusType": "LOG", "title": "HikariPool timeout", "keywords": "HikariPool", "sequenceOrder": 1}]
+        if tool_name == "searchCorpusIndex":
+            return []
+        raise BackendApiError(502, "temporary error")
+
+    fail_backend = BackendClient(settings, httpx.AsyncClient(), mcp_caller=mcp_pull_fail)
+    fail_out = await run_dr_dci_investigation(fail_backend, settings, LogInvestigationRequest(incidentCode="INC-2026-001", keywords=["HikariPool"], maxPulls=2))
+    assert fail_out.evidenceChunkIds == [] and "LOG-FAIL" in fail_out.remainingChunkIds

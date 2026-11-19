@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+from contextlib import suppress
 import json
 import uuid
 from typing import Any, AsyncIterator
@@ -102,6 +103,18 @@ class SupervisorService:
             return None
         return matched
 
+    async def _load_plan_from_backend(self, incident_code: str, plan_id: str | None) -> dict[str, Any] | None:
+        """승인 대상 planId에 해당하는 계획 정보를 백엔드 상세 응답에서 조회한다."""
+        if not plan_id:
+            return None
+        try:
+            detail = await self._backend.get_incident_detail(incident_code)
+        except BackendApiError:
+            return None
+        plans = detail.get("plans") if isinstance(detail, dict) else None
+        matched = next((p for p in (plans or []) if isinstance(p, dict) and p.get("planId") == plan_id), None)
+        return matched if isinstance(matched, dict) else None
+
     async def stream_ag_ui(self, run_input: RunAgentInput, props: ForwardedPropsInput, operator_id: str, decided_approval: dict[str, Any] | None, accept_header: str | None) -> AsyncIterator[str]:
         """AG-UI 표준 SSE 이벤트 스트림을 생성한다."""
         encoder = EventEncoder(accept=accept_header)
@@ -166,10 +179,17 @@ class SupervisorService:
                     await ui_queue.put(None)
 
             graph_task = asyncio.create_task(_run_graph())
-            while (ev := await ui_queue.get()) is not None:
-                for encoded in _encode_ui_event(encoder, ev):
-                    yield encoded
-            final_state = await graph_task
+            try:
+                while (ev := await ui_queue.get()) is not None:
+                    for encoded in _encode_ui_event(encoder, ev):
+                        yield encoded
+                final_state = await graph_task
+            finally:
+                # SSE 클라이언트가 중간에 연결을 끊으면 백그라운드 그래프 태스크를 즉시 정리한다
+                if not graph_task.done():
+                    graph_task.cancel()
+                    with suppress(asyncio.CancelledError):
+                        await graph_task
 
             snapshot = final_state.get("snapshot") or {"incidentCode": props.incidentCode, "workflowStatus": "IDLE", "plan": None, "approval": None, "replanHistory": []}
             yield encoder.encode(StateSnapshotEvent(snapshot=snapshot))
@@ -207,8 +227,12 @@ class SupervisorService:
         decision = props.approvalDecision.decision  # type: ignore[union-attr]
         approval_id = props.approvalDecision.approvalId  # type: ignore[union-attr]
         prev_snap = dict(memory.get("snapshot") or {"incidentCode": props.incidentCode, "plan": None, "approval": None, "replanHistory": []})
-        plan = prev_snap.get("plan")
-        approval_obj = {"approvalId": approval_id, "planId": decided.get("planId") or (plan or {}).get("planId"), "stepNo": decided.get("stepNo") or (prev_snap.get("approval") or {}).get("stepNo") or 2, "decision": decision}
+        snap_plan = prev_snap.get("plan")
+        target_plan_id = decided.get("planId") or (snap_plan or {}).get("planId")
+        # 승인 대상 planId와 스냅샷 계획이 다르면 백엔드에서 해당 계획을 조회해 다른 계획의 근거가 섞이지 않게 막는다
+        plan = snap_plan if isinstance(snap_plan, dict) and snap_plan.get("planId") == target_plan_id else await self._load_plan_from_backend(props.incidentCode, target_plan_id)
+        prev_snap = {**prev_snap, "plan": plan}
+        approval_obj = {"approvalId": approval_id, "planId": target_plan_id, "stepNo": decided.get("stepNo") or (prev_snap.get("approval") or {}).get("stepNo") or 2, "decision": decision}
 
         await publish_safe(self._bus, tid, "approval_decided", {"incidentCode": props.incidentCode, "approvalId": approval_id, "decision": decision, "approvedBy": operator_id})
 
