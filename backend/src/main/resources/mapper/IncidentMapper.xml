@@ -15,6 +15,13 @@
         WHERE incident_code = #{incidentCode}
     </select>
 
+    <select id="lockByIncidentCode" resultType="Incident">
+        SELECT id, incident_code, title, service_name, severity, status, summary, created_at, updated_at
+        FROM incidents
+        WHERE incident_code = #{incidentCode}
+        FOR UPDATE
+    </select>
+
     <insert id="insert" parameterType="Incident" useGeneratedKeys="true" keyProperty="id">
         INSERT INTO incidents (incident_code, title, service_name, severity, status, summary)
         VALUES (#{incidentCode}, #{title}, #{serviceName}, #{severity}, #{status}, #{summary})

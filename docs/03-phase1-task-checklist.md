@@ -2,8 +2,8 @@
 
 ## Phase 1A: REST API · MyBatis · DB 구현 및 검증
 - [ ] `backend/pom.xml` 및 `application.yml` 구성 (Java 21, Spring Boot `3.4.5`, MyBatis, MySQL 8.0, Actuator)
-- [ ] `schema.sql` 작성 (6개 테이블: `incidents`, `corpus_chunks`, `remediation_plans`, `remediation_approvals`, `remediation_executions`, `post_mortems`)
-- [ ] `data.sql` 시드 데이터 작성:
+- [ ] Flyway 마이그레이션 적용 확인 (6개 테이블: `incidents`, `corpus_chunks`, `remediation_plans`, `remediation_approvals`, `remediation_executions`, `post_mortems`)
+- [ ] `demo` 프로필에서 시드 데이터 확인:
   - 장애 1건: `INC-2026-001` (`payment-service`, `SEV1`, `OPEN`)
   - `LOG` 청크 6건 (`LOG-101` ~ `LOG-106`)을 `INC-2026-001`에 연결한다. `LOG-104`, `LOG-105`에 커넥션 대기 시간 초과와 누수 단서를 둔다.
   - `RUNBOOK` 청크 2건 (`RUNBOOK-01`, `RUNBOOK-02`): DB 커넥션 풀 고갈 대응 롤백 절차 포함

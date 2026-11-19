@@ -3,22 +3,75 @@
         "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
 <mapper namespace="com.incidentops.backend.mapper.RemediationMapper">
 
+    <resultMap id="plan" type="RemediationPlan" autoMapping="true">
+        <id property="id" column="id"/>
+        <result property="steps" column="steps" typeHandler="com.incidentops.backend.mapper.PlanStepsTypeHandler"/>
+    </resultMap>
+
+    <sql id="planColumns">
+        id, plan_id, incident_code, steps, verification_criteria, created_by, created_at
+    </sql>
+
+    <sql id="approvalColumns">
+        id, approval_id, incident_code, plan_id, step_no, action_command, proposed_by, approved_by,
+        decision, created_at, decided_at
+    </sql>
+
+    <sql id="executionColumns">
+        id, approval_id, incident_code, action_command, executed_by, execution_status, execution_output,
+        verification_summary, executed_at
+    </sql>
+
+    <select id="findPlanById" resultMap="plan">
+        SELECT <include refid="planColumns"/>
+        FROM remediation_plans
+        WHERE plan_id = #{planId}
+    </select>
+
+    <select id="findPlansByIncidentCode" resultMap="plan">
+        SELECT <include refid="planColumns"/>
+        FROM remediation_plans
+        WHERE incident_code = #{incidentCode}
+        ORDER BY created_at DESC, id DESC
+    </select>
+
+    <insert id="insertPlan" parameterType="RemediationPlan" useGeneratedKeys="true" keyProperty="id">
+        INSERT INTO remediation_plans (plan_id, incident_code, steps, verification_criteria, created_by)
+        VALUES (
+            #{planId}, #{incidentCode}, #{steps,typeHandler=com.incidentops.backend.mapper.PlanStepsTypeHandler},
+            #{verificationCriteria}, #{createdBy}
+        )
+    </insert>
+
     <select id="findApprovalById" resultType="RemediationApproval">
-        SELECT id, approval_id, incident_code, action_command, proposed_by, approved_by, decision, created_at, decided_at
+        SELECT <include refid="approvalColumns"/>
         FROM remediation_approvals
         WHERE approval_id = #{approvalId}
     </select>
 
     <select id="findApprovalsByIncidentCode" resultType="RemediationApproval">
-        SELECT id, approval_id, incident_code, action_command, proposed_by, approved_by, decision, created_at, decided_at
+        SELECT <include refid="approvalColumns"/>
         FROM remediation_approvals
         WHERE incident_code = #{incidentCode}
         ORDER BY created_at ASC
     </select>
 
+    <select id="hasUnfinishedPlanApproval" resultType="boolean">
+        SELECT EXISTS (
+            SELECT 1
+            FROM remediation_approvals a
+            WHERE a.incident_code = #{incidentCode}
+              AND a.plan_id IS NOT NULL
+              AND a.decision IN ('PENDING', 'APPROVED')
+              AND NOT EXISTS (
+                  SELECT 1 FROM remediation_executions e WHERE e.approval_id = a.approval_id
+              )
+        )
+    </select>
+
     <insert id="insertApproval" parameterType="RemediationApproval" useGeneratedKeys="true" keyProperty="id">
-        INSERT INTO remediation_approvals (approval_id, incident_code, action_command, proposed_by, decision)
-        VALUES (#{approvalId}, #{incidentCode}, #{actionCommand}, #{proposedBy}, #{decision})
+        INSERT INTO remediation_approvals (approval_id, incident_code, plan_id, step_no, action_command, proposed_by, decision)
+        VALUES (#{approvalId}, #{incidentCode}, #{planId}, #{stepNo}, #{actionCommand}, #{proposedBy}, #{decision})
     </insert>
 
     <update id="updateApprovalDecision">
@@ -26,25 +79,28 @@
         SET approved_by = #{approvedBy},
             decision = #{decision},
             decided_at = NOW()
-        WHERE approval_id = #{approvalId}
+        WHERE approval_id = #{approvalId} AND decision = 'PENDING'
     </update>
 
     <select id="findExecutionByApprovalId" resultType="RemediationExecution">
-        SELECT id, approval_id, incident_code, action_command, executed_by, execution_status, execution_output, executed_at
+        SELECT <include refid="executionColumns"/>
         FROM remediation_executions
         WHERE approval_id = #{approvalId}
     </select>
 
     <select id="findExecutionsByIncidentCode" resultType="RemediationExecution">
-        SELECT id, approval_id, incident_code, action_command, executed_by, execution_status, execution_output, executed_at
+        SELECT <include refid="executionColumns"/>
         FROM remediation_executions
         WHERE incident_code = #{incidentCode}
         ORDER BY executed_at ASC
     </select>
 
     <insert id="insertExecution" parameterType="RemediationExecution" useGeneratedKeys="true" keyProperty="id">
-        INSERT INTO remediation_executions (approval_id, incident_code, action_command, executed_by, execution_status, execution_output)
-        VALUES (#{approvalId}, #{incidentCode}, #{actionCommand}, #{executedBy}, #{executionStatus}, #{executionOutput})
+        INSERT INTO remediation_executions (
+            approval_id, incident_code, action_command, executed_by, execution_status, execution_output, verification_summary
+        )
+        VALUES (#{approvalId}, #{incidentCode}, #{actionCommand}, #{executedBy}, #{executionStatus}, #{executionOutput},
+                #{verificationSummary})
     </insert>
 
 </mapper>

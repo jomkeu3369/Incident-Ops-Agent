@@ -16,11 +16,15 @@
 * **인프라 엔드포인트:**
   * 서버 포트: `8080` (`SERVER_PORT`)[cite: 1]
   * 헬스체크: `/actuator/health` (`docker-compose.yaml` 헬스체크 대상)[cite: 1]
-  * 내부 서비스 토큰 헤더: `X-Internal-Token` (`INTERNAL_SERVICE_TOKEN` 환경변수 검증, 로컬 개발 프로파일에서는 비활성화 가능하며 `/actuator/health` 는 항상 허용)[cite: 1]
+  * 내부 API와 MCP 요청에는 `X-Internal-Token` 헤더를 넣는다. 토큰은 `INTERNAL_SERVICE_TOKEN`으로 설정하며, `/actuator/health`는 토큰 없이 조회할 수 있다.
+
+Docker Compose로 실행할 때는 `.env`에 내부 토큰을 설정한다. STS에서 직접 실행할 때는 **Run Configurations → Environment**에 같은 변수를 추가한다. Swagger UI에서 API를 테스트할 때는 **Authorize**에 토큰을 입력한다.
 
 ---
 
-## 2. MySQL 8.0 테이블 설계 (`schema.sql`)
+## 2. MySQL 8.0 테이블 설계
+
+백엔드가 시작할 때 Flyway가 `backend/src/main/resources/db/migration/`의 미적용 변경을 실행한다. 기존 장애·승인·실행·포스트모템은 보존한다. 결제 장애 예제는 `demo` 프로필을 켰을 때만 추가한다. Compose에서는 `SPRING_PROFILES_ACTIVE=docker,demo`로 설정한다.
 
 편집 가능한 ERD는 [db.vuerd.json](ERD/db.vuerd.json)에 둔다. 외래 키의 삭제·변경 정책은 `RESTRICT`로 지정한다.
 
@@ -92,6 +96,8 @@
 | `executed_at` | `DATETIME` | NOT NULL | 실행 일시 |
 
 실행과 승인의 대상 장애는 연결된 복구 계획에서 조회한다. 실패를 기록한 승인 ID로 같은 결과를 재전송할 수 있으며, 실제 조치를 다시 시도하려면 새 승인 ID가 필요하다.
+
+계획 도입 전 승인에는 `plan_id`와 `step_no`가 비어 있다. 기존 실행 이력은 승인 소속과 명령이 일치하면 다시 조회할 수 있다. 결과를 아직 기록하지 않은 조치는 계획을 저장하고 새 승인을 받아야 한다.
 
 ### 2.6 `post_mortems` (사후 장애 분석 리포트)
 | 컬럼명 | 타입 | 제약조건 | 설명 |

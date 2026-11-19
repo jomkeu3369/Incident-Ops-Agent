@@ -8,6 +8,7 @@ public record CompleteIncidentRequest(
         @NotBlank(message = "executedBy는 필수입니다.") String executedBy,
         @NotBlank(message = "executionStatus는 필수입니다.") String executionStatus,
         String executionOutput,
+        String verificationSummary,
         String rootCause,
         String timelineMarkdown,
         String remediationSummary,

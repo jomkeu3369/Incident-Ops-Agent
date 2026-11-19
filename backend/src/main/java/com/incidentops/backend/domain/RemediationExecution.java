@@ -18,5 +18,6 @@ public class RemediationExecution {
     private String executedBy;
     private String executionStatus;
     private String executionOutput;
+    private String verificationSummary;
     private LocalDateTime executedAt;
 }
