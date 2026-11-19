@@ -22,17 +22,54 @@ class SupervisorRedisStore:
     def __init__(self, redis_client: Any = None) -> None:
         self._redis = redis_client
         self._redis_retry_after = 0.0
-        # 로컬 테스트나 Redis 일시 단절 시 사용하는 프로세스 메모리 폴백 저장소
+        # 로컬 테스트나 Redis 일시 단절 시 사용하는 프로세스 메모리 폴백 저장소 및 복구 재반영 큐
         self._mem_threads: dict[str, dict[str, Any]] = {}
         self._mem_logs: dict[str, list[dict[str, Any]]] = {}
         self._mem_plans: dict[str, dict[str, Any]] = {}
+        self._dirty_threads: set[str] = set()
+        self._pending_log_events: dict[str, list[dict[str, Any]]] = {}
+        self._deleted_logs: set[str] = set()
+        self._dirty_plans: set[str] = set()
+        self._deleted_plans: set[str] = set()
+
+    async def _reconcile_fallback_to_redis(self) -> None:
+        """Redis 복구 직후 폴백 구간 동안 누적된 쓰기·삭제 변경분을 Redis에 재반영한다."""
+        for tid in list(self._dirty_threads):
+            if tid in self._mem_threads:
+                await self._redis.set(f"{_MEM_PREFIX}{tid}", json.dumps(self._mem_threads[tid], ensure_ascii=False))
+            self._dirty_threads.discard(tid)
+
+        for sid in list(self._deleted_logs):
+            await self._redis.delete(f"{_LOG_PREFIX}{sid}")
+            await self._redis.srem(_LOG_INDEX_KEY, sid)
+            self._deleted_logs.discard(sid)
+
+        for sid in list(self._pending_log_events):
+            events = self._pending_log_events.get(sid) or []
+            for ev in events:
+                await self._redis.rpush(f"{_LOG_PREFIX}{sid}", json.dumps(ev, ensure_ascii=False))
+            if events:
+                await self._redis.sadd(_LOG_INDEX_KEY, sid)
+            self._pending_log_events.pop(sid, None)
+
+        for pid in list(self._deleted_plans):
+            await self._redis.delete(f"{_PLAN_PREFIX}{pid}")
+            await self._redis.srem(_PLAN_INDEX_KEY, pid)
+            self._deleted_plans.discard(pid)
+
+        for pid in list(self._dirty_plans):
+            if pid in self._mem_plans:
+                await self._redis.set(f"{_PLAN_PREFIX}{pid}", json.dumps(self._mem_plans[pid], ensure_ascii=False))
+                await self._redis.sadd(_PLAN_INDEX_KEY, pid)
+            self._dirty_plans.discard(pid)
 
     async def _use_redis(self) -> bool:
-        """Redis가 연결 가능할 때만 True를 반환하며, 실패 시 30초 쿨다운으로 지연을 방지한다."""
+        """Redis가 연결 가능할 때만 True를 반환하며, 복구 시 폴백 쓰기를 먼저 동기화한다."""
         if self._redis is None or time.monotonic() < self._redis_retry_after:
             return False
         try:
             await self._redis.ping()
+            await self._reconcile_fallback_to_redis()
             return True
         except Exception:
             self._redis_retry_after = time.monotonic() + 30.0
@@ -54,6 +91,8 @@ class SupervisorRedisStore:
         self._mem_threads[thread_id] = data
         if await self._use_redis():
             await self._redis.set(f"{_MEM_PREFIX}{thread_id}", json.dumps(data, ensure_ascii=False))
+        else:
+            self._dirty_threads.add(thread_id)
 
     # --- 2) 세션 실행 로그 CRUD (exec_log:{session_id}, TTL 없음, 수정 불가) ---
 
@@ -63,6 +102,8 @@ class SupervisorRedisStore:
         if await self._use_redis():
             await self._redis.rpush(f"{_LOG_PREFIX}{session_id}", json.dumps(event, ensure_ascii=False))
             await self._redis.sadd(_LOG_INDEX_KEY, session_id)
+        else:
+            self._pending_log_events.setdefault(session_id, []).append(event)
 
     async def list_sessions(self) -> list[SessionSummary]:
         """저장된 실행 로그 세션 목록을 요약 정보와 함께 조회한다."""
@@ -90,10 +131,12 @@ class SupervisorRedisStore:
         """특정 세션의 실행 로그를 삭제한다."""
         existed = session_id in self._mem_logs
         self._mem_logs.pop(session_id, None)
+        self._pending_log_events.pop(session_id, None)
         if await self._use_redis():
             removed = await self._redis.delete(f"{_LOG_PREFIX}{session_id}")
             await self._redis.srem(_LOG_INDEX_KEY, session_id)
             return bool(removed or existed)
+        self._deleted_logs.add(session_id)
         return existed
 
     # --- 3) 작업 계획 관리 CRUD (F3015~F3016, 동일 날짜 시간 겹침 경고) ---
@@ -127,9 +170,12 @@ class SupervisorRedisStore:
 
         item = ManagedPlanItem(planId=plan_id, incidentCode=body.incidentCode, title=body.title, serviceName=body.serviceName, planDate=body.planDate, startTime=body.startTime, endTime=body.endTime, actionCommand=body.actionCommand, evidenceChunkIds=body.evidenceChunkIds, notes=body.notes, createdAt=now, updatedAt=now)
         self._mem_plans[plan_id] = item.model_dump()
+        self._deleted_plans.discard(plan_id)
         if await self._use_redis():
             await self._redis.set(f"{_PLAN_PREFIX}{plan_id}", json.dumps(item.model_dump(), ensure_ascii=False))
             await self._redis.sadd(_PLAN_INDEX_KEY, plan_id)
+        else:
+            self._dirty_plans.add(plan_id)
 
         warning = f"같은 날짜({body.planDate})에 시간이 겹치는 계획이 {len(overlaps)}건 있습니다." if overlaps else None
         return ManagedPlanMutationResponse(plan=item, overlappingPlans=overlaps, warning=warning)
@@ -150,8 +196,11 @@ class SupervisorRedisStore:
         existing = await self.list_plans()
         overlaps = [p for p in existing if p.planId != plan_id and p.planDate == item.planDate and item.startTime < p.endTime and p.startTime < item.endTime]
         self._mem_plans[plan_id] = item.model_dump()
+        self._deleted_plans.discard(plan_id)
         if await self._use_redis():
             await self._redis.set(f"{_PLAN_PREFIX}{plan_id}", json.dumps(item.model_dump(), ensure_ascii=False))
+        else:
+            self._dirty_plans.add(plan_id)
 
         warning = f"같은 날짜({item.planDate})에 시간이 겹치는 계획이 {len(overlaps)}건 있습니다." if overlaps else None
         return ManagedPlanMutationResponse(plan=item, overlappingPlans=overlaps, warning=warning)
@@ -160,8 +209,10 @@ class SupervisorRedisStore:
         """저장된 작업 계획을 삭제한다."""
         existed = plan_id in self._mem_plans
         self._mem_plans.pop(plan_id, None)
+        self._dirty_plans.discard(plan_id)
         if await self._use_redis():
             removed = await self._redis.delete(f"{_PLAN_PREFIX}{plan_id}")
             await self._redis.srem(_PLAN_INDEX_KEY, plan_id)
             return bool(removed or existed)
+        self._deleted_plans.add(plan_id)
         return existed

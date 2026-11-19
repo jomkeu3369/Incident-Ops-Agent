@@ -384,3 +384,183 @@ def test_nonfunctional_unapproved_completion_409_and_docker_url_derivation() -> 
         })
         assert conflict_res.status_code == 409
         assert "application/json" in conflict_res.headers.get("content-type", "")
+
+
+def test_review_fixes_resume_approved_and_incident_binding() -> None:
+    """P1 중단된 APPROVED 실행 재개, 이미 실행된 건 409 유지, 다른 incidentCode 스레드 격리를 검증한다."""
+    scenario = _ScenarioState(freeze_windows=[])
+    settings, _, ext_tools, decisions, log_app, rem_app, sup_app, _, a2a_fn = _wire_supervisor(scenario)
+    executions: list[dict[str, Any]] = []
+
+    def rest_handler(request: httpx.Request) -> httpx.Response:
+        path = request.url.path
+        if request.method == "GET" and path.endswith("/INC-2026-001"):
+            return httpx.Response(200, json={"incident": {"incidentCode": "INC-2026-001", "serviceName": "payment-service", "status": scenario.incident_status}, "approvals": list(scenario.approvals.values()), "executions": executions})
+        if request.method == "POST" and path.endswith("/plans"):
+            return httpx.Response(201, json=json.loads(request.content))
+        if request.method == "POST" and path.endswith("/approvals"):
+            body = json.loads(request.content)
+            body["decision"] = "PENDING"
+            scenario.approvals[body["approvalId"]] = body
+            return httpx.Response(201, json=body)
+        if request.method == "PATCH" and "/approvals/" in path:
+            aid = path.rsplit("/", 1)[-1]
+            apr = scenario.approvals[aid]
+            if apr["decision"] != "PENDING":
+                return httpx.Response(409, json={"message": "이미 결정이 완료된 승인 요청입니다."})
+            apr["decision"] = json.loads(request.content)["decision"]
+            return httpx.Response(200, json=apr)
+        return httpx.Response(404)
+
+    async def mcp_caller(tool_name: str, args: dict[str, Any]) -> Any:
+        if tool_name == "searchCorpusIndex":
+            return [{"chunkId": c["chunkId"], "corpusType": c["corpusType"], "title": c["title"], "summary": c["content"][:80]} for c in scenario.chunks.values() if c["corpusType"] == args["corpusType"]]
+        if tool_name == "pullCorpusChunk":
+            return scenario.chunks[args["chunkId"]]
+        if tool_name == "completeIncidentWithPostMortem":
+            executions.append({"approvalId": args["approvalId"], "status": "SUCCESS"})
+            scenario.incident_status = "RESOLVED"
+            return {"incidentCode": args["incidentCode"], "status": "RESOLVED"}
+        return {}
+
+    backend = BackendClient(settings, httpx.AsyncClient(transport=httpx.MockTransport(rest_handler)), mcp_caller=mcp_caller)
+    fail_once = {"done": False}
+
+    async def flaky_a2a(base_url: str, payload: dict[str, Any], context_id: str) -> dict[str, Any]:
+        if payload.get("action") == "execute" and not fail_once["done"]:
+            fail_once["done"] = True
+            raise httpx.ReadTimeout("worker timeout")
+        return await a2a_fn(base_url, payload, context_id)
+
+    with TestClient(log_app), TestClient(rem_app), TestClient(sup_app) as client:
+        log_app.state.container.backend_client = backend
+        rem_app.state.container.external_tools = ext_tools
+        rem_app.state.container.decisions_client = decisions
+        sup_app.state.container.backend_client = backend
+        sup_app.state.container.a2a_caller = flaky_a2a
+
+        r1 = _run_agui(client, {"threadId": "t-resume", "runId": "r1", "state": {}, "messages": [{"id": "m1", "role": "user", "content": "502 비율 1% 미만 14:28~14:50 5분 롤백 계획"}], "tools": [], "context": [], "forwardedProps": {"incidentCode": "INC-2026-001", "incidentStartedAt": "2026-11-18T14:04:00+09:00"}})
+        aid = [e["snapshot"] for e in _parse_sse(r1.text) if e["type"] == "STATE_SNAPSHOT"][-1]["approval"]["approvalId"]
+
+        # 1차 승인 시 A2A 타임아웃으로 중단되지만 AWAITING_EXECUTION_RESULT가 저장된다
+        r2 = _run_agui(client, {"threadId": "t-resume", "runId": "r2", "state": {}, "messages": [], "tools": [], "context": [], "forwardedProps": {"incidentCode": "INC-2026-001", "approvalDecision": {"approvalId": aid, "decision": "APPROVED"}}})
+        assert r2.status_code == 200 and scenario.incident_status == "OPEN"
+
+        # 2차 재시도 시 백엔드 409 대신 미완료 APPROVED 건을 복구·재개해 RESOLVED로 마무리한다
+        r3 = _run_agui(client, {"threadId": "t-resume", "runId": "r3", "state": {}, "messages": [], "tools": [], "context": [], "forwardedProps": {"incidentCode": "INC-2026-001", "approvalDecision": {"approvalId": aid, "decision": "APPROVED"}}})
+        assert r3.status_code == 200
+        assert [e["snapshot"] for e in _parse_sse(r3.text) if e["type"] == "STATE_SNAPSHOT"][-1]["workflowStatus"] == "RESOLVED"
+
+        # 이미 완료된 건을 다시 승인 요청하면 409를 반환한다
+        r4 = _run_agui(client, {"threadId": "t-resume", "runId": "r4", "state": {}, "messages": [], "tools": [], "context": [], "forwardedProps": {"incidentCode": "INC-2026-001", "approvalDecision": {"approvalId": aid, "decision": "APPROVED"}}})
+        assert r4.status_code == 409
+
+        # 같은 threadId로 다른 장애(INC-2026-999)를 restore해도 이전 장애 스냅샷·메시지가 상속되지 않는다
+        r_other = _run_agui(client, {"threadId": "t-resume", "runId": "r5", "state": {}, "messages": [], "tools": [], "context": [], "forwardedProps": {"incidentCode": "INC-2026-999", "restore": True}})
+        ev_other = _parse_sse(r_other.text)
+        snap_other = [e["snapshot"] for e in ev_other if e["type"] == "STATE_SNAPSHOT"][-1]
+        msgs_other = [e["messages"] for e in ev_other if e["type"] == "MESSAGES_SNAPSHOT"][-1]
+        assert snap_other["incidentCode"] == "INC-2026-999" and snap_other["workflowStatus"] == "IDLE" and snap_other["plan"] is None
+        assert msgs_other == []
+
+
+async def test_review_fixes_log_broaden_and_redis_reconcile_and_live_stream() -> None:
+    """키워드 소진 시 로그 전체 확장, Redis 복구 재반영, 그래프 실행 중 실시간 이벤트 방출을 검증한다."""
+    import asyncio
+    from log_agent.schemas import LogInvestigationRequest
+    from log_agent.services import run_dr_dci_investigation
+    from supervisor.cruds import SupervisorRedisStore
+    from supervisor.schemas import ManagedPlanCreate
+    from supervisor.services import SupervisorService
+    from ag_ui.core import RunAgentInput
+
+    # 1) log_agent: 첫 키워드 매칭 청크가 모두 excluded면 나머지 로그까지 확장 조회한다
+    settings = _make_settings()
+    all_logs = [
+        {"chunkId": "LOG-104", "corpusType": "LOG", "title": "HikariPool timeout", "keywords": "HikariPool", "sequenceOrder": 1},
+        {"chunkId": "LOG-109", "corpusType": "LOG", "title": "Deploy v42 marker", "keywords": "deploy", "sequenceOrder": 2},
+    ]
+
+    async def mcp_broaden(tool_name: str, args: dict[str, Any]) -> Any:
+        if tool_name == "searchCorpusIndex" and args["corpusType"] == "LOG":
+            kw = args.get("keyword")
+            return [r for r in all_logs if kw.lower() in r["keywords"].lower()] if kw else all_logs
+        if tool_name == "searchCorpusIndex":
+            return []
+        return {"chunkId": args["chunkId"], "corpusType": "LOG", "title": args["chunkId"], "content": "deploy v42 details"}
+
+    backend = BackendClient(settings, httpx.AsyncClient(), mcp_caller=mcp_broaden)
+    log_out = await run_dr_dci_investigation(backend, settings, LogInvestigationRequest(incidentCode="INC-2026-001", keywords=["HikariPool"], excludeChunkIds=["LOG-104"], maxPulls=2))
+    assert log_out.evidenceChunkIds == ["LOG-109"]
+
+    # 2) Redis 폴백 동안 기록된 계획·로그가 Redis 복구 시 자동 재반영된다
+    class _ToggleRedis:
+        def __init__(self) -> None:
+            self.up = False
+            self.kv: dict[str, str] = {}
+            self.sets: dict[str, set[str]] = {}
+            self.lists: dict[str, list[str]] = {}
+
+        async def ping(self) -> bool:
+            if not self.up:
+                raise ConnectionError("down")
+            return True
+
+        async def get(self, k: str) -> str | None:
+            return self.kv.get(k)
+
+        async def set(self, k: str, v: str) -> None:
+            self.kv[k] = v
+
+        async def delete(self, k: str) -> int:
+            return int(self.kv.pop(k, None) is not None or self.lists.pop(k, None) is not None)
+
+        async def sadd(self, k: str, v: str) -> None:
+            self.sets.setdefault(k, set()).add(v)
+
+        async def srem(self, k: str, v: str) -> None:
+            self.sets.setdefault(k, set()).discard(v)
+
+        async def smembers(self, k: str) -> set[str]:
+            return set(self.sets.get(k, set()))
+
+        async def rpush(self, k: str, v: str) -> None:
+            self.lists.setdefault(k, []).append(v)
+
+        async def lrange(self, k: str, s: int, e: int) -> list[str]:
+            return list(self.lists.get(k, []))
+
+    fake_redis = _ToggleRedis()
+    store = SupervisorRedisStore(fake_redis)
+    created = await store.create_plan(ManagedPlanCreate(incidentCode="INC-2026-001", title="outage-plan", planDate="2026-11-20", startTime="14:00", endTime="14:30"))
+    await store.append_session_log("outage-s1", {"sessionId": "outage-s1", "eventType": "step_started", "timestamp": "2026-11-19T00:00:00Z", "payload": {}})
+
+    # Redis 복구 + 쿨다운 만료 후 조회해도 폴백 데이터가 사라지지 않는다
+    fake_redis.up = True
+    store._redis_retry_after = 0.0
+    recovered_plan = await store.get_plan(created.plan.planId)
+    recovered_logs = await store.get_session_logs("outage-s1")
+    assert recovered_plan is not None and recovered_plan.title == "outage-plan"
+    assert len(recovered_logs) == 1
+
+    # 3) 실시간 스트리밍: 워커가 대기 중일 때도 앞선 STEP_STARTED 이벤트가 먼저 스트리밍된다
+    gate = asyncio.Event()
+
+    async def gated_a2a(base_url: str, payload: dict[str, Any], context_id: str) -> dict[str, Any]:
+        await gate.wait()
+        return {"ok": False, "status": "BLOCKED", "message": "done", "toolCalls": [], "cachedToolResults": {}}
+
+    svc = SupervisorService(settings, httpx.AsyncClient(), backend, SupervisorRedisStore(None), a2a_caller=gated_a2a)
+    req_in = RunAgentInput(thread_id="t-stream", run_id="r-stream", state={}, messages=[{"id": "m1", "role": "user", "content": "502 롤백 계획 세워줘"}], tools=[], context=[], forwarded_props={"incidentCode": "INC-2026-001", "incidentStartedAt": "2026-11-18T14:04:00+09:00"})
+    props = svc.parse_forwarded_props(req_in)
+    gen = svc.stream_ag_ui(req_in, props, "op", None, None)
+
+    seen_before_gate: list[str] = []
+    for _ in range(5):
+        chunk = await asyncio.wait_for(gen.__anext__(), timeout=2.0)
+        seen_before_gate.extend(e["type"] for e in _parse_sse(chunk))
+    assert "RUN_STARTED" in seen_before_gate and "STEP_STARTED" in seen_before_gate
+    gate.set()
+    async for _ in gen:
+        pass
+

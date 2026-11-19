@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import json
 import uuid
 from typing import Any, AsyncIterator
@@ -54,7 +55,6 @@ class SupervisorService:
         self._store = store
         self._bus = event_bus
         self._a2a_caller = a2a_caller
-        self._graph = build_supervisor_graph(settings, http_client, backend, event_bus=event_bus, a2a_caller=a2a_caller)
 
     def parse_forwarded_props(self, run_input: RunAgentInput) -> ForwardedPropsInput:
         """스트림을 열기 전에 forwardedProps 계약을 검증한다(위반 시 HTTP 400)."""
@@ -66,7 +66,7 @@ class SupervisorService:
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="forwardedProps 형식이 올바르지 않습니다.")
 
     async def prepare_approval_decision(self, props: ForwardedPropsInput, operator_id: str) -> dict[str, Any] | None:
-        """승인·반려 요청이면 스트림 오픈 전에 Spring 원장에 결정을 반영해 409/404를 HTTP 상태로 반환한다."""
+        """승인·반려 요청이면 스트림 오픈 전에 Spring 원장에 결정을 반영하며, 중단된 미완료 APPROVED 건은 재개를 허용한다."""
         if props.approvalDecision is None:
             return None
         try:
@@ -77,13 +77,41 @@ class SupervisorService:
                 decision=props.approvalDecision.decision,
             )
         except BackendApiError as exc:
+            # 이미 APPROVED 상태지만 워커 장애 등으로 아직 실행·완료가 기록되지 않은 건만 재개를 허용한다
+            if exc.status_code == 409 and props.approvalDecision.decision == "APPROVED":
+                resumable = await self._find_resumable_approval(props.incidentCode, props.approvalDecision.approvalId)
+                if resumable is not None:
+                    return resumable
             raise HTTPException(status_code=exc.status_code, detail=exc.message)
+
+    async def _find_resumable_approval(self, incident_code: str, approval_id: str) -> dict[str, Any] | None:
+        """백엔드에서 APPROVED 기록은 있으나 실행 결과가 아직 없는 미완료 승인 건을 조회한다."""
+        try:
+            detail = await self._backend.get_incident_detail(incident_code)
+        except BackendApiError:
+            return None
+        incident = detail.get("incident") if isinstance(detail, dict) else None
+        if not isinstance(incident, dict) or incident.get("status") == "RESOLVED":
+            return None
+        approvals = detail.get("approvals") if isinstance(detail, dict) else None
+        matched = next((a for a in (approvals or []) if isinstance(a, dict) and a.get("approvalId") == approval_id and a.get("decision") == "APPROVED"), None)
+        if matched is None:
+            return None
+        executions = detail.get("executions") if isinstance(detail, dict) else None
+        if any(isinstance(e, dict) and e.get("approvalId") == approval_id for e in (executions or [])):
+            return None
+        return matched
 
     async def stream_ag_ui(self, run_input: RunAgentInput, props: ForwardedPropsInput, operator_id: str, decided_approval: dict[str, Any] | None, accept_header: str | None) -> AsyncIterator[str]:
         """AG-UI 표준 SSE 이벤트 스트림을 생성한다."""
         encoder = EventEncoder(accept=accept_header)
         tid, rid = run_input.thread_id, run_input.run_id
         memory = await self._store.get_thread_memory(tid)
+
+        # 스레드에 저장된 장애 코드가 현재 요청과 다르면 이전 장애의 근거·스냅샷 상속을 차단한다
+        bound_incident = memory.get("incidentCode") or (memory.get("snapshot") or {}).get("incidentCode")
+        if bound_incident and bound_incident != props.incidentCode:
+            memory = {"threadId": tid, "incidentCode": props.incidentCode, "messages": [], "constraints": {}, "snapshot": None, "replanHistory": [], "pulledChunkIds": [], "cachedToolResults": {}}
 
         try:
             yield encoder.encode(RunStartedEvent(thread_id=tid, run_id=rid))
@@ -102,7 +130,7 @@ class SupervisorService:
                     yield chunk
                 return
 
-            # 3) 일반 계획 요청 / 대화 흐름 (LangGraph 5단계 실행)
+            # 3) 일반 계획 요청 / 대화 흐름 (LangGraph 5단계 실시간 스트리밍 실행)
             user_text = _extract_last_user_text(run_input)
             history_msgs = list(memory.get("messages") or [])
             if user_text:
@@ -128,11 +156,20 @@ class SupervisorService:
                 "snapshot": memory.get("snapshot"),
                 "ui_events": [],
             }
-            final_state = await self._graph.ainvoke(init_state)
+            ui_queue: asyncio.Queue[dict[str, Any] | None] = asyncio.Queue()
+            live_graph = build_supervisor_graph(self._settings, self._http, self._backend, event_bus=self._bus, a2a_caller=self._a2a_caller, on_ui_event=ui_queue.put)
 
-            for ev in final_state.get("ui_events") or []:
+            async def _run_graph() -> dict[str, Any]:
+                try:
+                    return await live_graph.ainvoke(init_state)
+                finally:
+                    await ui_queue.put(None)
+
+            graph_task = asyncio.create_task(_run_graph())
+            while (ev := await ui_queue.get()) is not None:
                 for encoded in _encode_ui_event(encoder, ev):
                     yield encoded
+            final_state = await graph_task
 
             snapshot = final_state.get("snapshot") or {"incidentCode": props.incidentCode, "workflowStatus": "IDLE", "plan": None, "approval": None, "replanHistory": []}
             yield encoder.encode(StateSnapshotEvent(snapshot=snapshot))
@@ -148,6 +185,7 @@ class SupervisorService:
                 tid,
                 {
                     "threadId": tid,
+                    "incidentCode": props.incidentCode,
                     "messages": history_msgs[-20:],
                     "constraints": final_state.get("constraints") or {},
                     "evidence": final_state.get("evidence") or [],
@@ -182,24 +220,41 @@ class SupervisorService:
             yield encoder.encode(TextMessageStartEvent(message_id=msg_id, role="assistant"))
             yield encoder.encode(TextMessageContentEvent(message_id=msg_id, delta=text))
             yield encoder.encode(TextMessageEndEvent(message_id=msg_id))
+            memory["incidentCode"] = props.incidentCode
             memory["snapshot"] = snap
             memory.setdefault("messages", []).append({"id": msg_id, "role": "assistant", "content": text})
             await self._store.save_thread_memory(tid, memory)
             yield encoder.encode(RunFinishedEvent(thread_id=tid, run_id=rid))
             return
 
-        # APPROVED: 실행 대기 스냅샷 -> A2A 실행 -> MCP 완료/포스트모템 반영
+        # APPROVED: 실행 대기 상태를 먼저 저장해 워커 장애 시에도 재개 가능한 스냅샷을 유지한다
         waiting_snap = {**prev_snap, "workflowStatus": "AWAITING_EXECUTION_RESULT", "approval": approval_obj}
+        memory["incidentCode"] = props.incidentCode
+        memory["snapshot"] = waiting_snap
+        await self._store.save_thread_memory(tid, memory)
         yield encoder.encode(StateSnapshotEvent(snapshot=waiting_snap))
         yield encoder.encode(StepStartedEvent(step_name="execute_approved"))
 
         action_cmd = str(decided.get("actionCommand") or _find_plan_command(plan, approval_obj["stepNo"]) or f"kubectl rollout undo deployment/{self._settings.default_service_name}")
         exec_payload = {"action": "execute", "incidentCode": props.incidentCode, "approvalId": approval_id, "planId": str(approval_obj["planId"] or "PLAN-UNKNOWN"), "actionCommand": action_cmd, "verificationCriteria": str((plan or {}).get("verificationCriteria") or ""), "evidence": list((plan or {}).get("evidence") or [])}
 
-        if self._a2a_caller is not None:
-            exec_res = await self._a2a_caller(self._settings.remediation_agent_a2a_url, exec_payload, tid)
-        else:
-            exec_res = await send_a2a_json(self._http, base_url=self._settings.remediation_agent_a2a_url, internal_token=self._settings.internal_service_token.get_secret_value(), payload=exec_payload, context_id=tid)
+        try:
+            if self._a2a_caller is not None:
+                exec_res = await self._a2a_caller(self._settings.remediation_agent_a2a_url, exec_payload, tid)
+            else:
+                exec_res = await send_a2a_json(self._http, base_url=self._settings.remediation_agent_a2a_url, internal_token=self._settings.internal_service_token.get_secret_value(), payload=exec_payload, context_id=tid)
+        except Exception:
+            yield encoder.encode(StepFinishedEvent(step_name="execute_approved"))
+            await publish_safe(self._bus, tid, "execution_interrupted", {"incidentCode": props.incidentCode, "approvalId": approval_id})
+            msg_id = f"msg-a-{uuid.uuid4().hex[:6]}"
+            retry_text = f"승인({approval_id})은 기록되었으나 실행 워커 호출이 일시 중단되었습니다. 같은 승인 건으로 다시 요청하면 실행을 이어서 완료할 수 있습니다."
+            yield encoder.encode(TextMessageStartEvent(message_id=msg_id, role="assistant"))
+            yield encoder.encode(TextMessageContentEvent(message_id=msg_id, delta=retry_text))
+            yield encoder.encode(TextMessageEndEvent(message_id=msg_id))
+            memory.setdefault("messages", []).append({"id": msg_id, "role": "assistant", "content": retry_text})
+            await self._store.save_thread_memory(tid, memory)
+            yield encoder.encode(RunFinishedEvent(thread_id=tid, run_id=rid))
+            return
 
         try:
             await self._backend.complete_incident_with_postmortem(
@@ -229,6 +284,7 @@ class SupervisorService:
         yield encoder.encode(TextMessageStartEvent(message_id=msg_id, role="assistant"))
         yield encoder.encode(TextMessageContentEvent(message_id=msg_id, delta=reply_text))
         yield encoder.encode(TextMessageEndEvent(message_id=msg_id))
+        memory["incidentCode"] = props.incidentCode
         memory["snapshot"] = final_snap
         memory.setdefault("messages", []).append({"id": msg_id, "role": "assistant", "content": reply_text})
         await self._store.save_thread_memory(tid, memory)

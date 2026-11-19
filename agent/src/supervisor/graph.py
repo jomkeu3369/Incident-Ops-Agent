@@ -16,6 +16,7 @@ from common.event_log import EventBus, publish_safe
 from common.planner_math import parse_rfc3339
 
 A2ACaller = Callable[[str, dict[str, Any], str], Awaitable[dict[str, Any]]]
+UiEventSink = Callable[[dict[str, Any]], Awaitable[None]]
 
 _GREETING_PATTERNS = ("안녕", "hello", "hi", "도움말", "사용법", "기능", "무엇을 할 수", "뭐 할 수")
 _TIME_RANGE_RE = re.compile(r"(\d{1,2}:\d{2})\s*[~-]\s*(\d{1,2}:\d{2})")
@@ -101,8 +102,13 @@ def _resolve_time_bounds(constraints: dict[str, Any]) -> tuple[str, str, str, st
     return metrics_from, metrics_to, win_start.isoformat(), win_end.isoformat()
 
 
-def build_supervisor_graph(settings: Settings, http_client: httpx.AsyncClient, backend: BackendClient, event_bus: EventBus | None = None, a2a_caller: A2ACaller | None = None):
+def build_supervisor_graph(settings: Settings, http_client: httpx.AsyncClient, backend: BackendClient, event_bus: EventBus | None = None, a2a_caller: A2ACaller | None = None, on_ui_event: UiEventSink | None = None):
     """요구사항 4.2 기준 5개 노드(analyze->plan->execute->evaluate->respond) LangGraph를 컴파일한다."""
+
+    async def _emit(ui: list[dict[str, Any]], ev: dict[str, Any]) -> None:
+        ui.append(ev)
+        if on_ui_event is not None:
+            await on_ui_event(ev)
 
     async def _call_worker(url: str, payload: dict[str, Any], context_id: str) -> dict[str, Any]:
         if a2a_caller is not None:
@@ -114,7 +120,7 @@ def build_supervisor_graph(settings: Settings, http_client: httpx.AsyncClient, b
         """1단계: 요청 의도 분류 및 기준·제약 조건 추출."""
         sid = state["session_id"]
         ui = list(state.get("ui_events") or [])
-        ui.append({"kind": "step_start", "step": "analyze"})
+        await _emit(ui, {"kind": "step_start", "step": "analyze"})
         await publish_safe(event_bus, sid, "step_started", {"step": "analyze"})
 
         constraints, intent, reason = _extract_constraints(state.get("user_message", ""), state.get("constraints") or {}, state.get("incident_started_at"))
@@ -131,26 +137,26 @@ def build_supervisor_graph(settings: Settings, http_client: httpx.AsyncClient, b
 
         await publish_safe(event_bus, sid, "llm_decision", {"step": "analyze", "intent": intent, "reason": reason})
         await publish_safe(event_bus, sid, "step_finished", {"step": "analyze", "intent": intent})
-        ui.append({"kind": "step_finish", "step": "analyze"})
+        await _emit(ui, {"kind": "step_finish", "step": "analyze"})
         return {"service_name": service_name, "constraints": constraints, "intent": intent, "intent_reason": reason, "ui_events": ui}
 
     async def plan_node(state: SupervisorState) -> SupervisorState:
         """2단계: 필요한 A2A 워커 호출 계획 수립(재계획 시 캐시 유지)."""
         sid = state["session_id"]
         ui = list(state.get("ui_events") or [])
-        ui.append({"kind": "step_start", "step": "plan"})
+        await _emit(ui, {"kind": "step_start", "step": "plan"})
         await publish_safe(event_bus, sid, "step_started", {"step": "plan", "replanCount": state.get("replan_count", 0)})
 
         steps = ["a2a:log-analyzer-agent", "a2a:remediation-agent"]
         await publish_safe(event_bus, sid, "step_finished", {"step": "plan", "steps": steps})
-        ui.append({"kind": "step_finish", "step": "plan"})
+        await _emit(ui, {"kind": "step_finish", "step": "plan"})
         return {"plan_steps_order": steps, "should_replan": False, "ui_events": ui}
 
     async def execute_node(state: SupervisorState) -> SupervisorState:
         """3단계: A2A로 로그 분석(DR-DCI)과 복구 계획(외부 Tool 3종+Decisions) 워커를 위임 실행한다."""
         sid = state["session_id"]
         ui = list(state.get("ui_events") or [])
-        ui.append({"kind": "step_start", "step": "execute"})
+        await _emit(ui, {"kind": "step_start", "step": "execute"})
         await publish_safe(event_bus, sid, "step_started", {"step": "execute", "replanCount": state.get("replan_count", 0)})
 
         pulled_ids = list(state.get("pulled_chunk_ids") or [])
@@ -169,7 +175,7 @@ def build_supervisor_graph(settings: Settings, http_client: httpx.AsyncClient, b
             log_res = {"ok": False, "error": {"code": "A2A_ERROR", "message": "로그 분석 에이전트 호출에 실패했습니다."}, "evidence": []}
         log_ms = round((time.perf_counter() - t0) * 1000, 1)
         await publish_safe(event_bus, sid, "tool_call", {"tool": "a2a:log-analyzer-agent", "args": {"incidentCode": state["incident_code"], "excludeCount": len(pulled_ids)}, "ok": bool(log_res.get("ok")), "elapsedMs": log_ms})
-        ui.append({"kind": "tool_call", "id": log_call_id, "name": "log-analyzer-agent", "args": log_req, "result": {"ok": bool(log_res.get("ok")), "pulledCount": log_res.get("pulledCount", 0), "chunkIds": log_res.get("evidenceChunkIds", [])}})
+        await _emit(ui, {"kind": "tool_call", "id": log_call_id, "name": "log-analyzer-agent", "args": log_req, "result": {"ok": bool(log_res.get("ok")), "pulledCount": log_res.get("pulledCount", 0), "chunkIds": log_res.get("evidenceChunkIds", [])}})
 
         if log_res.get("ok"):
             existing_set = set(pulled_ids)
@@ -215,13 +221,13 @@ def build_supervisor_graph(settings: Settings, http_client: httpx.AsyncClient, b
         # 워커 내부 외부 Tool 3종 호출 이력도 로깅 이벤트와 AG-UI에 기록한다
         for tc in rem_res.get("toolCalls") or []:
             await publish_safe(event_bus, sid, "tool_call", tc)
-            ui.append({"kind": "tool_call", "id": f"tc-{uuid.uuid4().hex[:6]}", "name": tc.get("tool", "external_tool"), "args": tc.get("args", {}), "result": {"ok": tc.get("ok"), "errorCode": tc.get("errorCode"), "elapsedMs": tc.get("elapsedMs")}})
+            await _emit(ui, {"kind": "tool_call", "id": f"tc-{uuid.uuid4().hex[:6]}", "name": tc.get("tool", "external_tool"), "args": tc.get("args", {}), "result": {"ok": tc.get("ok"), "errorCode": tc.get("errorCode"), "elapsedMs": tc.get("elapsedMs")}})
 
         await publish_safe(event_bus, sid, "tool_call", {"tool": "a2a:remediation-agent", "args": {"incidentCode": state["incident_code"]}, "ok": bool(rem_res.get("ok")), "status": rem_res.get("status"), "verdict": rem_res.get("verdict"), "elapsedMs": rem_ms})
-        ui.append({"kind": "tool_call", "id": rem_call_id, "name": "remediation-agent", "args": {"incidentCode": state["incident_code"], "serviceName": state["service_name"]}, "result": {"status": rem_res.get("status"), "verdict": rem_res.get("verdict")}})
+        await _emit(ui, {"kind": "tool_call", "id": rem_call_id, "name": "remediation-agent", "args": {"incidentCode": state["incident_code"], "serviceName": state["service_name"]}, "result": {"status": rem_res.get("status"), "verdict": rem_res.get("verdict")}})
 
         await publish_safe(event_bus, sid, "step_finished", {"step": "execute"})
-        ui.append({"kind": "step_finish", "step": "execute"})
+        await _emit(ui, {"kind": "step_finish", "step": "execute"})
         return {
             "evidence": evidence,
             "pulled_chunk_ids": pulled_ids,
@@ -237,7 +243,7 @@ def build_supervisor_graph(settings: Settings, http_client: httpx.AsyncClient, b
         """4단계: 제약 충족·근거 판정 평가, 재계획 상한 검사, 승인 원장 등록(POST /plans -> POST /approvals)."""
         sid = state["session_id"]
         ui = list(state.get("ui_events") or [])
-        ui.append({"kind": "step_start", "step": "evaluate"})
+        await _emit(ui, {"kind": "step_start", "step": "evaluate"})
         await publish_safe(event_bus, sid, "step_started", {"step": "evaluate"})
 
         rem = state.get("remediation_result") or {}
@@ -249,7 +255,7 @@ def build_supervisor_graph(settings: Settings, http_client: httpx.AsyncClient, b
         replan_ev = rem.get("replanEvent")
         if replan_ev and replan_ev not in replan_history:
             replan_history.append(replan_ev)
-            ui.append({"kind": "replan", "value": replan_ev})
+            await _emit(ui, {"kind": "replan", "value": replan_ev})
             await publish_safe(event_bus, sid, "replan", replan_ev)
 
         # 근거 부족(NEED_MORE_EVIDENCE) 시 남은 청크와 재계획 상한 내에서 재조회 루프로 분기한다
@@ -258,12 +264,12 @@ def build_supervisor_graph(settings: Settings, http_client: httpx.AsyncClient, b
                 next_count = replan_count + 1
                 await publish_safe(event_bus, sid, "llm_decision", {"step": "evaluate", "decision": "replan", "replanCount": next_count, "reason": "근거 부족(NEED_MORE_EVIDENCE)으로 범위 내 추가 청크 조회를 재계획합니다."})
                 await publish_safe(event_bus, sid, "step_finished", {"step": "evaluate", "shouldReplan": True})
-                ui.append({"kind": "step_finish", "step": "evaluate"})
+                await _emit(ui, {"kind": "step_finish", "step": "evaluate"})
                 return {"replan_count": next_count, "should_replan": True, "replan_history": replan_history, "ui_events": ui}
 
             snapshot = {"incidentCode": state["incident_code"], "workflowStatus": "BLOCKED", "plan": None, "approval": None, "replanHistory": replan_history}
             await publish_safe(event_bus, sid, "step_finished", {"step": "evaluate", "workflowStatus": "BLOCKED", "reason": "replan_limit_or_no_chunks"})
-            ui.append({"kind": "step_finish", "step": "evaluate"})
+            await _emit(ui, {"kind": "step_finish", "step": "evaluate"})
             return {"should_replan": False, "workflow_status": "BLOCKED", "snapshot": snapshot, "replan_history": replan_history, "ui_events": ui}
 
         if status_val == "READY_FOR_APPROVAL" and rem.get("planDraft"):
@@ -284,25 +290,25 @@ def build_supervisor_graph(settings: Settings, http_client: httpx.AsyncClient, b
 
             snapshot = {"incidentCode": state["incident_code"], "workflowStatus": wf_status, "plan": {k: v for k, v in draft.items() if k != "approvalStepNo"}, "approval": approval, "replanHistory": replan_history}
             await publish_safe(event_bus, sid, "step_finished", {"step": "evaluate", "workflowStatus": wf_status})
-            ui.append({"kind": "step_finish", "step": "evaluate"})
+            await _emit(ui, {"kind": "step_finish", "step": "evaluate"})
             return {"should_replan": False, "workflow_status": wf_status, "snapshot": snapshot, "remediation_result": rem, "replan_history": replan_history, "ui_events": ui}
 
         if status_val == "REVISED_NO_ROLLBACK":
             snapshot = {"incidentCode": state["incident_code"], "workflowStatus": "BLOCKED", "plan": rem.get("planDraft"), "approval": None, "replanHistory": replan_history}
             await publish_safe(event_bus, sid, "step_finished", {"step": "evaluate", "workflowStatus": "BLOCKED", "verdict": "CONTRADICTED"})
-            ui.append({"kind": "step_finish", "step": "evaluate"})
+            await _emit(ui, {"kind": "step_finish", "step": "evaluate"})
             return {"should_replan": False, "workflow_status": "BLOCKED", "snapshot": snapshot, "replan_history": replan_history, "ui_events": ui}
 
         snapshot = {"incidentCode": state["incident_code"], "workflowStatus": "BLOCKED", "plan": None, "approval": None, "replanHistory": replan_history}
         await publish_safe(event_bus, sid, "step_finished", {"step": "evaluate", "workflowStatus": "BLOCKED"})
-        ui.append({"kind": "step_finish", "step": "evaluate"})
+        await _emit(ui, {"kind": "step_finish", "step": "evaluate"})
         return {"should_replan": False, "workflow_status": "BLOCKED", "snapshot": snapshot, "replan_history": replan_history, "ui_events": ui}
 
     async def respond_node(state: SupervisorState) -> SupervisorState:
         """5단계: 근거·판단 기준·제외 사유·재계획 내역을 포함한 최종 응답을 생성한다(F3011)."""
         sid = state["session_id"]
         ui = list(state.get("ui_events") or [])
-        ui.append({"kind": "step_start", "step": "respond"})
+        await _emit(ui, {"kind": "step_start", "step": "respond"})
         await publish_safe(event_bus, sid, "step_started", {"step": "respond"})
 
         intent = state.get("intent")
@@ -340,7 +346,7 @@ def build_supervisor_graph(settings: Settings, http_client: httpx.AsyncClient, b
             reply = "\n".join(parts)
 
         await publish_safe(event_bus, sid, "step_finished", {"step": "respond", "workflowStatus": snapshot.get("workflowStatus")})
-        ui.append({"kind": "step_finish", "step": "respond"})
+        await _emit(ui, {"kind": "step_finish", "step": "respond"})
         return {"reply_text": reply, "snapshot": snapshot, "workflow_status": snapshot.get("workflowStatus", "IDLE"), "ui_events": ui}
 
     def _route_after_analyze(state: SupervisorState) -> str:
