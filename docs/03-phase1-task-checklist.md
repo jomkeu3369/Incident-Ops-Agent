@@ -17,13 +17,14 @@
   3. 계획·승인 검증: 다른 장애의 로그나 계획을 연결할 수 없고, 계획에 없는 단계는 승인할 수 없음. 성공 완료 요청에 복구 확인 결과가 필요하며 실패를 기록한 조치를 재시도할 때는 새 승인이 필요함.
 
 ## Phase 1B: Spring AI MCP Server 부착 및 실통신 검증
-- [ ] Spring AI `1.0.0` BOM 및 `spring-ai-starter-mcp-server-webmvc` 추가 (HTTP+SSE `/sse`, `/mcp/message` 설정)
-- [ ] `IncidentService` 와 `CorpusMapper` 를 위임 호출하는 MCP `@Tool` 4종 등록
-- [ ] `backend/Dockerfile` 작성 (Maven 멀티 스테이지 빌드 + 런타임 `wget` 포함)
-- [ ] **Phase 1B 검증 통과:**
-  1. 백엔드 기동 후 Python MCP 클라이언트(`mcp.client.sse.sse_client`)로 `http://localhost:8080/sse` 접속
-  2. `tools/list` 로 4개 도구 스키마 조회 확인
-  3. `searchCorpusIndex("INC-2026-001", "LOG", "HikariPool")` → `pullCorpusChunk("INC-2026-001", "LOG-104")` → `completeIncidentWithPostMortem`에 승인 ID와 복구 확인 결과 전달 및 MySQL 반영 확인
+- [x] Spring AI `1.0.0` BOM 및 `spring-ai-starter-mcp-server-webmvc` 구성. SSE `/sse`와 메시지 전송 `/mcp/message`에 내부 토큰 적용
+- [x] `IncidentService`와 `CorpusMapper`를 호출하는 MCP `@Tool` 4종 등록
+- [x] 백엔드 멀티 스테이지 Docker 빌드 및 런타임 `wget` 헬스체크 확인
+- [x] **Phase 1B 실통신 검증**
+  1. 격리된 MySQL 8에서 `demo` 프로필로 백엔드를 시작했다. [Python SSE 클라이언트](02-backend-api-and-mcp-spec.md#sse로-연결하기)에서 초기화와 `tools/list`를 실행해 도구 4종을 확인했다.
+  2. 결제 장애에서 `HikariPool`을 검색하고 `LOG-104` 본문을 조회했다. 같은 서비스의 다른 장애에서는 해당 로그 조회가 거절되고, 공용 런북은 조회됐다.
+  3. `APR-2026-001`로 완료 요청을 보냈다. 복구 확인 결과가 빠진 요청은 거절됐다. 확인 결과를 넣은 요청과 재전송 이후 MySQL에서 `RESOLVED`, 실행 1건, 포스트모템 1건과 복구 확인 결과를 확인했다.
+  4. Java 21에서 MCP 회귀 테스트 3건을 포함해 Maven 테스트 23건이 통과했다.
 
 ## 복구 플래너 연동 검증
 

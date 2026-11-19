@@ -8,8 +8,17 @@ import org.apache.ibatis.annotations.Param;
 
 @Mapper
 public interface CorpusMapper {
-    List<CorpusChunk> searchMetadata(@Param("corpusType") String corpusType, @Param("keyword") String keyword);
-    CorpusChunk findByChunkId(@Param("chunkId") String chunkId);
+    List<CorpusChunk> searchMetadata(
+            @Param("incidentCode") String incidentCode,
+            @Param("serviceName") String serviceName,
+            @Param("corpusType") String corpusType,
+            @Param("keyword") String keyword
+    );
+    CorpusChunk findByChunkId(
+            @Param("incidentCode") String incidentCode,
+            @Param("serviceName") String serviceName,
+            @Param("chunkId") String chunkId
+    );
     List<String> findScopedChunkIds(
             @Param("incidentCode") String incidentCode,
             @Param("serviceName") String serviceName,
