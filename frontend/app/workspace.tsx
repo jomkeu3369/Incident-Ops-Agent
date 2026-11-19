@@ -22,6 +22,13 @@ const statusText: Record<Snapshot["workflowStatus"], string> = {
   RESOLVED: "해결됨",
 };
 
+function createDemoId(): string {
+  return crypto.randomUUID?.() ?? Array.from(
+    crypto.getRandomValues(new Uint8Array(16)),
+    (byte) => byte.toString(16).padStart(2, "0"),
+  ).join("");
+}
+
 function initialState(incident: Incident): State {
   return {
     snapshot: initialSnapshot(incident),
@@ -95,31 +102,31 @@ export function Workspace({ incident }: { incident: Incident }) {
 
     const controller = new AbortController();
     activeRun.current = controller;
-    threadId.current ??= crypto.randomUUID();
-    const runId = crypto.randomUUID();
-    const approvalDecision = decision && snapshot.approval
-      ? { approvalId: snapshot.approval.approvalId, decision }
-      : undefined;
-    const input: RunInput = {
-      threadId: threadId.current,
-      runId,
-      messages: approvalDecision ? [] : [{ id: runId, role: "user", content: demoPrompt }],
-      tools: [],
-      context: [],
-      forwardedProps: approvalDecision
-        ? { incidentCode: incident.incidentCode, approvalDecision }
-        : { incidentCode: incident.incidentCode, incidentStartedAt: incident.startedAt },
-    };
-    dispatch({
-      type: "REQUEST",
-      entry: {
-        id: runId,
-        label: "운영자",
-        text: approvalDecision ? (decision === "APPROVED" ? "복구 계획을 승인합니다." : "복구 계획을 반려합니다.") : demoPrompt,
-        kind: "operator",
-      },
-    });
     try {
+      threadId.current ??= createDemoId();
+      const runId = createDemoId();
+      const approvalDecision = decision && snapshot.approval
+        ? { approvalId: snapshot.approval.approvalId, decision }
+        : undefined;
+      const input: RunInput = {
+        threadId: threadId.current,
+        runId,
+        messages: approvalDecision ? [] : [{ id: runId, role: "user", content: demoPrompt }],
+        tools: [],
+        context: [],
+        forwardedProps: approvalDecision
+          ? { incidentCode: incident.incidentCode, approvalDecision }
+          : { incidentCode: incident.incidentCode, incidentStartedAt: incident.startedAt },
+      };
+      dispatch({
+        type: "REQUEST",
+        entry: {
+          id: runId,
+          label: "운영자",
+          text: approvalDecision ? (decision === "APPROVED" ? "복구 계획을 승인합니다." : "복구 계획을 반려합니다.") : demoPrompt,
+          kind: "operator",
+        },
+      });
       for await (const event of runDemo(input, snapshot, controller.signal)) {
         if (controller.signal.aborted) return;
         dispatch(event);
