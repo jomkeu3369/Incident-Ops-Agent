@@ -1,6 +1,59 @@
-# Incident-Ops-Agent
+<div align="center">
 
-**Incident-Ops-Agent**는 **AG-UI · A2A · MCP** 3대 에이전트 표준 프로토콜과 **DR-DCI(Dynamic Retrieval-steered Direct Corpus Interaction)** 패턴을 결합한 멀티 에이전트 기반 실시간 장애 대응·복구 플래너 및 포스트모템 자동화 서비스입니다.
+# Incident Ops Agent
+
+### 근거 있는 장애 분석부터 안전한 롤백 승인·포스트모템까지.
+
+AG-UI · A2A · MCP 3대 표준 프로토콜과 DR-DCI 패턴을 결합한 멀티 에이전트 기반 실시간 장애 대응 워크스페이스입니다.
+
+[주요 화면](#주요-화면-미리보기) · [시스템 구성](#1-시스템-구성) · [실행 방법](#3-실행-방법) · [요구사항·검증 결과서](docs/10-requirements-and-verification.md)
+
+<p>
+  <img src="https://img.shields.io/badge/Next.js_16-000000?style=flat-square&logo=nextdotjs&logoColor=white" alt="Next.js 16" />
+  <img src="https://img.shields.io/badge/React_19-20232A?style=flat-square&logo=react&logoColor=61DAFB" alt="React 19" />
+  <img src="https://img.shields.io/badge/TypeScript-3178C6?style=flat-square&logo=typescript&logoColor=white" alt="TypeScript" />
+  <img src="https://img.shields.io/badge/AG--UI_Protocol-1F2937?style=flat-square" alt="AG-UI Protocol" />
+</p>
+
+<p>
+  <img src="https://img.shields.io/badge/Java_21-ED8B00?style=flat-square&logo=openjdk&logoColor=white" alt="Java 21" />
+  <img src="https://img.shields.io/badge/Spring_Boot_3.4-6DB33F?style=flat-square&logo=springboot&logoColor=white" alt="Spring Boot 3.4" />
+  <img src="https://img.shields.io/badge/Spring_AI_MCP-4E9A06?style=flat-square&logo=spring&logoColor=white" alt="Spring AI MCP" />
+  <img src="https://img.shields.io/badge/MyBatis-B01C2E?style=flat-square" alt="MyBatis" />
+  <img src="https://img.shields.io/badge/MySQL_8.0-4479A1?style=flat-square&logo=mysql&logoColor=white" alt="MySQL 8.0" />
+  <img src="https://img.shields.io/badge/Flyway-CC0200?style=flat-square&logo=flyway&logoColor=white" alt="Flyway" />
+  <img src="https://img.shields.io/badge/Redis_7-DC382D?style=flat-square&logo=redis&logoColor=white" alt="Redis 7" />
+</p>
+
+<p>
+  <img src="https://img.shields.io/badge/Python_3.12-3776AB?style=flat-square&logo=python&logoColor=white" alt="Python 3.12" />
+  <img src="https://img.shields.io/badge/FastAPI-009688?style=flat-square&logo=fastapi&logoColor=white" alt="FastAPI" />
+  <img src="https://img.shields.io/badge/LangGraph-1C3C3C?style=flat-square" alt="LangGraph" />
+  <img src="https://img.shields.io/badge/A2A_SDK-3B82F6?style=flat-square" alt="A2A SDK" />
+  <img src="https://img.shields.io/badge/MCP_SDK-0F766E?style=flat-square" alt="MCP SDK" />
+  <img src="https://img.shields.io/badge/OpenAI_Decisions_API-412991?style=flat-square&logo=openai&logoColor=white" alt="OpenAI Decisions API" />
+</p>
+
+<p>
+  <img src="https://img.shields.io/badge/Docker_Compose-2496ED?style=flat-square&logo=docker&logoColor=white" alt="Docker Compose" />
+  <img src="https://img.shields.io/badge/Caddy-1F88C0?style=flat-square&logo=caddy&logoColor=white" alt="Caddy" />
+  <img src="https://img.shields.io/badge/GitHub_API-181717?style=flat-square&logo=github&logoColor=white" alt="GitHub API" />
+  <img src="https://img.shields.io/badge/Grafana_Cloud-F46800?style=flat-square&logo=grafana&logoColor=white" alt="Grafana Cloud" />
+  <img src="https://img.shields.io/badge/Google_Calendar-4285F4?style=flat-square&logo=googlecalendar&logoColor=white" alt="Google Calendar" />
+  <img src="https://img.shields.io/badge/pytest-0A9EDC?style=flat-square&logo=pytest&logoColor=white" alt="pytest" />
+  <img src="https://img.shields.io/badge/JUnit_5-25A162?style=flat-square&logo=junit5&logoColor=white" alt="JUnit 5" />
+  <img src="https://img.shields.io/badge/Playwright-2EAD33?style=flat-square&logo=playwright&logoColor=white" alt="Playwright" />
+</p>
+
+<p>
+  <a href="#1-시스템-구성">전체 기술 스택 · 아키텍처 보기</a>
+</p>
+
+<img src="docs/screenshots/02-replan-and-approval.png" alt="Incident Ops Agent AG-UI 재계획 및 승인 워크스페이스" width="100%" />
+
+</div>
+
+---
 
 * **표준화된 멀티 에이전트 협업:** 총괄(`supervisor`) 에이전트가 **A2A**(`a2a-sdk`)로 로그 분석(`log_agent`)·복구 계획(`remediation_agent`) 워커에 작업을 위임하고, 각 워커는 **MCP**(`/sse`)를 통해 Spring Boot 장애 원장 및 코퍼스와 통신합니다.
 * **컨텍스트 폭발 방지 (DR-DCI):** 수만 줄의 장애 로그와 런북을 한꺼번에 프롬프트에 넣지 않고 `searchCorpusIndex` → `pullCorpusChunk`로 필요한 청크만 동적으로 인출해 추론 정확도를 유지합니다.
