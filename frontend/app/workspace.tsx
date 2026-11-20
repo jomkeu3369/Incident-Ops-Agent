@@ -1,151 +1,291 @@
 "use client";
 
 import Link from "next/link";
-import { Activity, ArrowUpRight, CalendarClock, Check, ChevronRight, Clock3, FlaskConical, ListChecks, RotateCcw, Send, X } from "lucide-react";
-import { useEffect, useReducer, useRef } from "react";
 import {
-  allowedWindow, demoPrompt, freezeWindow, incidents, initialSnapshot, previousWindow, runDemo, timeLabel, windowLabel,
-  type Decision, type DemoEvent, type Incident, type Replan, type RunInput, type Snapshot, type WorkWindow,
-} from "./demo";
+  Activity,
+  ArrowUpRight,
+  CalendarClock,
+  Check,
+  ChevronRight,
+  Clock3,
+  ListChecks,
+  Radio,
+  RefreshCw,
+  RotateCcw,
+  Send,
+  X,
+} from "lucide-react";
+import { useCallback, useEffect, useReducer, useRef, useState } from "react";
+import { resolveAgUiUrl, runAgUiRequest, type AgUiMode } from "./ag-ui-client";
+import {
+  STATUS_LABELS,
+  timeLabel,
+  windowLabel,
+  type Decision,
+  type ReplanRecord,
+  type WorkWindow,
+} from "./ag-ui-contract";
+import { allowedWindow, demoPrompt, freezeWindow, incidents, previousWindow, type Incident } from "./demo";
+import {
+  canResumeApprovedExecution,
+  canSendPrompt,
+  canSubmitDecision,
+  createInitialState,
+  workspaceReducer,
+} from "./workspace-state";
 import styles from "./workspace.module.css";
 
-type Entry = { id: string; label: string; text: string; kind: "record" | "operator" | "change" };
-type State = { snapshot: Snapshot; entries: Entry[]; replan: Replan | null; busy: boolean; error: string | null };
-type Action = DemoEvent | { type: "REQUEST"; entry: Entry } | { type: "RESET"; incident: Incident };
-
-const statusText: Record<Snapshot["workflowStatus"], string> = {
-  IDLE: "계획 요청 전",
-  PLANNING: "계획 수립 중",
-  AWAITING_APPROVAL: "승인 대기",
-  AWAITING_EXECUTION_RESULT: "실행 결과 대기",
-  REJECTED: "반려됨",
-  RESOLVED: "해결됨",
-};
-
-function createDemoId(): string {
-  return crypto.randomUUID?.() ?? Array.from(
-    crypto.getRandomValues(new Uint8Array(16)),
-    (byte) => byte.toString(16).padStart(2, "0"),
-  ).join("");
+function createClientId(): string {
+  return (
+    crypto.randomUUID?.() ??
+    Array.from(crypto.getRandomValues(new Uint8Array(16)), (byte) => byte.toString(16).padStart(2, "0")).join("")
+  );
 }
 
-function initialState(incident: Incident): State {
-  return {
-    snapshot: initialSnapshot(incident),
-    entries: [
-      { id: "intake", label: "장애 접수", text: incident.summary, kind: "record" },
-      ...(incident.resolved ? [] : [{
-        id: "scope", label: "요청 조건", text: "이전 버전의 502 비율과 변경 금지 시간을 확인합니다.", kind: "record" as const,
-      }]),
-    ],
-    replan: null,
-    busy: false,
-    error: null,
-  };
+function threadStorageKey(mode: AgUiMode, incidentCode: string): string {
+  return `incident-ops:thread:${mode}:${incidentCode}`;
 }
 
-function reduce(state: State, action: Action): State {
-  switch (action.type) {
-    case "RESET":
-      return initialState(action.incident);
-    case "REQUEST":
-      return { ...state, busy: true, error: null, entries: [...state.entries, action.entry] };
-    case "RUN_STARTED":
-      return { ...state, busy: true };
-    case "RUN_FINISHED":
-      return { ...state, busy: false };
-    case "RUN_ERROR":
-      return { ...state, busy: false, error: action.message };
-    case "STATE_SNAPSHOT":
-      return action.snapshot.incidentCode === state.snapshot.incidentCode ? { ...state, snapshot: action.snapshot } : state;
-    case "TOOL_CALL_RESULT": {
-      const { source, summary } = JSON.parse(action.content) as { source: string; summary: string };
-      return {
-        ...state,
-        entries: [...state.entries, { id: action.messageId, label: source, text: summary, kind: "record" }],
-      };
-    }
-    case "CUSTOM": {
-      const replan = action.value;
-      return {
-        ...state, replan,
-        entries: [...state.entries, {
-          id: "replan", label: "작업 창 재계획",
-          text: `${replan.reason} ${windowLabel(replan.nextWindow)}로 이동했습니다.`, kind: "change",
-        }],
-      };
-    }
+function readStoredThreadId(mode: AgUiMode, incidentCode: string): string | null {
+  try {
+    return window.sessionStorage.getItem(threadStorageKey(mode, incidentCode));
+  } catch {
+    return null;
   }
 }
 
-export function Workspace({ incident }: { incident: Incident }) {
-  const [state, dispatch] = useReducer(reduce, incident, initialState);
+function writeStoredThreadId(mode: AgUiMode, incidentCode: string, threadId: string | null): void {
+  try {
+    const key = threadStorageKey(mode, incidentCode);
+    if (threadId) {
+      window.sessionStorage.setItem(key, threadId);
+    } else {
+      window.sessionStorage.removeItem(key);
+    }
+  } catch {
+    // sessionStorage unavailable
+  }
+}
+
+export function Workspace({ incident, initialMode }: { incident: Incident; initialMode: AgUiMode }) {
+  const [mode, setMode] = useState<AgUiMode>(initialMode);
+  const [prompt, setPrompt] = useState(demoPrompt);
+  const [state, dispatch] = useReducer(workspaceReducer, incident, createInitialState);
   const activeRun = useRef<AbortController | null>(null);
-  const threadId = useRef<string | null>(null);
-  const { snapshot, entries, replan, busy } = state;
-  const approvedStep = snapshot.plan && snapshot.approval && snapshot.plan.planId === snapshot.approval.planId
-    ? snapshot.plan.steps.find((step) => step.stepNo === snapshot.approval?.stepNo)
-    : undefined;
+  const threadIdRef = useRef<string | null>(null);
 
-  useEffect(() => () => activeRun.current?.abort(), []);
+  const { snapshot, entries, replan, busy, activeStep, restoring, error, needsResync } = state;
+  const approvedStep =
+    snapshot.plan && snapshot.approval && snapshot.plan.planId === snapshot.approval.planId
+      ? snapshot.plan.steps.find((step) => step.stepNo === snapshot.approval?.stepNo)
+      : undefined;
 
-  function reset() {
+  const restoreSession = useCallback(
+    async (targetMode: AgUiMode, storedThreadId: string) => {
+      if (activeRun.current || incident.resolved) return;
+      const controller = new AbortController();
+      activeRun.current = controller;
+      threadIdRef.current = storedThreadId;
+      dispatch({ type: "RESTORE_STARTED" });
+
+      try {
+        await runAgUiRequest({
+          url: resolveAgUiUrl(targetMode),
+          threadId: storedThreadId,
+          runId: createClientId(),
+          forwardedProps: {
+            incidentCode: incident.incidentCode,
+            restore: true,
+          },
+          signal: controller.signal,
+          dispatch,
+        });
+      } finally {
+        if (activeRun.current === controller) {
+          activeRun.current = null;
+        }
+      }
+    },
+    [incident.incidentCode, incident.resolved],
+  );
+
+  useEffect(() => {
+    const saved = readStoredThreadId(mode, incident.incidentCode);
+    if (saved && !incident.resolved) {
+      void restoreSession(mode, saved);
+    }
+    return () => {
+      activeRun.current?.abort();
+      activeRun.current = null;
+    };
+  }, [incident.incidentCode, incident.resolved, mode, restoreSession]);
+
+  function resetSession() {
     activeRun.current?.abort();
     activeRun.current = null;
-    threadId.current = null;
+    threadIdRef.current = null;
+    writeStoredThreadId(mode, incident.incidentCode, null);
+    setPrompt(demoPrompt);
     dispatch({ type: "RESET", incident });
   }
 
-  async function submit(decision?: Decision) {
-    if (activeRun.current || incident.resolved) return;
-    if (decision ? snapshot.workflowStatus !== "AWAITING_APPROVAL" || !snapshot.approval : snapshot.workflowStatus !== "IDLE") return;
+  function switchMode(nextMode: AgUiMode) {
+    if (nextMode === mode) return;
+    activeRun.current?.abort();
+    activeRun.current = null;
+    threadIdRef.current = null;
+    try {
+      const url = new URL(window.location.href);
+      url.searchParams.set("incident", incident.incidentCode);
+      url.searchParams.set("mode", nextMode);
+      window.history.replaceState(null, "", `${url.pathname}${url.search}${url.hash}`);
+    } catch {
+      // ignore history errors in non-browser contexts
+    }
+    setMode(nextMode);
+    setPrompt(demoPrompt);
+    dispatch({ type: "RESET", incident });
+  }
+
+  async function submitPrompt() {
+    const trimmed = prompt.trim();
+    if (!trimmed || activeRun.current || incident.resolved) return;
+    if (!canSendPrompt(snapshot.workflowStatus, incident.resolved)) return;
 
     const controller = new AbortController();
     activeRun.current = controller;
+
     try {
-      threadId.current ??= createDemoId();
-      const runId = createDemoId();
-      const approvalDecision = decision && snapshot.approval
-        ? { approvalId: snapshot.approval.approvalId, decision }
-        : undefined;
-      const input: RunInput = {
-        threadId: threadId.current,
-        runId,
-        messages: approvalDecision ? [] : [{ id: runId, role: "user", content: demoPrompt }],
-        tools: [],
-        context: [],
-        forwardedProps: approvalDecision
-          ? { incidentCode: incident.incidentCode, approvalDecision }
-          : { incidentCode: incident.incidentCode, incidentStartedAt: incident.startedAt },
-      };
+      const tid = threadIdRef.current ?? createClientId();
+      threadIdRef.current = tid;
+      writeStoredThreadId(mode, incident.incidentCode, tid);
+      const runId = createClientId();
+
       dispatch({
         type: "REQUEST",
         entry: {
           id: runId,
           label: "운영자",
-          text: approvalDecision ? (decision === "APPROVED" ? "복구 계획을 승인합니다." : "복구 계획을 반려합니다.") : demoPrompt,
+          text: trimmed,
           kind: "operator",
         },
       });
-      for await (const event of runDemo(input, snapshot, controller.signal)) {
-        if (controller.signal.aborted) return;
-        dispatch(event);
+
+      const outcome = await runAgUiRequest({
+        url: resolveAgUiUrl(mode),
+        threadId: tid,
+        runId,
+        userMessage: { id: runId, content: trimmed },
+        forwardedProps: {
+          incidentCode: incident.incidentCode,
+          incidentStartedAt: incident.startedAt,
+        },
+        signal: controller.signal,
+        dispatch,
+      });
+
+      if (outcome.ok && !controller.signal.aborted) {
+        setPrompt("");
       }
-    } catch {
-      if (!controller.signal.aborted) dispatch({ type: "RUN_ERROR", message: "모의 실행이 중단됐습니다. 새 모의 실행으로 다시 시작해 주세요." });
     } finally {
-      if (activeRun.current === controller) activeRun.current = null;
+      if (activeRun.current === controller) {
+        activeRun.current = null;
+      }
     }
   }
+
+  async function submitDecision(decision: Decision) {
+    if (activeRun.current || incident.resolved) return;
+    if (!snapshot.approval || !canSubmitDecision(snapshot, decision)) {
+      return;
+    }
+
+    const resuming = canResumeApprovedExecution(snapshot);
+    const controller = new AbortController();
+    activeRun.current = controller;
+
+    try {
+      const tid = threadIdRef.current ?? createClientId();
+      threadIdRef.current = tid;
+      writeStoredThreadId(mode, incident.incidentCode, tid);
+      const runId = createClientId();
+
+      dispatch({
+        type: "REQUEST",
+        entry: {
+          id: runId,
+          label: "운영자",
+          text: resuming
+            ? "승인된 복구 실행을 재개합니다."
+            : decision === "APPROVED"
+              ? "복구 계획을 승인합니다."
+              : "복구 계획을 반려합니다.",
+          kind: "operator",
+        },
+      });
+
+      await runAgUiRequest({
+        url: resolveAgUiUrl(mode),
+        threadId: tid,
+        runId,
+        forwardedProps: {
+          incidentCode: incident.incidentCode,
+          approvalDecision: {
+            approvalId: snapshot.approval.approvalId,
+            decision,
+          },
+        },
+        signal: controller.signal,
+        dispatch,
+      });
+    } finally {
+      if (activeRun.current === controller) {
+        activeRun.current = null;
+      }
+    }
+  }
+
+  function handleResync() {
+    const tid = threadIdRef.current ?? readStoredThreadId(mode, incident.incidentCode);
+    if (!tid) return;
+    void restoreSession(mode, tid);
+  }
+
+  const showComposer = canSendPrompt(snapshot.workflowStatus, incident.resolved);
+  const hasSession = snapshot.workflowStatus !== "IDLE" || Boolean(error) || Boolean(threadIdRef.current);
 
   return (
     <>
       <header className={styles.topbar}>
         <div className={styles.topInner}>
-          <div className={styles.brand}><Activity size={21} aria-hidden="true" /> Incident Ops</div>
-          <span className={styles.mode}><FlaskConical size={15} aria-hidden="true" /> 모의 실행</span>
-          <button type="button" className={styles.secondaryButton} onClick={reset} disabled={incident.resolved || (snapshot.workflowStatus === "IDLE" && !state.error)}>
-            <RotateCcw size={15} aria-hidden="true" /> 새 모의 실행
+          <div className={styles.brand}>
+            <Activity size={20} aria-hidden="true" /> Incident Ops
+          </div>
+          <div className={styles.modeSwitch} role="group" aria-label="AG-UI 연결 대상">
+            <button
+              type="button"
+              className={styles.modeButton}
+              aria-pressed={mode === "live"}
+              onClick={() => switchMode("live")}
+            >
+              <Radio size={14} aria-hidden="true" /> AG-UI
+            </button>
+            <button
+              type="button"
+              className={styles.modeButton}
+              aria-pressed={mode === "mock"}
+              onClick={() => switchMode("mock")}
+            >
+              모의 SSE
+            </button>
+          </div>
+          <button
+            type="button"
+            className={styles.secondaryButton}
+            onClick={resetSession}
+            disabled={incident.resolved || !hasSession}
+          >
+            <RotateCcw size={15} aria-hidden="true" /> 새 대화
           </button>
         </div>
       </header>
@@ -153,13 +293,22 @@ export function Workspace({ incident }: { incident: Incident }) {
       <main className={styles.main}>
         <div className={styles.incidentHeader}>
           <div>
-            <div className={styles.incidentMeta}><span className={styles.mono}>{incident.incidentCode}</span><span>{incident.serviceName}</span></div>
+            <div className={styles.incidentMeta}>
+              <span className={styles.mono}>{incident.incidentCode}</span>
+              <span>{incident.serviceName}</span>
+            </div>
             <h1>{incident.title}</h1>
             <p>{incident.summary}</p>
           </div>
           <dl className={styles.headerFacts}>
-            <div><dt>심각도</dt><dd className={incident.severity === "SEV1" ? styles.severity : undefined}>{incident.severity}</dd></div>
-            <div><dt>발생 시각</dt><dd className={styles.mono}>{timeLabel(incident.startedAt)} KST</dd></div>
+            <div>
+              <dt>심각도</dt>
+              <dd className={incident.severity === "SEV1" ? styles.severity : undefined}>{incident.severity}</dd>
+            </div>
+            <div>
+              <dt>발생 시각</dt>
+              <dd className={styles.mono}>{timeLabel(incident.startedAt)} KST</dd>
+            </div>
           </dl>
         </div>
 
@@ -167,51 +316,104 @@ export function Workspace({ incident }: { incident: Incident }) {
           <nav className={styles.incidents} aria-labelledby="incidents-label">
             <h2 id="incidents-label">장애 목록</h2>
             <ul>
-              {incidents.map((item) => (
-                <li key={item.incidentCode}>
-                  <Link
-                    href={`/?incident=${item.incidentCode}`}
-                    aria-current={item.incidentCode === incident.incidentCode ? "page" : undefined}
-                    className={styles.incidentLink}
-                  >
-                    <span className={styles.incidentLinkTop}><span className={styles.mono}>{item.incidentCode}</span><span>{item.severity}</span></span>
-                    <strong>{item.title}</strong>
-                    <span className={styles.incidentLinkBottom}>{item.resolved ? "해결됨" : "모의 시나리오"}<ChevronRight size={14} aria-hidden="true" /></span>
-                  </Link>
-                </li>
-              ))}
+              {incidents.map((item) => {
+                const href = `/?incident=${item.incidentCode}&mode=${mode}`;
+                return (
+                  <li key={item.incidentCode}>
+                    <Link
+                      href={href}
+                      aria-current={item.incidentCode === incident.incidentCode ? "page" : undefined}
+                      className={styles.incidentLink}
+                    >
+                      <span className={styles.incidentLinkTop}>
+                        <span className={styles.mono}>{item.incidentCode}</span>
+                        <span>{item.severity}</span>
+                      </span>
+                      <strong>{item.title}</strong>
+                      <span className={styles.incidentLinkBottom}>
+                        {item.resolved ? "해결됨" : "대응 중"}
+                        <ChevronRight size={14} aria-hidden="true" />
+                      </span>
+                    </Link>
+                  </li>
+                );
+              })}
             </ul>
           </nav>
 
           <section className={styles.activity} aria-labelledby="activity-label">
             <div className={styles.panelHead}>
-              <h2 id="activity-label"><ListChecks size={18} aria-hidden="true" /> 작업 기록</h2>
-              {snapshot.approval?.decision === "PENDING" && <a href="#plan">계획 검토 <ArrowUpRight size={14} aria-hidden="true" /></a>}
+              <h2 id="activity-label">
+                <ListChecks size={18} aria-hidden="true" /> 작업 기록
+              </h2>
+              {snapshot.approval?.decision === "PENDING" && (
+                <a href="#plan">
+                  계획 검토 <ArrowUpRight size={14} aria-hidden="true" />
+                </a>
+              )}
             </div>
 
             <ol className={styles.trail} aria-label="작업 타임라인" aria-live="polite">
               {entries.map((entry) => (
-                <li key={entry.id} data-kind={entry.kind}><strong>{entry.label}</strong><p>{entry.text}</p></li>
+                <li key={entry.id} data-kind={entry.kind}>
+                  <strong>{entry.label}</strong>
+                  <p>{entry.text}</p>
+                </li>
               ))}
             </ol>
-            {busy && <p className={styles.progress} role="status">모의 실행 처리 중</p>}
-            {state.error && <p className={styles.error} role="alert">{state.error}</p>}
 
-            {snapshot.workflowStatus === "IDLE" && (
-              <div className={styles.composer}>
-                <h3>복구 요청</h3>
-                <p>{demoPrompt}</p>
-                <button className={styles.primaryButton} type="button" disabled={busy} onClick={() => void submit()}>
+            {busy && (
+              <p className={styles.progress} role="status">
+                {restoring ? "이전 대화 상태를 복원하는 중" : activeStep ? `${activeStep} 진행 중` : "AG-UI 응답을 받는 중"}
+              </p>
+            )}
+
+            {error && (
+              <div className={styles.errorBox} role="alert">
+                <p className={styles.error}>{error}</p>
+                {needsResync && threadIdRef.current && (
+                  <button type="button" className={styles.secondaryButton} disabled={busy} onClick={handleResync}>
+                    <RefreshCw size={14} aria-hidden="true" /> 상태 다시 조회
+                  </button>
+                )}
+              </div>
+            )}
+
+            {showComposer && (
+              <form
+                className={styles.composer}
+                onSubmit={(event) => {
+                  event.preventDefault();
+                  void submitPrompt();
+                }}
+              >
+                <label htmlFor="prompt-input" className={styles.composerLabel}>
+                  복구 요청
+                </label>
+                <textarea
+                  id="prompt-input"
+                  className={styles.promptInput}
+                  rows={2}
+                  value={prompt}
+                  disabled={busy}
+                  onChange={(event) => setPrompt(event.target.value)}
+                  placeholder="복구 조건이나 작업 시간 범위를 입력하세요"
+                />
+                <button className={styles.primaryButton} type="submit" disabled={busy || !prompt.trim()}>
                   <Send size={15} aria-hidden="true" /> 계획 요청
                 </button>
-              </div>
+              </form>
             )}
           </section>
 
           <aside className={styles.plan} id="plan" aria-labelledby="plan-label">
             <div className={styles.panelHead}>
-              <h2 id="plan-label"><CalendarClock size={18} aria-hidden="true" /> 복구 계획</h2>
-              <span className={styles.status} data-state={snapshot.workflowStatus} role="status">{statusText[snapshot.workflowStatus]}</span>
+              <h2 id="plan-label">
+                <CalendarClock size={18} aria-hidden="true" /> 복구 계획
+              </h2>
+              <span className={styles.status} data-state={snapshot.workflowStatus} role="status">
+                {STATUS_LABELS[snapshot.workflowStatus]}
+              </span>
             </div>
 
             {incident.resolved ? (
@@ -221,31 +423,92 @@ export function Workspace({ incident }: { incident: Incident }) {
               </div>
             ) : (
               <div className={styles.planBody}>
-                <Schedule replan={replan} />
+                <Schedule replan={replan} workWindow={snapshot.plan?.workWindow ?? null} />
                 {snapshot.plan && snapshot.approval ? (
                   <div className={styles.approval}>
-                    <div className={styles.approvalHead}><h3>승인 대상</h3><span className={styles.mono}>{snapshot.approval.approvalId}</span></div>
+                    <div className={styles.approvalHead}>
+                      <h3>승인 대상</h3>
+                      <span className={styles.mono}>{snapshot.approval.approvalId}</span>
+                    </div>
                     <p className={styles.actionTitle}>{approvedStep?.description}</p>
                     <details>
                       <summary>근거 및 복구 확인 기준</summary>
                       <ul className={styles.evidence}>
-                        {snapshot.plan.evidence.map((item) => <li key={item.chunkId}><code>{item.chunkId}</code> {item.summary}</li>)}
+                        {snapshot.plan.evidence.map((item) => (
+                          <li key={item.chunkId}>
+                            <code>{item.chunkId}</code> {item.summary}
+                          </li>
+                        ))}
                       </ul>
-                      {approvedStep?.actionCommand && <p className={styles.command}><code>{approvedStep.actionCommand}</code></p>}
+                      {approvedStep?.actionCommand && (
+                        <p className={styles.command}>
+                          <code>{approvedStep.actionCommand}</code>
+                        </p>
+                      )}
                       <p>{snapshot.plan.verificationCriteria}</p>
                     </details>
-                    {snapshot.workflowStatus === "AWAITING_APPROVAL" && snapshot.approval.decision === "PENDING" && approvedStep ? (
+                    {snapshot.workflowStatus === "AWAITING_APPROVAL" &&
+                    snapshot.approval.decision === "PENDING" &&
+                    approvedStep ? (
                       <div className={styles.actions}>
-                        <button type="button" className={styles.secondaryButton} disabled={busy} onClick={() => void submit("REJECTED")}><X size={16} aria-hidden="true" /> 반려</button>
-                        <button type="button" className={styles.primaryButton} disabled={busy} onClick={() => void submit("APPROVED")}><Check size={16} aria-hidden="true" /> 승인</button>
+                        <button
+                          type="button"
+                          className={styles.secondaryButton}
+                          disabled={busy}
+                          onClick={() => void submitDecision("REJECTED")}
+                        >
+                          <X size={16} aria-hidden="true" /> 반려
+                        </button>
+                        <button
+                          type="button"
+                          className={styles.primaryButton}
+                          disabled={busy}
+                          onClick={() => void submitDecision("APPROVED")}
+                        >
+                          <Check size={16} aria-hidden="true" /> 승인
+                        </button>
+                      </div>
+                    ) : snapshot.workflowStatus === "RESOLVED" ? (
+                      <p className={styles.decisionOk} role="status">
+                        승인된 조치를 실행하고 복구 확인과 포스트모템을 반영했습니다.
+                      </p>
+                    ) : snapshot.workflowStatus === "EXECUTION_FAILED" ? (
+                      <p className={styles.error} role="alert">
+                        승인 조치 실행 또는 완료 반영에 실패했습니다. 조건을 확인해 주세요.
+                      </p>
+                    ) : canResumeApprovedExecution(snapshot) ? (
+                      <div className={styles.resumeBox}>
+                        <p className={styles.decision} role="status">
+                          승인을 기록했습니다. 복구 실행이 완료되지 않았으면 아래에서 다시 실행할 수 있습니다.
+                        </p>
+                        <button
+                          type="button"
+                          className={styles.primaryButton}
+                          disabled={busy}
+                          onClick={() => void submitDecision("APPROVED")}
+                        >
+                          <RefreshCw size={15} aria-hidden="true" /> 실행 재개
+                        </button>
                       </div>
                     ) : snapshot.approval.decision !== "PENDING" ? (
                       <p className={styles.decision} role="status">
-                        {snapshot.approval.decision === "APPROVED" ? "승인을 기록했습니다. 복구 실행 결과를 기다립니다." : "계획을 반려했습니다."}
+                        {snapshot.approval.decision === "APPROVED"
+                          ? "승인을 기록했습니다. 복구 실행 결과를 기다립니다."
+                          : "계획을 반려했습니다. 조건을 바꿔 다시 요청할 수 있습니다."}
                       </p>
-                    ) : <p className={styles.error} role="alert">계획에서 승인 대상을 찾지 못했습니다.</p>}
+                    ) : (
+                      <p className={styles.error} role="alert">
+                        계획에서 승인 대상을 찾지 못했습니다.
+                      </p>
+                    )}
                   </div>
-                ) : <p className={styles.empty}>계획을 요청하면 검토할 조치가 여기에 표시됩니다.</p>}
+                ) : snapshot.workflowStatus === "BLOCKED" ? (
+                  <p className={styles.decision} role="status">
+                    근거 또는 시간 제약으로 롤백 승인을 등록하지 못했습니다. 조건을 조정해 다시 요청해 주세요.
+                  </p>
+                ) : (
+                  <p className={styles.empty}>계획을 요청하면 검토할 조치가 여기에 표시됩니다.</p>
+                )}
               </div>
             )}
           </aside>
@@ -255,35 +518,72 @@ export function Workspace({ incident }: { incident: Incident }) {
   );
 }
 
-function Schedule({ replan }: { replan: Replan | null }) {
+function Schedule({ replan, workWindow }: { replan: ReplanRecord | null; workWindow: WorkWindow | null }) {
   const draft = replan?.previousWindow ?? previousWindow;
+  const activeWindow = workWindow ?? replan?.nextWindow ?? draft;
+
+  const axisStart = Math.min(
+    Date.parse(allowedWindow.start),
+    Date.parse(draft.start),
+    Date.parse(activeWindow.start),
+  );
+  const axisEnd = Math.max(
+    Date.parse(allowedWindow.end),
+    Date.parse(draft.end),
+    Date.parse(activeWindow.end),
+  );
+  const duration = Math.max(axisEnd - axisStart, 1);
 
   function position(window: WorkWindow) {
-    const start = Date.parse(allowedWindow.start);
-    const duration = Date.parse(allowedWindow.end) - start;
+    const startMs = Date.parse(window.start);
+    const endMs = Date.parse(window.end);
+    const left = Math.max(0, Math.min(100, ((startMs - axisStart) / duration) * 100));
+    const width = Math.max(2, Math.min(100 - left, ((endMs - startMs) / duration) * 100));
     return {
-      insetInlineStart: `${(Date.parse(window.start) - start) / duration * 100}%`,
-      width: `${(Date.parse(window.end) - Date.parse(window.start)) / duration * 100}%`,
+      insetInlineStart: `${left}%`,
+      width: `${width}%`,
     };
   }
 
   return (
     <section className={styles.schedule} aria-labelledby="schedule-label">
-      <div className={styles.scheduleHead}><h3 id="schedule-label">작업 창</h3><span>KST</span></div>
+      <div className={styles.scheduleHead}>
+        <h3 id="schedule-label">작업 창</h3>
+        <span>KST</span>
+      </div>
       <p className={styles.window}>
         <Clock3 size={17} aria-hidden="true" />
-        <span className={styles.mono}>{windowLabel(replan?.nextWindow ?? draft)}</span>
-        <span>{replan ? "재계획" : "초안"}</span>
+        <span className={styles.mono}>{windowLabel(activeWindow)}</span>
+        <span>{replan ? "재계획" : workWindow ? "확정" : "초안"}</span>
       </p>
       <div className={styles.timeline} aria-hidden="true">
-        <div className={styles.track}><span className={styles.freezeBar} style={position(freezeWindow)} /></div>
-        <div className={styles.track}><span className={styles.oldBar} style={position(draft)} />{replan && <span className={styles.newBar} style={position(replan.nextWindow)} />}</div>
-        <div className={styles.axis}><span>{timeLabel(allowedWindow.start)}</span><span>{timeLabel(allowedWindow.end)}</span></div>
+        <div className={styles.track}>
+          <span className={styles.freezeBar} style={position(freezeWindow)} />
+        </div>
+        <div className={styles.track}>
+          <span className={styles.oldBar} style={position(draft)} />
+          {(replan || workWindow) && <span className={styles.newBar} style={position(activeWindow)} />}
+        </div>
+        <div className={styles.axis}>
+          <span>{timeLabel(new Date(axisStart).toISOString())}</span>
+          <span>{timeLabel(new Date(axisEnd).toISOString())}</span>
+        </div>
       </div>
       <dl className={styles.legend}>
-        <div><dt className={styles.freezeKey}>변경 금지</dt><dd>{windowLabel(freezeWindow)}</dd></div>
-        <div><dt className={styles.oldKey}>충돌한 초안</dt><dd>{windowLabel(draft)}</dd></div>
-        {replan && <div><dt className={styles.newKey}>재계획</dt><dd>{windowLabel(replan.nextWindow)}</dd></div>}
+        <div>
+          <dt className={styles.freezeKey}>변경 금지</dt>
+          <dd>{windowLabel(freezeWindow)}</dd>
+        </div>
+        <div>
+          <dt className={styles.oldKey}>충돌한 초안</dt>
+          <dd>{windowLabel(draft)}</dd>
+        </div>
+        {(replan || workWindow) && (
+          <div>
+            <dt className={styles.newKey}>{replan ? "재계획" : "작업 창"}</dt>
+            <dd>{windowLabel(activeWindow)}</dd>
+          </div>
+        )}
       </dl>
     </section>
   );

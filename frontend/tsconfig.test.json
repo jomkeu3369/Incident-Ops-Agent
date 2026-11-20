@@ -1,0 +1,19 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "CommonJS",
+    "moduleResolution": "node",
+    "strict": true,
+    "esModuleInterop": true,
+    "skipLibCheck": true,
+    "outDir": ".test-dist",
+    "rootDir": "."
+  },
+  "include": [
+    "app/ag-ui-contract.ts",
+    "app/ag-ui-client.ts",
+    "app/demo.ts",
+    "app/workspace-state.ts",
+    "tests/**/*.ts"
+  ]
+}
