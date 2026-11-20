@@ -6,7 +6,7 @@
 
 AG-UI · A2A · MCP 3대 표준 프로토콜과 DR-DCI 패턴을 결합한 멀티 에이전트 기반 실시간 장애 대응 워크스페이스입니다.
 
-[주요 화면](#주요-화면-미리보기) · [시스템 구성](#1-시스템-구성) · [실행 방법](#3-실행-방법) · [요구사항·검증 결과서](docs/10-requirements-and-verification.md)
+[주요 화면](#주요-화면-미리보기) · [시스템 구성](#1-시스템-구성) · [실행 방법](#3-실행-방법) · [참고 논문·표준](#5-참고-논문-및-기술-표준) · [요구사항·검증 결과서](docs/10-requirements-and-verification.md)
 
 <p>
   <img src="https://img.shields.io/badge/Next.js_16-000000?style=flat-square&logo=nextdotjs&logoColor=white" alt="Next.js 16" />
@@ -189,7 +189,29 @@ cd frontend && npm run typecheck && npm run build && npm test
 
 ---
 
-## 5. 산출물 및 상세 문서 목록
+## 5. 참고 논문 및 기술 표준
+
+### 적용 기술별 참고 논문
+
+| 적용 영역 | 참고 논문 | 프로젝트 반영 내용 |
+| :--- | :--- | :--- |
+| **DR-DCI 동적 코퍼스 인출** | Yi Lu et al., *Dr-DCI: Scaling Direct Corpus Interaction via Dynamic Workspace Expansion* ([arXiv:2606.14885](https://arxiv.org/abs/2606.14885)) | `log_agent`가 Spring MCP `searchCorpusIndex` → `pullCorpusChunk`로 필요한 로그·런북 청크만 동적 인출(`DR_DCI_MAX_PULL_STEPS`, `DR_DCI_MAX_CHUNK_CHARS`) |
+| **컨텍스트 폭발·열화 방지** | Nelson F. Liu et al., *Lost in the Middle: How Language Models Use Long Contexts*, TACL 2024 ([arXiv:2307.03172](https://arxiv.org/abs/2307.03172)) | 전체 로그 일괄 프롬프트 적재를 피하고 핵심 근거 청크 ID·요약 중심으로 추론 컨텍스트를 유지 |
+| **Planner · Worker 분리 (`F3021`)** | Binfeng Xu et al., *ReWOO: Decoupling Reasoning from Observations for Efficient Augmented Language Models* ([arXiv:2305.18323](https://arxiv.org/abs/2305.18323)) | `SplitWorkerExecutor`로 계획 수립과 도구 실행을 분리해 정상 경로 Worker LLM 호출 0회·총 LLM 호출 75% 절감 및 고정 인자(`fixed_args`) 불변 보존 |
+| **추론·도구 호출·재계획 루프** | Shunyu Yao et al., *ReAct: Synergizing Reasoning and Acting in Language Models*, ICLR 2023 ([arXiv:2210.03629](https://arxiv.org/abs/2210.03629)) | LangGraph 5단계(`analyze → plan → execute → evaluate → respond`)에서 외부 Tool 관측 결과와 제약 조건을 비교하고 미충족 시 재계획 |
+
+### 프로토콜 · 판정 기술 표준
+
+| 프로토콜 / API | 공식 명세 | 프로젝트 적용 구간 |
+| :--- | :--- | :--- |
+| **AG-UI** | [Agent-User Interaction Protocol](https://docs.ag-ui.com) | Frontend(`@ag-ui/client` `HttpAgent`) ↔ `supervisor:8000` 실시간 SSE 스트리밍·상태 동기화·HITL 승인 재개 |
+| **A2A** | [Agent2Agent Protocol](https://a2a-protocol.org) | `supervisor:8000` ↔ `log_agent:8001` · `remediation_agent:8002` AgentCard 및 JSON-RPC 2.0 작업 위임 |
+| **MCP** | [Model Context Protocol](https://modelcontextprotocol.io) | Agent ↔ Spring Boot(`:8080/sse`) 도메인 코퍼스 인출·승인 검증 기반 완료 처리 |
+| **Decisions API** | [OpenAI Decisions API Guide](https://developers.openai.com/api/docs/guides/decisions) | `remediation_agent`의 근거 기반 3분기 판정(`SUPPORTED` / `NEED_MORE_EVIDENCE` / `CONTRADICTED`) |
+
+---
+
+## 6. 산출물 및 상세 문서 목록
 
 * **요구사항 정의서 · 검증 결과서:** [docs/10-requirements-and-verification.md](docs/10-requirements-and-verification.md)
 * **아키텍처 · DB 스키마 · ERD:** [docs/01-architecture-and-db.md](docs/01-architecture-and-db.md) · [docs/06-stack-diagram.md](docs/06-stack-diagram.md)
