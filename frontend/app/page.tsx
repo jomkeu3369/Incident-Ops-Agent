@@ -7,19 +7,26 @@ import {
   type IncidentListItem,
 } from "./backend-api";
 import { demoIncidentList } from "./demo";
-import { Workspace } from "./workspace";
+import { Workspace, type WorkspaceView } from "./workspace";
 
 export const dynamic = "force-dynamic";
+
+function resolveView(param: string | undefined): WorkspaceView {
+  if (param === "plans" || param === "sessions") return param;
+  return "workspace";
+}
 
 export default async function Page({
   searchParams,
 }: {
-  searchParams: Promise<{ incident?: string | string[]; mode?: string | string[] }>;
+  searchParams: Promise<{ incident?: string | string[]; mode?: string | string[]; view?: string | string[] }>;
 }) {
-  const { incident, mode } = await searchParams;
+  const { incident, mode, view } = await searchParams;
   const incidentParam = Array.isArray(incident) ? incident[0] : incident;
   const modeParam = Array.isArray(mode) ? mode[0] : mode;
+  const viewParam = Array.isArray(view) ? view[0] : view;
   const initialMode = resolveInitialMode(modeParam, process.env.NEXT_PUBLIC_AG_UI_MODE);
+  const initialView = resolveView(viewParam);
 
   if (initialMode === "mock") {
     const selected =
@@ -31,6 +38,7 @@ export default async function Page({
         incidents={demoIncidentList}
         initialDetail={null}
         initialMode="mock"
+        initialView={initialView}
         backendError={null}
       />
     );
@@ -47,6 +55,7 @@ export default async function Page({
         incidents={demoIncidentList}
         initialDetail={null}
         initialMode="live"
+        initialView={initialView}
         backendError={listResult.message}
       />
     );
@@ -61,6 +70,7 @@ export default async function Page({
         incidents={[]}
         initialDetail={null}
         initialMode="live"
+        initialView={initialView}
         backendError={null}
       />
     );
@@ -91,6 +101,7 @@ export default async function Page({
       incidents={incidentItems}
       initialDetail={initialDetail}
       initialMode="live"
+      initialView={initialView}
       backendError={backendError}
     />
   );

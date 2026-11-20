@@ -7,7 +7,7 @@
     "build": "next build",
     "start": "next start",
     "typecheck": "tsc --noEmit",
-    "test": "tsc -p tsconfig.test.json && node --test .test-dist/tests/ag-ui-phase2.test.js .test-dist/tests/backend-phase3.test.js"
+    "test": "tsc -p tsconfig.test.json && node --test .test-dist/tests/ag-ui-phase2.test.js .test-dist/tests/backend-phase3.test.js .test-dist/tests/admin-phase4.test.js"
   },
   "dependencies": {
     "@ag-ui/client": "^1.0.5",
