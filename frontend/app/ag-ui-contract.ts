@@ -171,6 +171,16 @@ function isWorkflowStatus(value: unknown): value is WorkflowStatus {
   return typeof value === "string" && value in STATUS_LABELS;
 }
 
+const OFFSETLESS_ISO_RE = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(?::\d{2}(?:\.\d+)?)?$/;
+
+export function normalizeKstTimestamp(value: string): string {
+  const trimmed = value.trim();
+  if (OFFSETLESS_ISO_RE.test(trimmed)) {
+    return `${trimmed}+09:00`;
+  }
+  return trimmed;
+}
+
 const kstClock = new Intl.DateTimeFormat("en-GB", {
   hour: "2-digit",
   minute: "2-digit",
@@ -178,7 +188,7 @@ const kstClock = new Intl.DateTimeFormat("en-GB", {
 });
 
 export function timeLabel(value: string): string {
-  const date = new Date(value);
+  const date = new Date(normalizeKstTimestamp(value));
   if (Number.isNaN(date.getTime())) return value;
   return kstClock.format(date);
 }

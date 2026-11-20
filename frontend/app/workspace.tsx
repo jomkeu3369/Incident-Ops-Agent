@@ -207,13 +207,16 @@ function ActiveWorkspace({
           signal: controller.signal,
           dispatch,
         });
+        if (!controller.signal.aborted && targetMode === "live") {
+          await syncBackendDetail();
+        }
       } finally {
         if (activeRun.current === controller) {
           activeRun.current = null;
         }
       }
     },
-    [incident.incidentCode],
+    [incident.incidentCode, syncBackendDetail],
   );
 
   useEffect(() => {
@@ -349,10 +352,11 @@ function ActiveWorkspace({
   }
 
   async function handleResync() {
-    await syncBackendDetail();
     const tid = threadIdRef.current ?? readStoredThreadId(mode, incident.incidentCode);
     if (tid) {
       await restoreSession(mode, tid);
+    } else {
+      await syncBackendDetail();
     }
   }
 

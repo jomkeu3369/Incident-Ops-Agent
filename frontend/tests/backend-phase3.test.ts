@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { normalizeKstTimestamp, timeLabel } from "../app/ag-ui-contract";
 import {
   fetchIncidentDetailFromBackend,
   fetchIncidentsFromBackend,
@@ -237,4 +238,65 @@ test("SSR and BFF proxy serve Spring incident detail without leaking INTERNAL_SE
 
   const notFoundBff = await fetch(`${baseUrl}/bff/incidents/INC-9999`);
   assert.equal(notFoundBff.status, 404);
+});
+
+test("restoring a stale AWAITING_APPROVAL thread preserves persisted Spring decision", () => {
+  const decidedDetail: BackendIncidentDetail = {
+    ...sampleDetail,
+    incident: { ...sampleDetail.incident, status: "RESOLVED" },
+    approvals: [{ ...sampleDetail.approvals[0], decision: "APPROVED", approvedBy: "oncall-lead" }],
+  };
+  let state = createInitialState(toIncidentListItem(decidedDetail.incident), decidedDetail);
+  assert.equal(state.snapshot.workflowStatus, "RESOLVED");
+
+  state = workspaceReducer(state, { type: "RESTORE_STARTED" });
+  state = workspaceReducer(state, {
+    type: "STATE_SNAPSHOT",
+    snapshot: {
+      incidentCode: "INC-2026-001",
+      workflowStatus: "AWAITING_APPROVAL",
+      plan: { ...demoPlan, planId: "PLAN-2026-001" },
+      approval: { approvalId: "APR-2026-001", planId: "PLAN-2026-001", stepNo: 2, decision: "PENDING" },
+      replanHistory: [],
+    },
+  });
+  state = workspaceReducer(state, { type: "RUN_FINISHED" });
+
+  assert.equal(state.snapshot.workflowStatus, "RESOLVED");
+  assert.equal(state.snapshot.approval?.decision, "APPROVED");
+  assert.equal(state.snapshot.plan?.workWindow?.start, demoPlan.workWindow?.start);
+});
+
+test("BACKEND_DETAIL_SYNCED retains live BLOCKED outcome when Spring has no new approval", () => {
+  const openDetail: BackendIncidentDetail = {
+    ...sampleDetail,
+    incident: { ...sampleDetail.incident, status: "OPEN" },
+    plans: [],
+    approvals: [],
+  };
+  let state = createInitialState(toIncidentListItem(openDetail.incident), openDetail);
+
+  state = workspaceReducer(state, {
+    type: "STATE_SNAPSHOT",
+    snapshot: {
+      incidentCode: "INC-2026-001",
+      workflowStatus: "BLOCKED",
+      plan: { ...demoPlan, planId: "PLAN-REVISED-NO-ROLLBACK" },
+      approval: null,
+      replanHistory: [],
+    },
+  });
+  assert.equal(state.snapshot.workflowStatus, "BLOCKED");
+
+  state = workspaceReducer(state, { type: "BACKEND_DETAIL_SYNCED", detail: openDetail });
+  assert.equal(state.snapshot.workflowStatus, "BLOCKED");
+  assert.equal(state.snapshot.plan?.planId, "PLAN-REVISED-NO-ROLLBACK");
+});
+
+test("normalizeKstTimestamp and timeLabel treat offset-less Spring LocalDateTime as KST", () => {
+  assert.equal(normalizeKstTimestamp("2026-11-18T14:06:00"), "2026-11-18T14:06:00+09:00");
+  assert.equal(normalizeKstTimestamp("2026-11-18T14:06:00.123"), "2026-11-18T14:06:00.123+09:00");
+  assert.equal(normalizeKstTimestamp("2026-11-18T05:06:00Z"), "2026-11-18T05:06:00Z");
+  assert.equal(timeLabel("2026-11-18T14:06:00"), "14:06");
+  assert.equal(timeLabel("2026-11-18T05:06:00Z"), "14:06");
 });

@@ -236,12 +236,33 @@ export function workspaceReducer(state: WorkspaceState, action: WorkspaceAction)
       if (!next || next.incidentCode !== state.incidentCode) {
         return state;
       }
-      // During restore, never overwrite an authoritative persisted Spring state with an empty IDLE snapshot
-      if (state.restoring && next.workflowStatus === "IDLE" && state.snapshot.workflowStatus !== "IDLE") {
-        return state;
-      }
       const latestReplan =
         next.replanHistory.length > 0 ? next.replanHistory[next.replanHistory.length - 1] : state.replan;
+
+      // During restore, never overwrite an authoritative persisted Spring state (resolved or already decided)
+      // with a stale IDLE or AWAITING_APPROVAL snapshot from Redis thread memory.
+      if (state.restoring) {
+        const currentIsPersistedTerminalOrDecided =
+          state.snapshot.workflowStatus === "RESOLVED" ||
+          state.snapshot.workflowStatus === "REJECTED" ||
+          state.snapshot.workflowStatus === "EXECUTION_FAILED" ||
+          state.snapshot.workflowStatus === "AWAITING_EXECUTION_RESULT";
+        const incomingIsStale =
+          next.workflowStatus === "IDLE" ||
+          (currentIsPersistedTerminalOrDecided && next.workflowStatus === "AWAITING_APPROVAL");
+        if (incomingIsStale) {
+          return {
+            ...state,
+            snapshot: {
+              ...state.snapshot,
+              plan: mergePlans(state.snapshot.plan, next.plan),
+              replanHistory: next.replanHistory.length > 0 ? next.replanHistory : state.snapshot.replanHistory,
+            },
+            replan: latestReplan,
+          };
+        }
+      }
+
       return {
         ...state,
         snapshot: {
@@ -301,6 +322,20 @@ export function workspaceReducer(state: WorkspaceState, action: WorkspaceAction)
         return state;
       }
       const hydrated = hydrateSnapshotFromDetail(action.detail);
+      // Retain a live BLOCKED planning outcome (insufficient evidence / REVISED_NO_ROLLBACK)
+      // when Spring has neither resolved the incident nor registered a new pending approval.
+      const retainBlockedOutcome =
+        state.snapshot.workflowStatus === "BLOCKED" &&
+        hydrated.workflowStatus !== "RESOLVED" &&
+        hydrated.workflowStatus !== "AWAITING_APPROVAL";
+      if (retainBlockedOutcome) {
+        return {
+          ...state,
+          executions: action.detail.executions,
+          postMortem: action.detail.postMortem,
+          needsResync: false,
+        };
+      }
       return {
         ...state,
         snapshot: {
