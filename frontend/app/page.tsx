@@ -1,13 +1,18 @@
 import { Workspace } from "./workspace";
 import { incidents } from "./demo";
+import type { AgUiMode } from "./ag-ui-client";
 
 export default async function Page({
   searchParams,
 }: {
-  searchParams: Promise<{ incident?: string | string[] }>;
+  searchParams: Promise<{ incident?: string | string[]; mode?: string | string[] }>;
 }) {
-  const { incident } = await searchParams;
-  const selected = incidents.find((entry) => entry.incidentCode === incident) ?? incidents[0];
+  const { incident, mode } = await searchParams;
+  const incidentParam = Array.isArray(incident) ? incident[0] : incident;
+  const modeParam = Array.isArray(mode) ? mode[0] : mode;
+  const selected = incidents.find((entry) => entry.incidentCode === incidentParam) ?? incidents[0];
+  const initialMode: AgUiMode =
+    modeParam === "mock" || process.env.NEXT_PUBLIC_AG_UI_MODE === "mock" ? "mock" : "live";
 
-  return <Workspace key={selected.incidentCode} incident={selected} />;
+  return <Workspace key={`${selected.incidentCode}:${initialMode}`} incident={selected} initialMode={initialMode} />;
 }
