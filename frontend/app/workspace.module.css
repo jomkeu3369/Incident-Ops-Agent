@@ -90,9 +90,8 @@
 }
 .incidentLink:hover { background: var(--color-paper-2); }
 .incidentLink[aria-current="page"] {
-  background: var(--color-paper-2);
+  background: var(--color-paper-elev);
   border-color: var(--color-rule-2);
-  box-shadow: inset 2px 0 0 var(--color-accent);
 }
 .incidentLink strong { font-weight: 500; font-size: var(--text-sm); color: var(--color-ink); overflow-wrap: anywhere; }
 .incidentLinkTop, .incidentLinkBottom {
@@ -247,8 +246,16 @@
 .evidence code { color: var(--color-cool); }
 .command { overflow-wrap: anywhere; color: var(--color-cool); font-size: var(--text-xs); }
 .actions { display: grid; grid-template-columns: 1fr 1fr; gap: var(--space-xs); margin-block-start: var(--space-sm); }
-.decision { color: var(--color-ink-2); border-inline-start: 2px solid var(--color-rule-2); padding-inline-start: var(--space-xs); margin-block-start: var(--space-xs); font-size: var(--text-xs); }
-.decisionOk { color: var(--color-ok); border-inline-start: 2px solid var(--color-ok); padding-inline-start: var(--space-xs); margin-block-start: var(--space-xs); font-size: var(--text-xs); }
+.decision {
+  color: var(--color-ink-2); padding: var(--space-xs) var(--space-sm); margin-block-start: var(--space-xs);
+  border: 1px solid var(--color-rule); border-radius: var(--radius-sm); background: var(--color-paper-3);
+  font-size: var(--text-xs);
+}
+.decisionOk {
+  color: var(--color-ok); padding: var(--space-xs) var(--space-sm); margin-block-start: var(--space-xs);
+  border: 1px solid var(--color-ok-soft); border-radius: var(--radius-sm); background: var(--color-ok-soft);
+  font-size: var(--text-xs);
+}
 .resumeBox { display: grid; justify-items: start; gap: var(--space-xs); margin-block-start: var(--space-xs); }
 
 .bannerError {
@@ -340,8 +347,8 @@
 }
 .adminCard:hover { border-color: var(--color-rule-2); }
 .adminCard[data-active="true"] {
+  background: var(--color-paper-elev);
   border-color: var(--color-rule-2);
-  box-shadow: inset 2px 0 0 var(--color-accent);
 }
 .adminCardHead { display: flex; justify-content: space-between; align-items: center; gap: var(--space-xs); flex-wrap: wrap; }
 .adminCard strong { font-size: var(--text-sm); font-weight: 600; color: var(--color-ink); overflow-wrap: anywhere; }
