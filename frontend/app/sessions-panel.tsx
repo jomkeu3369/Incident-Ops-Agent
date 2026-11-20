@@ -1,7 +1,7 @@
 "use client";
 
 import { ListChecks, RefreshCw, ShieldAlert, Trash2 } from "lucide-react";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import type { AgUiMode } from "./ag-ui-client";
 import { timeLabel } from "./ag-ui-contract";
 import {
@@ -32,14 +32,25 @@ export function SessionsPanel({ mode }: { mode: AgUiMode }) {
   const [loadingDetail, setLoadingDetail] = useState(false);
   const [analyzing, setAnalyzing] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const selectedIdRef = useRef<string | null>(null);
+  const detailReqRef = useRef(0);
+  const anomalyReqRef = useRef(0);
 
   const loadDetail = useCallback(
     async (sessionId: string) => {
+      selectedIdRef.current = sessionId;
+      const reqId = ++detailReqRef.current;
+      // Invalidate any in-flight anomaly analysis for a previous session
+      anomalyReqRef.current += 1;
       setSelectedId(sessionId);
       setLoadingDetail(true);
+      setAnalyzing(false);
       setAnomaly(null);
       setError(null);
       const res = await getLogSessionDetail(baseUrl, sessionId);
+      if (detailReqRef.current !== reqId || selectedIdRef.current !== sessionId) {
+        return;
+      }
       if (res.ok) {
         setEvents(res.data.events);
       } else {
@@ -58,20 +69,25 @@ export function SessionsPanel({ mode }: { mode: AgUiMode }) {
     if (res.ok) {
       setSessions(res.data);
       if (res.data.length > 0) {
-        const nextId = selectedId && res.data.some((s) => s.sessionId === selectedId)
-          ? selectedId
+        const current = selectedIdRef.current;
+        const nextId = current && res.data.some((s) => s.sessionId === current)
+          ? current
           : res.data[0].sessionId;
         await loadDetail(nextId);
       } else {
+        selectedIdRef.current = null;
+        detailReqRef.current += 1;
+        anomalyReqRef.current += 1;
         setSelectedId(null);
         setEvents([]);
         setAnomaly(null);
+        setAnalyzing(false);
       }
     } else {
       setError(res.message);
     }
     setLoadingList(false);
-  }, [baseUrl, loadDetail, selectedId]);
+  }, [baseUrl, loadDetail]);
 
   useEffect(() => {
     void loadSessions();
@@ -81,10 +97,14 @@ export function SessionsPanel({ mode }: { mode: AgUiMode }) {
     setError(null);
     const res = await deleteLogSession(baseUrl, sessionId);
     if (res.ok) {
-      if (selectedId === sessionId) {
+      if (selectedIdRef.current === sessionId) {
+        selectedIdRef.current = null;
+        detailReqRef.current += 1;
+        anomalyReqRef.current += 1;
         setSelectedId(null);
         setEvents([]);
         setAnomaly(null);
+        setAnalyzing(false);
       }
       await loadSessions();
     } else {
@@ -93,10 +113,15 @@ export function SessionsPanel({ mode }: { mode: AgUiMode }) {
   }
 
   async function handleAnalyze() {
-    if (!selectedId || analyzing) return;
+    const targetSessionId = selectedIdRef.current;
+    if (!targetSessionId || analyzing) return;
+    const reqId = ++anomalyReqRef.current;
     setAnalyzing(true);
     setError(null);
-    const res = await analyzeLogSessionAnomalies(baseUrl, selectedId);
+    const res = await analyzeLogSessionAnomalies(baseUrl, targetSessionId);
+    if (anomalyReqRef.current !== reqId || selectedIdRef.current !== targetSessionId) {
+      return;
+    }
     if (res.ok) {
       setAnomaly(res.data);
     } else {

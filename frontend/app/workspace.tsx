@@ -21,6 +21,7 @@ import { useCallback, useEffect, useReducer, useRef, useState } from "react";
 import { resolveAgUiUrl, runAgUiRequest, type AgUiMode } from "./ag-ui-client";
 import {
   STATUS_LABELS,
+  dateLabelKst,
   timeLabel,
   windowLabel,
   type Decision,
@@ -411,7 +412,7 @@ function ActiveWorkspace({
     setSavingPlan(true);
     setPlanSaveNotice(null);
     const activeWin = snapshot.plan.workWindow ?? replan?.nextWindow ?? previousWindow;
-    const planDate = activeWin.start.slice(0, 10);
+    const planDate = dateLabelKst(activeWin.start);
     const startTime = timeLabel(activeWin.start);
     const endTime = timeLabel(activeWin.end);
     const res = await createManagedPlan(resolveAdminBaseUrl(mode), {

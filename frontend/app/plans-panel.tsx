@@ -93,7 +93,7 @@ export function PlansPanel({ mode, defaultIncidentCode, defaultServiceName }: Pl
         planDate,
         startTime,
         endTime,
-        actionCommand: actionCommand.trim() || null,
+        actionCommand: actionCommand.trim(),
         notes: notes.trim(),
       });
       if (res.ok) {

@@ -187,6 +187,19 @@ const kstClock = new Intl.DateTimeFormat("en-GB", {
   timeZone: "Asia/Seoul",
 });
 
+const kstDate = new Intl.DateTimeFormat("en-CA", {
+  year: "numeric",
+  month: "2-digit",
+  day: "2-digit",
+  timeZone: "Asia/Seoul",
+});
+
+export function dateLabelKst(value: string): string {
+  const date = new Date(normalizeKstTimestamp(value));
+  if (Number.isNaN(date.getTime())) return value.slice(0, 10);
+  return kstDate.format(date);
+}
+
 export function timeLabel(value: string): string {
   const date = new Date(normalizeKstTimestamp(value));
   if (Number.isNaN(date.getTime())) return value;

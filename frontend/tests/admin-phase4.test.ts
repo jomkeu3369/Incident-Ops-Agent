@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { dateLabelKst, timeLabel } from "../app/ag-ui-contract";
 import {
   analyzeLogSessionAnomalies,
   createManagedPlan,
@@ -15,6 +16,12 @@ import {
 test("resolveAdminBaseUrl maps mock and live modes cleanly", () => {
   assert.equal(resolveAdminBaseUrl("mock"), "/api/mock-ag-ui");
   assert.equal(resolveAdminBaseUrl("live"), "/api/ag-ui");
+});
+
+test("dateLabelKst derives KST calendar date consistently across midnight boundaries", () => {
+  assert.equal(dateLabelKst("2026-11-18T16:00:00Z"), "2026-11-19");
+  assert.equal(timeLabel("2026-11-18T16:00:00Z"), "01:00");
+  assert.equal(dateLabelKst("2026-11-18T14:40:00+09:00"), "2026-11-18");
 });
 
 test("Managed plans CRUD and same-date overlap warning work end-to-end (F3015, F3016)", async (t) => {
@@ -42,15 +49,17 @@ test("Managed plans CRUD and same-date overlap warning work end-to-end (F3015, F
   assert.ok(created.data.overlappingPlans.length >= 1);
   const newId = created.data.plan.planId;
 
-  // 2) Update plan to non-overlapping window -> warning clears
+  // 2) Update plan to non-overlapping window and explicitly clear actionCommand with "" -> warning clears & command cleared
   const updated = await updateManagedPlan(adminBase, newId, {
     title: "추가 결제 롤백 점검 (수정)",
     startTime: "15:00",
     endTime: "15:10",
+    actionCommand: "",
   });
   assert.equal(updated.ok, true);
   if (!updated.ok) return;
   assert.equal(updated.data.plan.title, "추가 결제 롤백 점검 (수정)");
+  assert.equal(updated.data.plan.actionCommand, null);
   assert.equal(updated.data.warning, null);
 
   // 3) List confirms updated plan exists

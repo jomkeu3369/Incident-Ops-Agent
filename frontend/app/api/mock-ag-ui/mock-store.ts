@@ -146,7 +146,8 @@ export function mockUpdatePlan(
     planDate: patch.planDate ?? existing.planDate,
     startTime: patch.startTime ?? existing.startTime,
     endTime: patch.endTime ?? existing.endTime,
-    actionCommand: patch.actionCommand !== undefined ? patch.actionCommand : existing.actionCommand,
+    actionCommand:
+      patch.actionCommand !== undefined ? (patch.actionCommand ? patch.actionCommand.trim() : null) : existing.actionCommand,
     notes: patch.notes !== undefined ? patch.notes : existing.notes,
     updatedAt: new Date().toISOString(),
   };
