@@ -215,7 +215,7 @@ function ActiveWorkspace({
   const { snapshot, executions, postMortem, entries, replan, busy, activeStep, restoring, error, needsResync } = state;
   const approvedStep =
     snapshot.plan && snapshot.approval && snapshot.plan.planId === snapshot.approval.planId
-      ? snapshot.plan.steps.find((step) => step.stepNo === snapshot.approval?.stepNo)
+      ? (snapshot.plan.steps ?? []).find((step) => step.stepNo === snapshot.approval?.stepNo)
       : undefined;
 
   const syncBackendDetail = useCallback(async () => {
@@ -422,7 +422,7 @@ function ActiveWorkspace({
       startTime,
       endTime,
       actionCommand: approvedStep?.actionCommand ?? null,
-      evidenceChunkIds: snapshot.plan.evidence.map((e) => e.chunkId),
+      evidenceChunkIds: (snapshot.plan.evidence ?? []).map((e) => e.chunkId),
       notes: snapshot.plan.verificationCriteria,
     });
     if (res.ok) {
@@ -665,7 +665,7 @@ function ActiveWorkspace({
                   <details>
                     <summary>근거 및 복구 확인 기준</summary>
                     <ul className={styles.evidence}>
-                      {snapshot.plan.evidence.map((item) => (
+                      {(snapshot.plan.evidence ?? []).map((item) => (
                         <li key={item.chunkId}>
                           <code>{item.chunkId}</code> {item.summary}
                         </li>

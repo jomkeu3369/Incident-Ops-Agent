@@ -64,11 +64,20 @@ export type WorkspaceAction =
 
 function mergePlans(backendPlan: Plan | null, existingPlan: Plan | null): Plan | null {
   if (!backendPlan) return existingPlan;
-  if (!existingPlan || existingPlan.planId !== backendPlan.planId) return backendPlan;
+  if (!existingPlan || existingPlan.planId !== backendPlan.planId) {
+    return {
+      ...backendPlan,
+      steps: backendPlan.steps ?? [],
+      evidence: backendPlan.evidence ?? [],
+    };
+  }
+  const existingEvidence = existingPlan.evidence ?? [];
+  const backendEvidence = backendPlan.evidence ?? [];
   return {
     ...backendPlan,
+    steps: (backendPlan.steps ?? []).length > 0 ? backendPlan.steps : (existingPlan.steps ?? []),
     workWindow: backendPlan.workWindow ?? existingPlan.workWindow ?? null,
-    evidence: existingPlan.evidence.length > 0 ? existingPlan.evidence : backendPlan.evidence,
+    evidence: existingEvidence.length > 0 ? existingEvidence : backendEvidence,
   };
 }
 
@@ -267,7 +276,7 @@ export function workspaceReducer(state: WorkspaceState, action: WorkspaceAction)
         ...state,
         snapshot: {
           ...next,
-          plan: next.plan ?? state.snapshot.plan,
+          plan: mergePlans(next.plan, state.snapshot.plan),
         },
         replan: latestReplan,
       };

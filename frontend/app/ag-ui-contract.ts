@@ -156,14 +156,82 @@ export function formatToolResultSummary(
   }
 }
 
+function normalizeWorkWindow(raw: unknown): WorkWindow | null {
+  if (!raw || typeof raw !== "object") return null;
+  const w = raw as Record<string, unknown>;
+  if (typeof w.start !== "string" || typeof w.end !== "string") return null;
+  return { start: w.start, end: w.end };
+}
+
+function normalizePlan(raw: unknown): Plan | null {
+  if (!raw || typeof raw !== "object") return null;
+  const p = raw as Record<string, unknown>;
+  const planId = typeof p.planId === "string" ? p.planId : "";
+  const steps: PlanStep[] = Array.isArray(p.steps)
+    ? p.steps
+        .filter((item): item is Record<string, unknown> => Boolean(item && typeof item === "object"))
+        .map((step, index) => ({
+          stepNo: typeof step.stepNo === "number" ? step.stepNo : index + 1,
+          description: typeof step.description === "string" ? step.description : "",
+          condition: typeof step.condition === "string" ? step.condition : undefined,
+          actionCommand:
+            typeof step.actionCommand === "string" || step.actionCommand === null ? step.actionCommand : null,
+          evidenceChunkIds: Array.isArray(step.evidenceChunkIds)
+            ? step.evidenceChunkIds.filter((id): id is string => typeof id === "string")
+            : [],
+        }))
+    : [];
+
+  let evidence: EvidenceItem[];
+  if (Array.isArray(p.evidence)) {
+    evidence = p.evidence
+      .filter((item): item is Record<string, unknown> => Boolean(item && typeof item === "object"))
+      .map((item) => ({
+        chunkId: typeof item.chunkId === "string" ? item.chunkId : "",
+        summary: typeof item.summary === "string" ? item.summary : "",
+        corpusType: typeof item.corpusType === "string" ? item.corpusType : undefined,
+      }))
+      .filter((item) => item.chunkId.length > 0);
+  } else {
+    const seen = new Set<string>();
+    evidence = [];
+    for (const step of steps) {
+      for (const chunkId of step.evidenceChunkIds) {
+        if (!seen.has(chunkId)) {
+          seen.add(chunkId);
+          evidence.push({ chunkId, summary: "저장된 복구 계획의 근거 청크" });
+        }
+      }
+    }
+  }
+
+  return {
+    planId,
+    workWindow: normalizeWorkWindow(p.workWindow),
+    steps,
+    evidence,
+    verificationCriteria: typeof p.verificationCriteria === "string" ? p.verificationCriteria : "",
+  };
+}
+
 export function normalizeSnapshot(raw: unknown, fallbackIncidentCode: string): Snapshot | null {
   if (!raw || typeof raw !== "object") return null;
   const obj = raw as Record<string, unknown>;
   const incidentCode = typeof obj.incidentCode === "string" ? obj.incidentCode : fallbackIncidentCode;
   const workflowStatus = isWorkflowStatus(obj.workflowStatus) ? obj.workflowStatus : "IDLE";
-  const plan = obj.plan && typeof obj.plan === "object" ? (obj.plan as Plan) : null;
+  const plan = normalizePlan(obj.plan);
   const approval = obj.approval && typeof obj.approval === "object" ? (obj.approval as Approval) : null;
-  const replanHistory = Array.isArray(obj.replanHistory) ? (obj.replanHistory as ReplanRecord[]) : [];
+  const replanHistory = Array.isArray(obj.replanHistory)
+    ? obj.replanHistory.filter((item): item is ReplanRecord => {
+        if (!item || typeof item !== "object") return false;
+        const r = item as Record<string, unknown>;
+        return (
+          typeof r.reason === "string" &&
+          normalizeWorkWindow(r.previousWindow) !== null &&
+          normalizeWorkWindow(r.nextWindow) !== null
+        );
+      })
+    : [];
   return { incidentCode, workflowStatus, plan, approval, replanHistory };
 }
 

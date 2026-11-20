@@ -117,6 +117,52 @@ test("resolveInitialMode honors explicit live/mock URL param over env default", 
   assert.equal(resolveInitialMode(undefined, undefined), "live");
 });
 
+test("STATE_SNAPSHOT normalizes Spring-hydrated plans that omit evidence and workWindow", () => {
+  let state = createInitialState(activeIncident);
+  state = workspaceReducer(state, {
+    type: "STATE_SNAPSHOT",
+    snapshot: {
+      incidentCode: activeIncident.incidentCode,
+      workflowStatus: "AWAITING_EXECUTION_RESULT",
+      plan: {
+        id: 1,
+        planId: "PLAN-2026-001",
+        incidentCode: activeIncident.incidentCode,
+        steps: [
+          {
+            stepNo: 1,
+            description: "커넥션 획득 타임아웃과 누수 로그를 대조한다.",
+            actionCommand: null,
+            evidenceChunkIds: ["LOG-104", "LOG-105"],
+          },
+          {
+            stepNo: 2,
+            description: "결제 서비스 배포를 직전 안정 버전으로 되돌린다.",
+            actionCommand: "kubectl rollout undo deployment/payment-service",
+            evidenceChunkIds: ["RUNBOOK-01", "LOG-104"],
+          },
+        ],
+        verificationCriteria: "롤백 후 2분 내 502 오류율이 0%로 복귀한다.",
+      },
+      approval: {
+        approvalId: "APR-2026-001",
+        planId: "PLAN-2026-001",
+        stepNo: 2,
+        decision: "APPROVED",
+      },
+      replanHistory: [],
+    },
+  });
+
+  assert.ok(state.snapshot.plan);
+  assert.deepEqual(
+    state.snapshot.plan.evidence.map((e) => e.chunkId),
+    ["LOG-104", "LOG-105", "RUNBOOK-01"],
+  );
+  assert.equal(state.snapshot.plan.workWindow, null);
+  assert.equal(canResumeApprovedExecution(state.snapshot), true);
+});
+
 test("HttpAgent SSE end-to-end against /api/mock-ag-ui (plan, restore, approve, 409, reject, error, abort)", async (t) => {
   const baseUrl = process.env.TEST_AG_UI_BASE_URL;
   if (!baseUrl) {
