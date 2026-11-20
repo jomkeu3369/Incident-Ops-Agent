@@ -123,7 +123,7 @@ test("HttpAgent SSE end-to-end against /api/mock-ag-ui (plan, restore, approve, 
     t.skip("Set TEST_AG_UI_BASE_URL to run live SSE integration test");
     return;
   }
-  const url = `${baseUrl}/api/mock-ag-ui`;
+  const url = `${baseUrl}/bff/mock-ag-ui`;
 
   // 1) Planning request
   let state = createInitialState(activeIncident);

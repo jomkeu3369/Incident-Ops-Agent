@@ -121,33 +121,35 @@ export function Workspace({ incident, incidents, initialDetail, initialMode, ini
               <Activity size={20} aria-hidden="true" /> Incident Ops
             </div>
             <nav className={styles.viewTabs} aria-label="화면 전환">
-              <button type="button" className={styles.modeButton} aria-pressed={view === "workspace"} onClick={() => switchView("workspace")}>
+              <button type="button" className={styles.navTab} aria-pressed={view === "workspace"} onClick={() => switchView("workspace")}>
                 장애 대응
               </button>
-              <button type="button" className={styles.modeButton} aria-pressed={view === "plans"} onClick={() => switchView("plans")}>
+              <button type="button" className={styles.navTab} aria-pressed={view === "plans"} onClick={() => switchView("plans")}>
                 계획 관리
               </button>
-              <button type="button" className={styles.modeButton} aria-pressed={view === "sessions"} onClick={() => switchView("sessions")}>
+              <button type="button" className={styles.navTab} aria-pressed={view === "sessions"} onClick={() => switchView("sessions")}>
                 실행 로그
               </button>
             </nav>
-            <div className={styles.modeSwitch} role="group" aria-label="AG-UI 연결 대상">
-              <button
-                type="button"
-                className={styles.modeButton}
-                aria-pressed={mode === "live"}
-                onClick={() => switchMode("live")}
-              >
-                <Radio size={14} aria-hidden="true" /> AG-UI
-              </button>
-              <button
-                type="button"
-                className={styles.modeButton}
-                aria-pressed={mode === "mock"}
-                onClick={() => switchMode("mock")}
-              >
-                모의 SSE
-              </button>
+            <div className={styles.topActions}>
+              <div className={styles.modeSwitch} role="group" aria-label="AG-UI 연결 대상">
+                <button
+                  type="button"
+                  className={styles.modeButton}
+                  aria-pressed={mode === "live"}
+                  onClick={() => switchMode("live")}
+                >
+                  <Radio size={13} aria-hidden="true" /> AG-UI
+                </button>
+                <button
+                  type="button"
+                  className={styles.modeButton}
+                  aria-pressed={mode === "mock"}
+                  onClick={() => switchMode("mock")}
+                >
+                  모의 SSE
+                </button>
+              </div>
             </div>
           </div>
         </header>
@@ -447,44 +449,46 @@ function ActiveWorkspace({
             <Activity size={20} aria-hidden="true" /> Incident Ops
           </div>
           <nav className={styles.viewTabs} aria-label="화면 전환">
-            <button type="button" className={styles.modeButton} aria-pressed={view === "workspace"} onClick={() => onSwitchView("workspace")}>
+            <button type="button" className={styles.navTab} aria-pressed={view === "workspace"} onClick={() => onSwitchView("workspace")}>
               장애 대응
             </button>
-            <button type="button" className={styles.modeButton} aria-pressed={view === "plans"} onClick={() => onSwitchView("plans")}>
+            <button type="button" className={styles.navTab} aria-pressed={view === "plans"} onClick={() => onSwitchView("plans")}>
               계획 관리
             </button>
-            <button type="button" className={styles.modeButton} aria-pressed={view === "sessions"} onClick={() => onSwitchView("sessions")}>
+            <button type="button" className={styles.navTab} aria-pressed={view === "sessions"} onClick={() => onSwitchView("sessions")}>
               실행 로그
             </button>
           </nav>
-          <div className={styles.modeSwitch} role="group" aria-label="AG-UI 연결 대상">
-            <button
-              type="button"
-              className={styles.modeButton}
-              aria-pressed={mode === "live"}
-              onClick={() => handleSwitchMode("live")}
-            >
-              <Radio size={14} aria-hidden="true" /> AG-UI
-            </button>
-            <button
-              type="button"
-              className={styles.modeButton}
-              aria-pressed={mode === "mock"}
-              onClick={() => handleSwitchMode("mock")}
-            >
-              모의 SSE
-            </button>
+          <div className={styles.topActions}>
+            <div className={styles.modeSwitch} role="group" aria-label="AG-UI 연결 대상">
+              <button
+                type="button"
+                className={styles.modeButton}
+                aria-pressed={mode === "live"}
+                onClick={() => handleSwitchMode("live")}
+              >
+                <Radio size={13} aria-hidden="true" /> AG-UI
+              </button>
+              <button
+                type="button"
+                className={styles.modeButton}
+                aria-pressed={mode === "mock"}
+                onClick={() => handleSwitchMode("mock")}
+              >
+                모의 SSE
+              </button>
+            </div>
+            {view === "workspace" && (
+              <button
+                type="button"
+                className={styles.secondaryButton}
+                onClick={resetSession}
+                disabled={isResolved || !hasSession}
+              >
+                <RotateCcw size={14} aria-hidden="true" /> 새 대화
+              </button>
+            )}
           </div>
-          {view === "workspace" && (
-            <button
-              type="button"
-              className={styles.secondaryButton}
-              onClick={resetSession}
-              disabled={isResolved || !hasSession}
-            >
-              <RotateCcw size={15} aria-hidden="true" /> 새 대화
-            </button>
-          )}
         </div>
       </header>
 
@@ -632,9 +636,11 @@ function ActiveWorkspace({
                     />
                   </div>
                 )}
-                <button className={styles.primaryButton} type="submit" disabled={busy || !prompt.trim()}>
-                  <Send size={15} aria-hidden="true" /> 계획 요청
-                </button>
+                <div className={styles.composerFooter}>
+                  <button className={styles.primaryButton} type="submit" disabled={busy || !prompt.trim()}>
+                    <Send size={14} aria-hidden="true" /> 계획 요청
+                  </button>
+                </div>
               </form>
             )}
           </section>
