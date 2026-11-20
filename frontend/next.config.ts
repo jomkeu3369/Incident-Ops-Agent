@@ -3,6 +3,7 @@ import type { NextConfig } from "next";
 const supervisorUrl = process.env.SUPERVISOR_URL?.replace(/\/$/, "");
 
 const config: NextConfig = {
+  output: "standalone",
   agentRules: false,
   devIndicators: false,
   async rewrites() {

@@ -114,11 +114,17 @@ services:
         NEXT_PUBLIC_INCIDENT_API_PATH: ${NEXT_PUBLIC_INCIDENT_API_PATH:-/api/incidents}
     container_name: incident-ops-frontend
     restart: unless-stopped
+    environment:
+      BACKEND_INTERNAL_URL: ${BACKEND_INTERNAL_URL:-http://backend:8080}
+      INTERNAL_SERVICE_TOKEN: ${INTERNAL_SERVICE_TOKEN:?Set INTERNAL_SERVICE_TOKEN in .env}
+      NEXT_PUBLIC_AG_UI_URL: ${NEXT_PUBLIC_AG_UI_PATH:-/api/ag-ui}
     ports:
       - "${FRONTEND_PORT:-3000}:3000"
     depends_on:
-      - backend
-      - supervisor-agent
+      backend:
+        condition: service_healthy
+      supervisor-agent:
+        condition: service_started
     networks:
       - incident-ops-net
 

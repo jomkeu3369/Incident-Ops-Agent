@@ -12,6 +12,7 @@
   "include": [
     "app/ag-ui-contract.ts",
     "app/ag-ui-client.ts",
+    "app/backend-api.ts",
     "app/demo.ts",
     "app/workspace-state.ts",
     "tests/**/*.ts"
