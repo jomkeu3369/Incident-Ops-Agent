@@ -43,6 +43,26 @@ class SessionLogsResponse(BaseModel):
     events: list[dict[str, Any]] = Field(default_factory=list)
 
 
+class AnomalyFindingItem(BaseModel):
+    """규칙 기반 이상 징후 탐지 항목 스키마 (F3020)."""
+
+    rule: Literal["REPEATED_IDENTICAL_CALL", "EXCESSIVE_REPLAN", "UNPLANNED_TOOL_CALL"]
+    severity: Literal["WARN", "HIGH"]
+    summary: str
+    evidence: dict[str, Any] = Field(default_factory=dict)
+
+
+class SessionAnomalyResponse(BaseModel):
+    """특정 세션의 이상 징후 분석 결과 응답 스키마 (F3020)."""
+
+    sessionId: str
+    status: Literal["NORMAL", "ANOMALY", "UNDETERMINED"]
+    findings: list[AnomalyFindingItem] = Field(default_factory=list)
+    diagnosis: str | None = None
+    llmCalls: int = 0
+    evaluatedEventCount: int = 0
+
+
 class ManagedPlanCreate(BaseModel):
     """플래너 작업 계획 생성 요청 스키마 (F3015)."""
 

@@ -69,6 +69,8 @@ class Settings(BaseSettings):
     google_calendar_base_url: str = "https://www.googleapis.com/calendar/v3"
     google_calendar_id: str = ""
     google_calendar_token: SecretStr = SecretStr("")
+    calendar_adapter_mode: str = "google"
+    local_freeze_calendar_path: str = ""
 
     @model_validator(mode="after")
     def _derive_backend_base_url(self) -> "Settings":

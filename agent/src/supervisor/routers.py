@@ -4,12 +4,13 @@ from fastapi import APIRouter, Depends, HTTPException, Request, status
 from fastapi.responses import StreamingResponse
 from ag_ui.core import RunAgentInput
 
+from common.anomaly import SessionAnomalyAnalyzer
 from common.backend_client import BackendClient
 from common.config import Settings
 from common.di import AppContainer, get_backend_client, get_container, get_settings
 from common.security import get_operator_id
 from supervisor.cruds import SupervisorRedisStore
-from supervisor.schemas import ManagedPlanCreate, ManagedPlanItem, ManagedPlanMutationResponse, ManagedPlanUpdate, SessionLogsResponse, SessionSummary
+from supervisor.schemas import ManagedPlanCreate, ManagedPlanItem, ManagedPlanMutationResponse, ManagedPlanUpdate, SessionAnomalyResponse, SessionLogsResponse, SessionSummary
 from supervisor.services import SupervisorService
 
 router = APIRouter(prefix="/api/ag-ui", tags=["ag-ui"])
@@ -57,6 +58,25 @@ async def get_session_logs(session_id: str, store: SupervisorRedisStore = Depend
     if not events:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"실행 로그를 찾을 수 없습니다: {session_id}")
     return SessionLogsResponse(sessionId=session_id, events=events)
+
+
+def get_anomaly_analyzer(cfg: Settings = Depends(get_settings)) -> SessionAnomalyAnalyzer:
+    """세션 실행 로그 이상 징후 분석기(F3020)를 DI로 주입한다."""
+    return SessionAnomalyAnalyzer(settings=cfg)
+
+
+@router.get("/sessions/{session_id}/anomalies", response_model=SessionAnomalyResponse)
+async def analyze_session_anomalies(
+    session_id: str,
+    store: SupervisorRedisStore = Depends(get_supervisor_store),
+    analyzer: SessionAnomalyAnalyzer = Depends(get_anomaly_analyzer),
+) -> SessionAnomalyResponse:
+    """저장된 세션 실행 로그의 이상 징후를 규칙 기반으로 판정하고 이상 건에만 3문장 진단을 반환한다."""
+    events = await store.get_session_logs(session_id)
+    if not events:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"실행 로그를 찾을 수 없습니다: {session_id}")
+    report = await analyzer.analyze(session_id, events)
+    return SessionAnomalyResponse.model_validate(report.to_dict())
 
 
 @router.delete("/sessions/{session_id}", status_code=status.HTTP_204_NO_CONTENT)
