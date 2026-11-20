@@ -1,9 +1,11 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { runAgUiRequest } from "../app/ag-ui-client";
+import { resolveInitialMode, runAgUiRequest } from "../app/ag-ui-client";
 import { incidents, nextWindow, previousWindow } from "../app/demo";
 import {
+  canResumeApprovedExecution,
   canSendPrompt,
+  canSubmitDecision,
   createInitialState,
   workspaceReducer,
   type WorkspaceAction,
@@ -80,6 +82,39 @@ test("canSendPrompt allows IDLE, REJECTED, BLOCKED, EXECUTION_FAILED and blocks 
   assert.equal(canSendPrompt("AWAITING_APPROVAL", false), false);
   assert.equal(canSendPrompt("RESOLVED", false), false);
   assert.equal(canSendPrompt("IDLE", true), false);
+});
+
+test("resuming interrupted approved execution allows APPROVED only and blocks REJECTED", () => {
+  const awaitingApproval = {
+    incidentCode: activeIncident.incidentCode,
+    workflowStatus: "AWAITING_APPROVAL" as const,
+    plan: null,
+    approval: { approvalId: "APR-1", planId: "PLAN-1", stepNo: 1, decision: "PENDING" as const },
+    replanHistory: [],
+  };
+  assert.equal(canResumeApprovedExecution(awaitingApproval), false);
+  assert.equal(canSubmitDecision(awaitingApproval, "APPROVED"), true);
+  assert.equal(canSubmitDecision(awaitingApproval, "REJECTED"), true);
+
+  const interrupted = {
+    ...awaitingApproval,
+    workflowStatus: "AWAITING_EXECUTION_RESULT" as const,
+    approval: { ...awaitingApproval.approval, decision: "APPROVED" as const },
+  };
+  assert.equal(canResumeApprovedExecution(interrupted), true);
+  assert.equal(canSubmitDecision(interrupted, "APPROVED"), true);
+  assert.equal(canSubmitDecision(interrupted, "REJECTED"), false);
+
+  const resolved = { ...interrupted, workflowStatus: "RESOLVED" as const };
+  assert.equal(canResumeApprovedExecution(resolved), false);
+  assert.equal(canSubmitDecision(resolved, "APPROVED"), false);
+});
+
+test("resolveInitialMode honors explicit live/mock URL param over env default", () => {
+  assert.equal(resolveInitialMode("live", "mock"), "live");
+  assert.equal(resolveInitialMode("mock", "live"), "mock");
+  assert.equal(resolveInitialMode(undefined, "mock"), "mock");
+  assert.equal(resolveInitialMode(undefined, undefined), "live");
 });
 
 test("HttpAgent SSE end-to-end against /api/mock-ag-ui (plan, restore, approve, 409, reject, error, abort)", async (t) => {

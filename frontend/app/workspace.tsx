@@ -26,7 +26,13 @@ import {
   type WorkWindow,
 } from "./ag-ui-contract";
 import { allowedWindow, demoPrompt, freezeWindow, incidents, previousWindow, type Incident } from "./demo";
-import { canSendPrompt, createInitialState, workspaceReducer } from "./workspace-state";
+import {
+  canResumeApprovedExecution,
+  canSendPrompt,
+  canSubmitDecision,
+  createInitialState,
+  workspaceReducer,
+} from "./workspace-state";
 import styles from "./workspace.module.css";
 
 function createClientId(): string {
@@ -128,6 +134,14 @@ export function Workspace({ incident, initialMode }: { incident: Incident; initi
     activeRun.current?.abort();
     activeRun.current = null;
     threadIdRef.current = null;
+    try {
+      const url = new URL(window.location.href);
+      url.searchParams.set("incident", incident.incidentCode);
+      url.searchParams.set("mode", nextMode);
+      window.history.replaceState(null, "", `${url.pathname}${url.search}${url.hash}`);
+    } catch {
+      // ignore history errors in non-browser contexts
+    }
     setMode(nextMode);
     setPrompt(demoPrompt);
     dispatch({ type: "RESET", incident });
@@ -182,10 +196,11 @@ export function Workspace({ incident, initialMode }: { incident: Incident; initi
 
   async function submitDecision(decision: Decision) {
     if (activeRun.current || incident.resolved) return;
-    if (snapshot.workflowStatus !== "AWAITING_APPROVAL" || !snapshot.approval || snapshot.approval.decision !== "PENDING") {
+    if (!snapshot.approval || !canSubmitDecision(snapshot, decision)) {
       return;
     }
 
+    const resuming = canResumeApprovedExecution(snapshot);
     const controller = new AbortController();
     activeRun.current = controller;
 
@@ -200,7 +215,11 @@ export function Workspace({ incident, initialMode }: { incident: Incident; initi
         entry: {
           id: runId,
           label: "운영자",
-          text: decision === "APPROVED" ? "복구 계획을 승인합니다." : "복구 계획을 반려합니다.",
+          text: resuming
+            ? "승인된 복구 실행을 재개합니다."
+            : decision === "APPROVED"
+              ? "복구 계획을 승인합니다."
+              : "복구 계획을 반려합니다.",
           kind: "operator",
         },
       });
@@ -298,7 +317,7 @@ export function Workspace({ incident, initialMode }: { incident: Incident; initi
             <h2 id="incidents-label">장애 목록</h2>
             <ul>
               {incidents.map((item) => {
-                const href = mode === "mock" ? `/?incident=${item.incidentCode}&mode=mock` : `/?incident=${item.incidentCode}`;
+                const href = `/?incident=${item.incidentCode}&mode=${mode}`;
                 return (
                   <li key={item.incidentCode}>
                     <Link
@@ -457,6 +476,20 @@ export function Workspace({ incident, initialMode }: { incident: Incident; initi
                       <p className={styles.error} role="alert">
                         승인 조치 실행 또는 완료 반영에 실패했습니다. 조건을 확인해 주세요.
                       </p>
+                    ) : canResumeApprovedExecution(snapshot) ? (
+                      <div className={styles.resumeBox}>
+                        <p className={styles.decision} role="status">
+                          승인을 기록했습니다. 복구 실행이 완료되지 않았으면 아래에서 다시 실행할 수 있습니다.
+                        </p>
+                        <button
+                          type="button"
+                          className={styles.primaryButton}
+                          disabled={busy}
+                          onClick={() => void submitDecision("APPROVED")}
+                        >
+                          <RefreshCw size={15} aria-hidden="true" /> 실행 재개
+                        </button>
+                      </div>
                     ) : snapshot.approval.decision !== "PENDING" ? (
                       <p className={styles.decision} role="status">
                         {snapshot.approval.decision === "APPROVED"

@@ -76,7 +76,11 @@ export async function POST(request: Request) {
     if (!thread.snapshot.approval || thread.snapshot.approval.approvalId !== approvalId) {
       return NextResponse.json({ detail: "승인 요청을 찾을 수 없습니다." }, { status: 404 });
     }
-    if (thread.snapshot.approval.decision !== "PENDING") {
+    const isResumable =
+      decision === "APPROVED" &&
+      thread.snapshot.workflowStatus === "AWAITING_EXECUTION_RESULT" &&
+      thread.snapshot.approval.decision === "APPROVED";
+    if (thread.snapshot.approval.decision !== "PENDING" && !isResumable) {
       return NextResponse.json({ detail: "이미 처리된 승인 요청입니다." }, { status: 409 });
     }
   }

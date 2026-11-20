@@ -269,3 +269,19 @@ export function canSendPrompt(status: WorkflowStatus, resolved: boolean): boolea
   if (resolved) return false;
   return status === "IDLE" || status === "REJECTED" || status === "BLOCKED" || status === "EXECUTION_FAILED";
 }
+
+export function canResumeApprovedExecution(snapshot: Snapshot): boolean {
+  return (
+    snapshot.workflowStatus === "AWAITING_EXECUTION_RESULT" &&
+    snapshot.approval !== null &&
+    snapshot.approval.decision === "APPROVED"
+  );
+}
+
+export function canSubmitDecision(snapshot: Snapshot, decision: "APPROVED" | "REJECTED"): boolean {
+  if (!snapshot.approval) return false;
+  if (snapshot.workflowStatus === "AWAITING_APPROVAL" && snapshot.approval.decision === "PENDING") {
+    return true;
+  }
+  return decision === "APPROVED" && canResumeApprovedExecution(snapshot);
+}

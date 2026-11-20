@@ -4,6 +4,12 @@ import type { WorkspaceAction } from "./workspace-state";
 
 export type AgUiMode = "live" | "mock";
 
+export function resolveInitialMode(modeParam: string | undefined, envDefault: string | undefined): AgUiMode {
+  if (modeParam === "live") return "live";
+  if (modeParam === "mock") return "mock";
+  return envDefault === "mock" ? "mock" : "live";
+}
+
 export function resolveAgUiUrl(mode: AgUiMode): string {
   if (mode === "mock") return "/api/mock-ag-ui";
   return process.env.NEXT_PUBLIC_AG_UI_URL || "/api/ag-ui";
