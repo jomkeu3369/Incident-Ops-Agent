@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { resolveInitialMode, runAgUiRequest } from "../app/ag-ui-client";
-import { incidents, nextWindow, previousWindow } from "../app/demo";
+import { demoIncidentList, nextWindow, previousWindow } from "../app/demo";
 import {
   canResumeApprovedExecution,
   canSendPrompt,
@@ -11,7 +11,7 @@ import {
   type WorkspaceAction,
 } from "../app/workspace-state";
 
-const activeIncident = incidents[0];
+const activeIncident = demoIncidentList[0];
 
 test("reducer handles streaming text, steps, tool calls, replan, and incident isolation", () => {
   let state = createInitialState(activeIncident);
@@ -138,7 +138,7 @@ test("HttpAgent SSE end-to-end against /api/mock-ag-ui (plan, restore, approve, 
     threadId,
     runId: "run-1",
     userMessage: { id: "u-1", content: "이전 버전 502 비율 확인 후 롤백 계획 제안해줘" },
-    forwardedProps: { incidentCode: activeIncident.incidentCode, incidentStartedAt: activeIncident.startedAt },
+    forwardedProps: { incidentCode: activeIncident.incidentCode, incidentStartedAt: activeIncident.startedAt ?? undefined },
     signal: ac1.signal,
     dispatch,
   });
@@ -212,7 +212,7 @@ test("HttpAgent SSE end-to-end against /api/mock-ag-ui (plan, restore, approve, 
     threadId: rejectThreadId,
     runId: "run-reject-plan",
     userMessage: { id: "u-r1", content: "롤백 계획 제안해줘" },
-    forwardedProps: { incidentCode: activeIncident.incidentCode, incidentStartedAt: activeIncident.startedAt },
+    forwardedProps: { incidentCode: activeIncident.incidentCode, incidentStartedAt: activeIncident.startedAt ?? undefined },
     signal: new AbortController().signal,
     dispatch: rejectDispatch,
   });
@@ -240,7 +240,7 @@ test("HttpAgent SSE end-to-end against /api/mock-ag-ui (plan, restore, approve, 
     threadId: `${threadId}-err`,
     runId: "run-err",
     userMessage: { id: "u-err", content: "오류 테스트" },
-    forwardedProps: { incidentCode: activeIncident.incidentCode, incidentStartedAt: activeIncident.startedAt },
+    forwardedProps: { incidentCode: activeIncident.incidentCode, incidentStartedAt: activeIncident.startedAt ?? undefined },
     signal: new AbortController().signal,
     dispatch: (a) => {
       errState = workspaceReducer(errState, a);
@@ -257,7 +257,7 @@ test("HttpAgent SSE end-to-end against /api/mock-ag-ui (plan, restore, approve, 
     threadId: `${threadId}-abort`,
     runId: "run-abort",
     userMessage: { id: "u-abort", content: "롤백 계획" },
-    forwardedProps: { incidentCode: activeIncident.incidentCode, incidentStartedAt: activeIncident.startedAt },
+    forwardedProps: { incidentCode: activeIncident.incidentCode, incidentStartedAt: activeIncident.startedAt ?? undefined },
     signal: abortController.signal,
     dispatch: () => {
       if (abortController.signal.aborted) {

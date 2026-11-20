@@ -4,11 +4,19 @@ import {
   stepLabel,
   windowLabel,
   type ChatMessageRecord,
+  type Plan,
   type ReplanRecord,
   type Snapshot,
   type WorkflowStatus,
 } from "./ag-ui-contract";
-import { initialSnapshot, type Incident } from "./demo";
+import {
+  hydrateSnapshotFromDetail,
+  type BackendIncidentDetail,
+  type BackendPostMortem,
+  type BackendRemediationExecution,
+  type IncidentListItem,
+} from "./backend-api";
+import { initialSnapshot } from "./demo";
 
 export type EntryKind = "record" | "operator" | "assistant" | "step" | "tool" | "change";
 
@@ -23,6 +31,8 @@ export type TimelineEntry = {
 export type WorkspaceState = {
   incidentCode: string;
   snapshot: Snapshot;
+  executions: BackendRemediationExecution[];
+  postMortem: BackendPostMortem | null;
   entries: TimelineEntry[];
   toolNames: Record<string, string>;
   activeStep: string | null;
@@ -34,7 +44,7 @@ export type WorkspaceState = {
 };
 
 export type WorkspaceAction =
-  | { type: "RESET"; incident: Incident }
+  | { type: "RESET"; incident: IncidentListItem; detail?: BackendIncidentDetail | null }
   | { type: "REQUEST"; entry: TimelineEntry }
   | { type: "RESTORE_STARTED" }
   | { type: "RUN_STARTED" }
@@ -49,16 +59,32 @@ export type WorkspaceAction =
   | { type: "TEXT_MESSAGE_END"; messageId: string }
   | { type: "STATE_SNAPSHOT"; snapshot: unknown }
   | { type: "MESSAGES_SNAPSHOT"; messages: ChatMessageRecord[] }
-  | { type: "CUSTOM_REPLAN"; value: ReplanRecord };
+  | { type: "CUSTOM_REPLAN"; value: ReplanRecord }
+  | { type: "BACKEND_DETAIL_SYNCED"; detail: BackendIncidentDetail };
 
-export function createInitialState(incident: Incident): WorkspaceState {
-  const base = initialSnapshot(incident);
+function mergePlans(backendPlan: Plan | null, existingPlan: Plan | null): Plan | null {
+  if (!backendPlan) return existingPlan;
+  if (!existingPlan || existingPlan.planId !== backendPlan.planId) return backendPlan;
+  return {
+    ...backendPlan,
+    workWindow: backendPlan.workWindow ?? existingPlan.workWindow ?? null,
+    evidence: existingPlan.evidence.length > 0 ? existingPlan.evidence : backendPlan.evidence,
+  };
+}
+
+export function createInitialState(
+  incident: IncidentListItem,
+  detail?: BackendIncidentDetail | null,
+): WorkspaceState {
+  const base = detail ? hydrateSnapshotFromDetail(detail) : initialSnapshot(incident);
   return {
     incidentCode: incident.incidentCode,
     snapshot: base,
+    executions: detail?.executions ?? [],
+    postMortem: detail?.postMortem ?? null,
     entries: [
-      { id: "intake", label: "장애 접수", text: incident.summary, kind: "record" },
-      ...(incident.resolved
+      { id: "intake", label: "장애 접수", text: incident.summary || incident.title, kind: "record" },
+      ...(incident.resolved || base.workflowStatus === "RESOLVED"
         ? []
         : [
             {
@@ -82,7 +108,7 @@ export function createInitialState(incident: Incident): WorkspaceState {
 export function workspaceReducer(state: WorkspaceState, action: WorkspaceAction): WorkspaceState {
   switch (action.type) {
     case "RESET":
-      return createInitialState(action.incident);
+      return createInitialState(action.incident, action.detail);
 
     case "REQUEST":
       return {
@@ -210,11 +236,18 @@ export function workspaceReducer(state: WorkspaceState, action: WorkspaceAction)
       if (!next || next.incidentCode !== state.incidentCode) {
         return state;
       }
+      // During restore, never overwrite an authoritative persisted Spring state with an empty IDLE snapshot
+      if (state.restoring && next.workflowStatus === "IDLE" && state.snapshot.workflowStatus !== "IDLE") {
+        return state;
+      }
       const latestReplan =
         next.replanHistory.length > 0 ? next.replanHistory[next.replanHistory.length - 1] : state.replan;
       return {
         ...state,
-        snapshot: next,
+        snapshot: {
+          ...next,
+          plan: next.plan ?? state.snapshot.plan,
+        },
         replan: latestReplan,
       };
     }
@@ -260,6 +293,24 @@ export function workspaceReducer(state: WorkspaceState, action: WorkspaceAction)
                 kind: "change",
               },
             ],
+      };
+    }
+
+    case "BACKEND_DETAIL_SYNCED": {
+      if (action.detail.incident.incidentCode !== state.incidentCode) {
+        return state;
+      }
+      const hydrated = hydrateSnapshotFromDetail(action.detail);
+      return {
+        ...state,
+        snapshot: {
+          ...hydrated,
+          plan: mergePlans(hydrated.plan, state.snapshot.plan),
+          replanHistory: state.snapshot.replanHistory,
+        },
+        executions: action.detail.executions,
+        postMortem: action.detail.postMortem,
+        needsResync: false,
       };
     }
   }

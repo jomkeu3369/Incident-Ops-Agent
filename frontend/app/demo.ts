@@ -1,4 +1,5 @@
 import type { Plan, Snapshot, WorkWindow } from "./ag-ui-contract";
+import type { IncidentListItem } from "./backend-api";
 
 export const incidents = [
   {
@@ -52,7 +53,7 @@ export const demoPlan: Plan = {
   verificationCriteria: "결제 오류율과 DB 커넥션 대기 시간이 정상 범위로 돌아오는지 확인합니다.",
 };
 
-export function initialSnapshot(incident: Incident): Snapshot {
+export function initialSnapshot(incident: Pick<IncidentListItem, "incidentCode" | "resolved">): Snapshot {
   return {
     incidentCode: incident.incidentCode,
     workflowStatus: incident.resolved ? "RESOLVED" : "IDLE",
@@ -61,3 +62,15 @@ export function initialSnapshot(incident: Incident): Snapshot {
     replanHistory: [],
   };
 }
+
+export const demoIncidentList: IncidentListItem[] = incidents.map((item) => ({
+  incidentCode: item.incidentCode,
+  title: item.title,
+  serviceName: item.serviceName,
+  severity: item.severity,
+  status: item.resolved ? "RESOLVED" : "OPEN",
+  summary: item.summary,
+  createdAt: item.startedAt,
+  startedAt: item.startedAt,
+  resolved: item.resolved,
+}));

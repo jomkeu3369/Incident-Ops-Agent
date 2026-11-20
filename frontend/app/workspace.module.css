@@ -151,6 +151,50 @@
 .command { overflow-wrap: anywhere; color: var(--color-cool); }
 .actions { display: grid; grid-template-columns: 1fr 1fr; gap: var(--space-xs); margin-block-start: var(--space-xs); }
 .resumeBox { display: grid; justify-items: start; gap: var(--space-xs); margin-block-start: var(--space-xs); }
+.bannerError {
+  display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: var(--space-sm);
+  margin-block-end: var(--space-lg); padding: var(--space-sm) var(--space-md);
+  border: 1px solid var(--color-bad); border-radius: var(--radius-pill); background: var(--color-bad-soft);
+  color: var(--color-ink); font-size: var(--text-xs);
+}
+.emptyState {
+  display: grid; gap: var(--space-sm); padding: var(--space-xl);
+  background: var(--color-paper); border: 1px solid var(--color-rule); border-radius: var(--radius-card);
+}
+.emptyState p { color: var(--color-muted); }
+.startedAtRow { display: grid; gap: var(--space-2xs); width: 100%; }
+.startedAtRow label { font-size: var(--text-xs); color: var(--color-muted); }
+.startedAtInput {
+  width: 100%; min-height: 36px; padding: var(--space-2xs) var(--space-sm);
+  border: 1px solid var(--color-rule-2); border-radius: 4px; background: var(--color-paper);
+  color: var(--color-ink); font-family: var(--font-outlier); font-size: var(--text-xs);
+}
+.resolvedNote { display: grid; gap: var(--space-xs); }
+.resolvedNote p { color: var(--color-ink-2); }
+.recordSection {
+  margin-block-start: 20px; border-top: 1px solid var(--color-rule); padding-block-start: var(--space-md);
+  display: grid; gap: var(--space-sm);
+}
+.executionList { list-style: none; margin: 0; padding: 0; display: grid; gap: var(--space-sm); }
+.executionItem {
+  display: grid; gap: var(--space-2xs); padding: var(--space-sm);
+  border: 1px solid var(--color-rule); border-radius: var(--radius-pill); background: var(--color-paper-3);
+}
+.executionHead { display: flex; justify-content: space-between; align-items: center; gap: var(--space-xs); }
+.recordText { color: var(--color-ink-2); font-size: var(--text-xs); }
+.recordMeta { color: var(--color-muted); font-size: var(--text-xs); }
+.postMortemTitle { display: flex; align-items: center; gap: var(--space-xs); }
+.postMortemTitle svg { color: var(--color-muted); }
+.postMortemList { display: grid; gap: var(--space-sm); font-size: var(--text-xs); }
+.postMortemList dt { color: var(--color-muted); margin-block-end: var(--space-3xs); }
+.postMortemList dd { color: var(--color-ink-2); }
+.timelineDetails { color: var(--color-ink-2); font-size: var(--text-xs); }
+.timelineDetails summary { min-height: 36px; padding-block: var(--space-xs); }
+.timelinePre {
+  margin: 0; padding: var(--space-sm); white-space: pre-wrap; overflow-wrap: anywhere;
+  border: 1px solid var(--color-rule); border-radius: 4px; background: var(--color-paper-3);
+  font-family: var(--font-outlier); font-size: var(--text-xs); color: var(--color-ink-2);
+}
 .decision { color: var(--color-ink-2); border-inline-start: 2px solid var(--color-rule-2); padding-inline-start: var(--space-xs); margin-block-start: var(--space-xs); }
 .decisionOk { color: var(--color-ok); border-inline-start: 2px solid var(--color-ok); padding-inline-start: var(--space-xs); margin-block-start: var(--space-xs); }
 
