@@ -14,7 +14,7 @@ import {
 } from "../app/ops-admin-client";
 
 test("resolveAdminBaseUrl maps mock and live modes cleanly", () => {
-  assert.equal(resolveAdminBaseUrl("mock"), "/api/mock-ag-ui");
+  assert.equal(resolveAdminBaseUrl("mock"), "/bff/mock-ag-ui");
   assert.equal(resolveAdminBaseUrl("live"), "/api/ag-ui");
 });
 
@@ -30,7 +30,7 @@ test("Managed plans CRUD and same-date overlap warning work end-to-end (F3015, F
     t.skip("Set TEST_AG_UI_BASE_URL to run live admin API integration test");
     return;
   }
-  const adminBase = `${baseUrl}/api/mock-ag-ui`;
+  const adminBase = `${baseUrl}/bff/mock-ag-ui`;
 
   // 1) Create plan overlapping seeded 2026-11-18 14:40-14:45 -> saved WITH overlap warning
   const created = await createManagedPlan(adminBase, {
@@ -85,13 +85,14 @@ test("Session logs list, detail, anomaly analysis, and delete work end-to-end (F
     t.skip("Set TEST_AG_UI_BASE_URL to run live session log integration test");
     return;
   }
-  const adminBase = `${baseUrl}/api/mock-ag-ui`;
+  const adminBase = `${baseUrl}/bff/mock-ag-ui`;
 
   const listed = await listLogSessions(adminBase);
   assert.equal(listed.ok, true);
   if (!listed.ok) return;
   assert.ok(listed.data.length >= 1);
-  const targetId = listed.data[0].sessionId;
+  const targetId =
+    listed.data.find((s) => s.sessionId === "sess-mock-replan")?.sessionId ?? listed.data[0].sessionId;
 
   const detail = await getLogSessionDetail(adminBase, targetId);
   assert.equal(detail.ok, true);

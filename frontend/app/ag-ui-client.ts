@@ -11,7 +11,7 @@ export function resolveInitialMode(modeParam: string | undefined, envDefault: st
 }
 
 export function resolveAgUiUrl(mode: AgUiMode): string {
-  if (mode === "mock") return "/api/mock-ag-ui";
+  if (mode === "mock") return "/bff/mock-ag-ui";
   return process.env.NEXT_PUBLIC_AG_UI_URL || "/api/ag-ui";
 }
 

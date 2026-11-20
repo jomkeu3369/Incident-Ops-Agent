@@ -147,39 +147,41 @@ export function SessionsPanel({ mode }: { mode: AgUiMode }) {
           </button>
         </div>
 
-        {loadingList ? (
-          <p className={styles.progress}>세션 목록을 불러오는 중</p>
-        ) : sessions.length === 0 ? (
-          <p className={styles.empty}>저장된 실행 로그가 없습니다.</p>
-        ) : (
-          <ul className={styles.adminList}>
-            {sessions.map((item) => (
-              <li key={item.sessionId} className={styles.adminCard} data-active={item.sessionId === selectedId || undefined}>
-                <div className={styles.adminCardHead}>
-                  <button
-                    type="button"
-                    className={styles.sessionSelectButton}
-                    onClick={() => void loadDetail(item.sessionId)}
-                  >
-                    <span className={styles.mono}>{item.sessionId}</span>
-                  </button>
-                  <button
-                    type="button"
-                    className={styles.iconButton}
-                    onClick={() => void handleDelete(item.sessionId)}
-                    aria-label={`${item.sessionId} 로그 삭제`}
-                  >
-                    <Trash2 size={14} aria-hidden="true" /> 삭제
-                  </button>
-                </div>
-                <p className={styles.recordMeta}>
-                  이벤트 {item.eventCount}건
-                  {item.lastEventAt ? ` · 마지막 기록 ${timeLabel(item.lastEventAt)} KST` : ""}
-                </p>
-              </li>
-            ))}
-          </ul>
-        )}
+        <div className={styles.adminBody}>
+          {loadingList ? (
+            <p className={styles.progress}>세션 목록을 불러오는 중</p>
+          ) : sessions.length === 0 ? (
+            <p className={styles.empty}>저장된 실행 로그가 없습니다.</p>
+          ) : (
+            <ul className={styles.adminList}>
+              {sessions.map((item) => (
+                <li key={item.sessionId} className={styles.adminCard} data-active={item.sessionId === selectedId || undefined}>
+                  <div className={styles.adminCardHead}>
+                    <button
+                      type="button"
+                      className={styles.sessionSelectButton}
+                      onClick={() => void loadDetail(item.sessionId)}
+                    >
+                      <span className={styles.mono}>{item.sessionId}</span>
+                    </button>
+                    <button
+                      type="button"
+                      className={styles.iconButton}
+                      onClick={() => void handleDelete(item.sessionId)}
+                      aria-label={`${item.sessionId} 로그 삭제`}
+                    >
+                      <Trash2 size={13} aria-hidden="true" /> 삭제
+                    </button>
+                  </div>
+                  <div className={styles.metaGroup}>
+                    <span>이벤트 {item.eventCount}건</span>
+                    {item.lastEventAt && <span>마지막 기록 {timeLabel(item.lastEventAt)} KST</span>}
+                  </div>
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
       </section>
 
       <section className={styles.adminPanel} aria-labelledby="session-detail-label">
@@ -191,54 +193,57 @@ export function SessionsPanel({ mode }: { mode: AgUiMode }) {
             disabled={!selectedId || analyzing}
             onClick={() => void handleAnalyze()}
           >
-            <ShieldAlert size={15} aria-hidden="true" /> {analyzing ? "분석 중" : "이상 징후 분석"}
+            <ShieldAlert size={14} aria-hidden="true" /> {analyzing ? "분석 중" : "이상 징후 분석"}
           </button>
         </div>
 
-        {error && (
-          <p className={styles.error} role="alert">
-            {error}
-          </p>
-        )}
+        <div className={styles.adminBody}>
+          {error && (
+            <p className={styles.error} role="alert">
+              {error}
+            </p>
+          )}
 
-        {anomaly && (
-          <div className={styles.anomalyBox} data-status={anomaly.status} role="status">
-            <div className={styles.adminCardHead}>
-              <strong>판정: {ANOMALY_LABEL[anomaly.status]}</strong>
-              <span className={styles.recordMeta}>
-                평가 이벤트 {anomaly.evaluatedEventCount}건 · LLM 호출 {anomaly.llmCalls}회
-              </span>
+          {anomaly && (
+            <div className={styles.anomalyBox} data-status={anomaly.status} role="status">
+              <div className={styles.adminCardHead}>
+                <strong>판정: {ANOMALY_LABEL[anomaly.status]}</strong>
+                <div className={styles.metaGroup}>
+                  <span>평가 이벤트 {anomaly.evaluatedEventCount}건</span>
+                  <span>LLM 호출 {anomaly.llmCalls}회</span>
+                </div>
+              </div>
+              {anomaly.findings.length > 0 && (
+                <ul className={styles.evidence}>
+                  {anomaly.findings.map((finding, idx) => (
+                    <li key={`${finding.rule}-${idx}`}>
+                      <code>{finding.rule}</code> {finding.summary}
+                    </li>
+                  ))}
+                </ul>
+              )}
+              {anomaly.diagnosis && <p className={styles.recordText}>{anomaly.diagnosis}</p>}
             </div>
-            {anomaly.findings.length > 0 && (
-              <ul className={styles.evidence}>
-                {anomaly.findings.map((finding, idx) => (
-                  <li key={`${finding.rule}-${idx}`}>
-                    <code>{finding.rule}</code> {finding.summary}
-                  </li>
-                ))}
-              </ul>
-            )}
-            {anomaly.diagnosis && <p className={styles.recordText}>{anomaly.diagnosis}</p>}
-          </div>
-        )}
+          )}
 
-        {loadingDetail ? (
-          <p className={styles.progress}>실행 로그를 불러오는 중</p>
-        ) : !selectedId ? (
-          <p className={styles.empty}>세션을 선택하면 실행 순서대로 이벤트가 표시됩니다.</p>
-        ) : (
-          <ol className={styles.trail}>
-            {events.map((ev, index) => (
-              <li key={`${ev.timestamp ?? index}-${ev.eventType}-${index}`} data-kind={ev.eventType === "replan" ? "change" : "record"}>
-                <strong>
-                  {ev.eventType}
-                  {ev.timestamp ? ` · ${timeLabel(ev.timestamp)} KST` : ""}
-                </strong>
-                <p className={styles.mono}>{JSON.stringify(ev.payload ?? {})}</p>
-              </li>
-            ))}
-          </ol>
-        )}
+          {loadingDetail ? (
+            <p className={styles.progress}>실행 로그를 불러오는 중</p>
+          ) : !selectedId ? (
+            <p className={styles.empty}>세션을 선택하면 실행 순서대로 이벤트가 표시됩니다.</p>
+          ) : (
+            <ol className={styles.trail}>
+              {events.map((ev, index) => (
+                <li key={`${ev.timestamp ?? index}-${ev.eventType}-${index}`} data-kind={ev.eventType === "replan" ? "change" : "record"}>
+                  <strong>
+                    {ev.eventType}
+                    {ev.timestamp ? ` (${timeLabel(ev.timestamp)} KST)` : ""}
+                  </strong>
+                  <p className={styles.mono}>{JSON.stringify(ev.payload ?? {})}</p>
+                </li>
+              ))}
+            </ol>
+          )}
+        </div>
       </section>
     </div>
   );

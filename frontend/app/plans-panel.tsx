@@ -189,11 +189,12 @@ export function PlansPanel({ mode, defaultIncidentCode, defaultServiceName }: Pl
             />
           </label>
 
-          <div className={styles.formRowThree}>
-            <label className={styles.field}>
-              <span>작업 날짜</span>
-              <input type="date" value={planDate} disabled={saving} onChange={(e) => setPlanDate(e.target.value)} required />
-            </label>
+          <label className={styles.field}>
+            <span>작업 날짜</span>
+            <input type="date" value={planDate} disabled={saving} onChange={(e) => setPlanDate(e.target.value)} required />
+          </label>
+
+          <div className={styles.formRowTwo}>
             <label className={styles.field}>
               <span>시작 시각</span>
               <input type="time" value={startTime} disabled={saving} onChange={(e) => setStartTime(e.target.value)} required />
@@ -234,65 +235,68 @@ export function PlansPanel({ mode, defaultIncidentCode, defaultServiceName }: Pl
           </button>
         </div>
 
-        {warning && (
-          <div className={styles.warningBox} role="status">
-            <AlertTriangle size={16} aria-hidden="true" />
-            <span>{warning}</span>
-          </div>
-        )}
-        {error && (
-          <p className={styles.error} role="alert">
-            {error}
-          </p>
-        )}
+        <div className={styles.adminBody}>
+          {warning && (
+            <div className={styles.warningBox} role="status">
+              <AlertTriangle size={15} aria-hidden="true" />
+              <span>{warning}</span>
+            </div>
+          )}
+          {error && (
+            <p className={styles.error} role="alert">
+              {error}
+            </p>
+          )}
 
-        {loading ? (
-          <p className={styles.progress}>계획 목록을 불러오는 중</p>
-        ) : plans.length === 0 ? (
-          <p className={styles.empty}>저장된 작업 계획이 없습니다.</p>
-        ) : (
-          <ul className={styles.adminList}>
-            {plans.map((plan) => (
-              <li key={plan.planId} className={styles.adminCard}>
-                <div className={styles.adminCardHead}>
-                  <div>
-                    <span className={styles.mono}>
-                      {plan.planDate} {plan.startTime}–{plan.endTime}
-                    </span>
-                    <span className={styles.recordMeta}> · {plan.incidentCode} · {plan.serviceName}</span>
+          {loading ? (
+            <p className={styles.progress}>계획 목록을 불러오는 중</p>
+          ) : plans.length === 0 ? (
+            <p className={styles.empty}>저장된 작업 계획이 없습니다.</p>
+          ) : (
+            <ul className={styles.adminList}>
+              {plans.map((plan) => (
+                <li key={plan.planId} className={styles.adminCard}>
+                  <div className={styles.adminCardHead}>
+                    <div className={styles.metaGroup}>
+                      <span className={styles.mono}>
+                        {plan.planDate} {plan.startTime}–{plan.endTime}
+                      </span>
+                      <span>{plan.incidentCode}</span>
+                      <span>{plan.serviceName}</span>
+                    </div>
+                    <div className={styles.cardActions}>
+                      <button
+                        type="button"
+                        className={styles.iconButton}
+                        disabled={saving}
+                        onClick={() => startEdit(plan)}
+                        aria-label={`${plan.title} 수정`}
+                      >
+                        <Pencil size={13} aria-hidden="true" /> 수정
+                      </button>
+                      <button
+                        type="button"
+                        className={styles.iconButton}
+                        disabled={saving}
+                        onClick={() => void handleDelete(plan.planId)}
+                        aria-label={`${plan.title} 삭제`}
+                      >
+                        <Trash2 size={13} aria-hidden="true" /> 삭제
+                      </button>
+                    </div>
                   </div>
-                  <div className={styles.cardActions}>
-                    <button
-                      type="button"
-                      className={styles.iconButton}
-                      disabled={saving}
-                      onClick={() => startEdit(plan)}
-                      aria-label={`${plan.title} 수정`}
-                    >
-                      <Pencil size={14} aria-hidden="true" /> 수정
-                    </button>
-                    <button
-                      type="button"
-                      className={styles.iconButton}
-                      disabled={saving}
-                      onClick={() => void handleDelete(plan.planId)}
-                      aria-label={`${plan.title} 삭제`}
-                    >
-                      <Trash2 size={14} aria-hidden="true" /> 삭제
-                    </button>
-                  </div>
-                </div>
-                <strong>{plan.title}</strong>
-                {plan.actionCommand && (
-                  <p className={styles.command}>
-                    <code>{plan.actionCommand}</code>
-                  </p>
-                )}
-                {plan.notes && <p className={styles.recordText}>{plan.notes}</p>}
-              </li>
-            ))}
-          </ul>
-        )}
+                  <strong>{plan.title}</strong>
+                  {plan.actionCommand && (
+                    <p className={styles.command}>
+                      <code>{plan.actionCommand}</code>
+                    </p>
+                  )}
+                  {plan.notes && <p className={styles.recordText}>{plan.notes}</p>}
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
       </section>
     </div>
   );
