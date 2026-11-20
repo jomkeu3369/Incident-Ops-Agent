@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import type { ChatMessageRecord, Decision, ReplanRecord, Snapshot } from "../../ag-ui-contract";
 import { demoPlan, incidents, initialSnapshot, nextWindow, previousWindow } from "../../demo";
+import { mockRecordSessionEvent } from "./mock-store";
 
 type MockThreadState = {
   incidentCode: string;
@@ -189,9 +190,14 @@ export async function POST(request: Request) {
         }
 
         send({ type: "STEP_STARTED", stepName: "analyze" });
+        mockRecordSessionEvent(threadId, "step_started", { step: "analyze", incidentCode });
         send({ type: "STATE_SNAPSHOT", snapshot: { ...thread.snapshot, workflowStatus: "PLANNING" } });
         await delay(120);
         send({ type: "STEP_FINISHED", stepName: "analyze" });
+        mockRecordSessionEvent(threadId, "step_finished", {
+          step: "plan",
+          steps: ["a2a:log-analyzer-agent", "a2a:remediation-agent"],
+        });
 
         send({ type: "STEP_STARTED", stepName: "execute" });
 
@@ -238,6 +244,12 @@ export async function POST(request: Request) {
             role: "tool",
             content: JSON.stringify(tc.result),
           });
+          mockRecordSessionEvent(threadId, "tool_call", {
+            tool: tc.name,
+            args: tc.args,
+            ok: true,
+            elapsedMs: 140,
+          });
         }
         send({ type: "STEP_FINISHED", stepName: "execute" });
 
@@ -248,6 +260,7 @@ export async function POST(request: Request) {
           nextWindow,
         };
         send({ type: "CUSTOM", name: "replan", value: replan });
+        mockRecordSessionEvent(threadId, "replan", replan);
 
         const awaitingSnapshot: Snapshot = {
           incidentCode,

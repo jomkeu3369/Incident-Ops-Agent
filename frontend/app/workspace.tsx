@@ -21,6 +21,7 @@ import { useCallback, useEffect, useReducer, useRef, useState } from "react";
 import { resolveAgUiUrl, runAgUiRequest, type AgUiMode } from "./ag-ui-client";
 import {
   STATUS_LABELS,
+  dateLabelKst,
   timeLabel,
   windowLabel,
   type Decision,
@@ -29,6 +30,9 @@ import {
 } from "./ag-ui-contract";
 import type { BackendIncidentDetail, IncidentListItem } from "./backend-api";
 import { allowedWindow, demoPrompt, freezeWindow, previousWindow } from "./demo";
+import { createManagedPlan, resolveAdminBaseUrl } from "./ops-admin-client";
+import { PlansPanel } from "./plans-panel";
+import { SessionsPanel } from "./sessions-panel";
 import {
   canResumeApprovedExecution,
   canSendPrompt,
@@ -70,23 +74,41 @@ function writeStoredThreadId(mode: AgUiMode, incidentCode: string, threadId: str
   }
 }
 
+export type WorkspaceView = "workspace" | "plans" | "sessions";
+
 type WorkspaceProps = {
   incident: IncidentListItem | null;
   incidents: IncidentListItem[];
   initialDetail: BackendIncidentDetail | null;
   initialMode: AgUiMode;
+  initialView: WorkspaceView;
   backendError: string | null;
 };
 
-export function Workspace({ incident, incidents, initialDetail, initialMode, backendError }: WorkspaceProps) {
+export function Workspace({ incident, incidents, initialDetail, initialMode, initialView, backendError }: WorkspaceProps) {
   const router = useRouter();
   const mode = initialMode;
+  const [view, setView] = useState<WorkspaceView>(initialView);
+
+  function switchView(nextView: WorkspaceView) {
+    if (nextView === view) return;
+    setView(nextView);
+    try {
+      const url = new URL(window.location.href);
+      if (nextView === "workspace") url.searchParams.delete("view");
+      else url.searchParams.set("view", nextView);
+      window.history.replaceState(null, "", `${url.pathname}${url.search}${url.hash}`);
+    } catch {
+      // ignore non-browser contexts
+    }
+  }
 
   function switchMode(nextMode: AgUiMode) {
     if (nextMode === mode) return;
+    const viewSuffix = view !== "workspace" ? `&view=${view}` : "";
     const target = incident
-      ? `/?incident=${encodeURIComponent(incident.incidentCode)}&mode=${nextMode}`
-      : `/?mode=${nextMode}`;
+      ? `/?incident=${encodeURIComponent(incident.incidentCode)}&mode=${nextMode}${viewSuffix}`
+      : `/?mode=${nextMode}${viewSuffix}`;
     router.push(target);
   }
 
@@ -98,6 +120,17 @@ export function Workspace({ incident, incidents, initialDetail, initialMode, bac
             <div className={styles.brand}>
               <Activity size={20} aria-hidden="true" /> Incident Ops
             </div>
+            <nav className={styles.viewTabs} aria-label="화면 전환">
+              <button type="button" className={styles.modeButton} aria-pressed={view === "workspace"} onClick={() => switchView("workspace")}>
+                장애 대응
+              </button>
+              <button type="button" className={styles.modeButton} aria-pressed={view === "plans"} onClick={() => switchView("plans")}>
+                계획 관리
+              </button>
+              <button type="button" className={styles.modeButton} aria-pressed={view === "sessions"} onClick={() => switchView("sessions")}>
+                실행 로그
+              </button>
+            </nav>
             <div className={styles.modeSwitch} role="group" aria-label="AG-UI 연결 대상">
               <button
                 type="button"
@@ -119,13 +152,19 @@ export function Workspace({ incident, incidents, initialDetail, initialMode, bac
           </div>
         </header>
         <main className={styles.main}>
-          <section className={styles.emptyState}>
-            <h1>등록된 장애가 없습니다</h1>
-            <p>
-              {backendError ||
-                "현재 조회된 장애 티켓이 없습니다. 백엔드에 장애를 등록하거나 모의 SSE 모드로 전환해 시나리오를 확인할 수 있습니다."}
-            </p>
-          </section>
+          {view === "plans" ? (
+            <PlansPanel mode={mode} defaultIncidentCode="INC-2026-001" defaultServiceName="payment-service" />
+          ) : view === "sessions" ? (
+            <SessionsPanel mode={mode} />
+          ) : (
+            <section className={styles.emptyState}>
+              <h1>등록된 장애가 없습니다</h1>
+              <p>
+                {backendError ||
+                  "현재 조회된 장애 티켓이 없습니다. 백엔드에 장애를 등록하거나 모의 SSE 모드로 전환해 시나리오를 확인할 수 있습니다."}
+              </p>
+            </section>
+          )}
         </main>
       </>
     );
@@ -137,8 +176,10 @@ export function Workspace({ incident, incidents, initialDetail, initialMode, bac
       incidents={incidents}
       initialDetail={initialDetail}
       mode={mode}
+      view={view}
       backendError={backendError}
       onSwitchMode={switchMode}
+      onSwitchView={switchView}
     />
   );
 }
@@ -148,18 +189,24 @@ function ActiveWorkspace({
   incidents,
   initialDetail,
   mode,
+  view,
   backendError,
   onSwitchMode,
+  onSwitchView,
 }: {
   incident: IncidentListItem;
   incidents: IncidentListItem[];
   initialDetail: BackendIncidentDetail | null;
   mode: AgUiMode;
+  view: WorkspaceView;
   backendError: string | null;
   onSwitchMode: (nextMode: AgUiMode) => void;
+  onSwitchView: (nextView: WorkspaceView) => void;
 }) {
   const [prompt, setPrompt] = useState(demoPrompt);
   const [incidentStartedAt, setIncidentStartedAt] = useState(incident.startedAt ?? "");
+  const [planSaveNotice, setPlanSaveNotice] = useState<string | null>(null);
+  const [savingPlan, setSavingPlan] = useState(false);
   const [state, dispatch] = useReducer(workspaceReducer, undefined, () =>
     createInitialState(incident, initialDetail),
   );
@@ -360,6 +407,33 @@ function ActiveWorkspace({
     }
   }
 
+  async function saveCurrentPlanToManager() {
+    if (!snapshot.plan || savingPlan) return;
+    setSavingPlan(true);
+    setPlanSaveNotice(null);
+    const activeWin = snapshot.plan.workWindow ?? replan?.nextWindow ?? previousWindow;
+    const planDate = dateLabelKst(activeWin.start);
+    const startTime = timeLabel(activeWin.start);
+    const endTime = timeLabel(activeWin.end);
+    const res = await createManagedPlan(resolveAdminBaseUrl(mode), {
+      incidentCode: incident.incidentCode,
+      title: approvedStep?.description || `${incident.serviceName} 복구 계획`,
+      serviceName: incident.serviceName,
+      planDate,
+      startTime,
+      endTime,
+      actionCommand: approvedStep?.actionCommand ?? null,
+      evidenceChunkIds: snapshot.plan.evidence.map((e) => e.chunkId),
+      notes: snapshot.plan.verificationCriteria,
+    });
+    if (res.ok) {
+      setPlanSaveNotice(res.data.warning ? `저장 완료 · ${res.data.warning}` : "계획 관리에 저장했습니다.");
+    } else {
+      setPlanSaveNotice(res.message);
+    }
+    setSavingPlan(false);
+  }
+
   const isResolved = incident.resolved || snapshot.workflowStatus === "RESOLVED";
   const showComposer = canSendPrompt(snapshot.workflowStatus, isResolved);
   const hasSession = snapshot.workflowStatus !== "IDLE" || Boolean(error) || Boolean(threadIdRef.current);
@@ -372,6 +446,17 @@ function ActiveWorkspace({
           <div className={styles.brand}>
             <Activity size={20} aria-hidden="true" /> Incident Ops
           </div>
+          <nav className={styles.viewTabs} aria-label="화면 전환">
+            <button type="button" className={styles.modeButton} aria-pressed={view === "workspace"} onClick={() => onSwitchView("workspace")}>
+              장애 대응
+            </button>
+            <button type="button" className={styles.modeButton} aria-pressed={view === "plans"} onClick={() => onSwitchView("plans")}>
+              계획 관리
+            </button>
+            <button type="button" className={styles.modeButton} aria-pressed={view === "sessions"} onClick={() => onSwitchView("sessions")}>
+              실행 로그
+            </button>
+          </nav>
           <div className={styles.modeSwitch} role="group" aria-label="AG-UI 연결 대상">
             <button
               type="button"
@@ -390,18 +475,30 @@ function ActiveWorkspace({
               모의 SSE
             </button>
           </div>
-          <button
-            type="button"
-            className={styles.secondaryButton}
-            onClick={resetSession}
-            disabled={isResolved || !hasSession}
-          >
-            <RotateCcw size={15} aria-hidden="true" /> 새 대화
-          </button>
+          {view === "workspace" && (
+            <button
+              type="button"
+              className={styles.secondaryButton}
+              onClick={resetSession}
+              disabled={isResolved || !hasSession}
+            >
+              <RotateCcw size={15} aria-hidden="true" /> 새 대화
+            </button>
+          )}
         </div>
       </header>
 
       <main className={styles.main}>
+        {view === "plans" ? (
+          <PlansPanel
+            mode={mode}
+            defaultIncidentCode={incident.incidentCode}
+            defaultServiceName={incident.serviceName}
+          />
+        ) : view === "sessions" ? (
+          <SessionsPanel mode={mode} />
+        ) : (
+          <>
         {backendError && (
           <div className={styles.bannerError} role="alert">
             <span>{backendError}</span>
@@ -632,6 +729,21 @@ function ActiveWorkspace({
                       계획에서 승인 대상을 찾지 못했습니다.
                     </p>
                   )}
+                  <div className={styles.savePlanRow}>
+                    <button
+                      type="button"
+                      className={styles.secondaryButton}
+                      disabled={savingPlan}
+                      onClick={() => void saveCurrentPlanToManager()}
+                    >
+                      계획 관리에 저장
+                    </button>
+                    {planSaveNotice && (
+                      <p className={styles.recordMeta} role="status">
+                        {planSaveNotice}
+                      </p>
+                    )}
+                  </div>
                 </div>
               ) : snapshot.workflowStatus === "BLOCKED" ? (
                 <p className={styles.decision} role="status">
@@ -706,6 +818,8 @@ function ActiveWorkspace({
             </div>
           </aside>
         </div>
+          </>
+        )}
       </main>
     </>
   );

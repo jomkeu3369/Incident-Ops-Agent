@@ -8,6 +8,11 @@
 .brand { display: flex; align-items: center; gap: var(--space-xs); font-size: var(--text-md); font-weight: 600; }
 .brand svg { color: var(--color-accent); }
 .topInner > button { margin-inline-start: auto; }
+.viewTabs {
+  display: inline-flex; align-items: center; gap: var(--space-3xs); padding: var(--space-3xs);
+  margin-inline-start: var(--space-md); border: 1px solid var(--color-rule); border-radius: var(--radius-pill);
+  background: var(--color-paper-3);
+}
 .modeSwitch {
   display: inline-flex; align-items: center; gap: var(--space-3xs); padding: var(--space-3xs);
   margin-inline-start: var(--space-xs); border: 1px solid var(--color-rule); border-radius: var(--radius-pill);
@@ -195,6 +200,49 @@
   border: 1px solid var(--color-rule); border-radius: 4px; background: var(--color-paper-3);
   font-family: var(--font-outlier); font-size: var(--text-xs); color: var(--color-ink-2);
 }
+.savePlanRow { display: grid; justify-items: start; gap: var(--space-2xs); margin-block-start: var(--space-sm); }
+.adminGrid { display: grid; grid-template-columns: minmax(320px, 420px) minmax(0, 1fr); gap: var(--space-lg); align-items: start; }
+.adminPanel {
+  padding: 0 var(--space-lg) var(--space-lg); background: var(--color-paper);
+  border: 1px solid var(--color-rule); border-radius: var(--radius-card);
+}
+.adminForm { display: grid; gap: var(--space-sm); padding-block-start: var(--space-md); }
+.formRowTwo { display: grid; grid-template-columns: 1fr 1fr; gap: var(--space-sm); }
+.formRowThree { display: grid; grid-template-columns: 1.4fr 1fr 1fr; gap: var(--space-sm); }
+.field { display: grid; gap: var(--space-2xs); font-size: var(--text-xs); color: var(--color-muted); }
+.field input, .field textarea {
+  width: 100%; padding: var(--space-xs) var(--space-sm); border: 1px solid var(--color-rule-2); border-radius: 4px;
+  background: var(--color-paper-3); color: var(--color-ink); font: inherit; font-size: var(--text-sm);
+}
+.field input:disabled, .field textarea:disabled { opacity: 0.6; }
+.adminList { list-style: none; margin: var(--space-md) 0 0; padding: 0; display: grid; gap: var(--space-sm); }
+.adminCard {
+  display: grid; gap: var(--space-2xs); padding: var(--space-sm) var(--space-md);
+  border: 1px solid var(--color-rule); border-radius: var(--radius-pill); background: var(--color-paper-2);
+}
+.adminCard[data-active="true"] { border-color: var(--color-rule-2); border-inline-start: 2px solid var(--color-accent); }
+.adminCardHead { display: flex; justify-content: space-between; align-items: center; gap: var(--space-xs); flex-wrap: wrap; }
+.cardActions { display: inline-flex; gap: var(--space-2xs); }
+.iconButton {
+  display: inline-flex; align-items: center; gap: var(--space-3xs); min-height: 32px;
+  padding: var(--space-2xs) var(--space-xs); border: 1px solid var(--color-rule-2); border-radius: 4px;
+  background: var(--color-paper-3); color: var(--color-ink-2); font-size: var(--text-xs);
+}
+.iconButton:enabled:hover { border-color: var(--color-muted); color: var(--color-ink); }
+.sessionSelectButton {
+  border: 0; padding: 0; background: transparent; color: var(--color-cool); text-align: start; font-weight: 600;
+}
+.warningBox {
+  display: flex; align-items: center; gap: var(--space-xs); margin-block-start: var(--space-md);
+  padding: var(--space-sm) var(--space-md); border: 1px solid var(--color-accent); border-radius: var(--radius-pill);
+  background: var(--color-accent-soft); color: var(--color-accent); font-size: var(--text-xs);
+}
+.anomalyBox {
+  display: grid; gap: var(--space-xs); margin-block: var(--space-md); padding: var(--space-sm) var(--space-md);
+  border: 1px solid var(--color-rule-2); border-radius: var(--radius-pill); background: var(--color-paper-3);
+}
+.anomalyBox[data-status="ANOMALY"] { border-color: var(--color-bad); background: var(--color-bad-soft); }
+.anomalyBox[data-status="NORMAL"] { border-color: var(--color-ok); background: var(--color-ok-soft); }
 .decision { color: var(--color-ink-2); border-inline-start: 2px solid var(--color-rule-2); padding-inline-start: var(--space-xs); margin-block-start: var(--space-xs); }
 .decisionOk { color: var(--color-ok); border-inline-start: 2px solid var(--color-ok); padding-inline-start: var(--space-xs); margin-block-start: var(--space-xs); }
 
@@ -205,6 +253,7 @@
 }
 @media (max-width: 56rem) {
   .workspace { grid-template-columns: minmax(0, 1fr) minmax(280px, 1fr); min-height: 0; }
+  .adminGrid { grid-template-columns: minmax(0, 1fr); }
   .incidents { grid-column: 1 / -1; padding: var(--space-md); border-inline-end: 0; border-bottom: 1px solid var(--color-rule); }
   .incidents h2 { margin-inline: 0; }
   .incidents ul { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--space-xs); margin-block-start: var(--space-sm); }
@@ -213,7 +262,9 @@
 }
 @media (max-width: 40rem) {
   .topInner, .main { padding-inline: var(--space-md); }
-  .topInner { gap: var(--space-xs); min-height: 64px; }
+  .topInner { gap: var(--space-xs); min-height: 64px; flex-wrap: wrap; padding-block: var(--space-xs); }
+  .viewTabs { margin-inline-start: 0; }
+  .formRowTwo, .formRowThree { grid-template-columns: 1fr; }
   .brand { gap: var(--space-2xs); font-size: var(--text-sm); }
   .modeSwitch { margin-inline-start: 0; }
   .modeButton { padding: var(--space-2xs) var(--space-xs); }
