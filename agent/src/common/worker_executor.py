@@ -86,9 +86,10 @@ class SplitWorkerExecutor:
         self._max_retries = max(0, max_retries)
 
     async def execute_step(self, step: PlannedToolStep) -> WorkerStepOutcome:
-        """단일 단계를 결정론적으로 실행하고, 수정 가능한 실패 시에만 가변 인자를 보정해 재시도한다."""
+        """단일 단계를 결정론적으로 실행하고, 수정 가능한 실패 시에만 가변 인자를 누적 보정해 재시도한다."""
         t0 = time.perf_counter()
-        current_args = step.merged_args()
+        accumulated_mutable = dict(step.mutable_args)
+        current_args = step.merged_args(accumulated_mutable)
         attempts = 1
         worker_llm_calls = 0
 
@@ -101,8 +102,10 @@ class SplitWorkerExecutor:
 
             worker_llm_calls += 1
             repaired_candidate = await self._repair_fn(step.tool_name, dict(step.fixed_args), dict(current_args), err)
-            # 고정 인자를 강제 복원해 LLM이 서비스명·장애코드 등을 변조하지 못하게 차단한다
-            current_args = step.merged_args(repaired_candidate if isinstance(repaired_candidate, dict) else {})
+            if isinstance(repaired_candidate, dict):
+                accumulated_mutable.update(repaired_candidate)
+            # 누적된 가변 보정값 위로 고정 인자를 강제 복원해 불변성을 유지한다
+            current_args = step.merged_args(accumulated_mutable)
             attempts += 1
             res = await self._run_tool(step.tool_name, current_args)
 

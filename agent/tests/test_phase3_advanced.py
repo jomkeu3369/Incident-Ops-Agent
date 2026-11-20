@@ -206,3 +206,75 @@ async def test_f3023_local_calendar_adapter_swaps_with_google_calendar(tmp_path:
     assert len(res["data"]["freezeWindows"]) == 1
     assert res["data"]["freezeWindows"][0]["start"] == "2026-11-18T14:30:00+09:00"
     assert res["data"]["freezeWindows"][0]["end"] == "2026-11-18T14:40:00+09:00"
+
+
+async def test_f3023_local_calendar_adapter_reloads_when_file_updates(tmp_path: Path) -> None:
+    """애플리케이션 기동 이후 로컬 캘린더 파일이 갱신되면 새 변경 금지 구간을 즉시 다시 읽어야 한다(P1 회귀)."""
+    cal_file = tmp_path / "freeze-live.json"
+    writer = LocalFreezeCalendarAdapter(storage_path=cal_file)
+    writer.add_freeze_window("payment-service", "2026-11-18T14:30:00+09:00", "2026-11-18T14:35:00+09:00")
+
+    reader = LocalFreezeCalendarAdapter(storage_path=cal_file)
+    first = await reader.get_freeze_windows("payment-service", "2026-11-18T14:28:00+09:00", "2026-11-18T14:50:00+09:00")
+    assert len(first["data"]["freezeWindows"]) == 1
+
+    # 다른 인스턴스가 파일에 새 변경 금지 구간을 추가하고 mtime을 갱신한다
+    import os
+
+    writer.add_freeze_window("payment-service", "2026-11-18T14:40:00+09:00", "2026-11-18T14:45:00+09:00")
+    st = cal_file.stat()
+    os.utime(cal_file, ns=(st.st_atime_ns, st.st_mtime_ns + 1_000_000))
+
+    second = await reader.get_freeze_windows("payment-service", "2026-11-18T14:28:00+09:00", "2026-11-18T14:50:00+09:00")
+    assert len(second["data"]["freezeWindows"]) == 2
+
+
+async def test_f3020_fallback_diagnosis_reports_zero_llm_calls_and_legit_replan_not_flagged() -> None:
+    """폴백 진단은 llmCalls=0을 보고하고, 근거 청크가 늘어난 정상 재계획은 동일 입력 반복으로 오탐하지 않는다(P2 회귀)."""
+    replan_events = [
+        {"eventType": "step_finished", "payload": {"step": "plan", "steps": ["a2a:log-analyzer-agent", "a2a:remediation-agent"]}},
+        {"eventType": "tool_call", "payload": {"tool": "a2a:remediation-agent", "args": {"incidentCode": "INC-1", "evidenceChunkIds": ["LOG-104"]}}},
+        {"eventType": "llm_decision", "payload": {"step": "evaluate", "decision": "replan"}},
+        {"eventType": "tool_call", "payload": {"tool": "a2a:remediation-agent", "args": {"incidentCode": "INC-1", "evidenceChunkIds": ["LOG-104", "RUNBOOK-01"]}}},
+    ]
+    normal_report = await SessionAnomalyAnalyzer().analyze("sess-replan-ok", replan_events)
+    assert normal_report.status == "NORMAL"
+    assert normal_report.llm_calls == 0
+
+    dup_events = [
+        {"eventType": "tool_call", "payload": {"tool": "list_rollback_candidates", "args": {"serviceName": "payment-service"}}},
+        {"eventType": "tool_call", "payload": {"tool": "list_rollback_candidates", "args": {"serviceName": "payment-service"}}},
+    ]
+    # OpenAI 키도 없고 diagnosis_fn도 없는 폴백 경로 -> llm_calls == 0
+    fallback_report = await SessionAnomalyAnalyzer(settings=Settings(openai_api_key="")).analyze("sess-fallback", dup_events)
+    assert fallback_report.status == "ANOMALY"
+    assert fallback_report.diagnosis is not None
+    assert fallback_report.llm_calls == 0
+
+
+async def test_f3021_multi_retry_accumulates_mutable_repairs_while_preserving_fixed_args() -> None:
+    """max_retries > 1에서 단계별 부분 보정(environment -> region)이 유실되지 않고 누적되어야 한다(P2 회귀)."""
+    async def runner(tool: str, args: dict) -> dict:
+        if args.get("environment") != "prod-kr":
+            return {"ok": False, "error": {"code": "NO_RESULT", "message": "wrong env"}}
+        if args.get("region") != "ap-northeast-2":
+            return {"ok": False, "error": {"code": "INVALID_INPUT", "message": "wrong region"}}
+        return {"ok": True, "data": args}
+
+    async def incremental_repair(tool: str, fixed: dict, cur: dict, err: dict) -> dict:
+        if err["code"] == "NO_RESULT":
+            return {"environment": "prod-kr"}
+        return {"region": "ap-northeast-2", "serviceName": "should-be-ignored"}
+
+    executor = SplitWorkerExecutor(runner, repair_fn=incremental_repair, max_retries=2)
+    step = PlannedToolStep(
+        "list_rollback_candidates",
+        fixed_args={"serviceName": "payment-service"},
+        mutable_args={"environment": "production", "region": "us-east-1"},
+    )
+    out = await executor.execute_step(step)
+    assert out.ok is True
+    assert out.attempts == 3
+    assert out.worker_llm_calls == 2
+    assert out.fixed_args_preserved is True
+    assert out.used_args == {"serviceName": "payment-service", "environment": "prod-kr", "region": "ap-northeast-2"}

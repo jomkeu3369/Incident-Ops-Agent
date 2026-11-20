@@ -36,6 +36,7 @@ class LocalFreezeCalendarAdapter:
     ) -> None:
         self._path = Path(storage_path) if storage_path else None
         self._windows: dict[str, list[dict[str, str]]] = {}
+        self._loaded_mtime_ns: int | None = None
         if initial_windows:
             for svc, items in initial_windows.items():
                 self._windows[svc] = [dict(item) for item in items]
@@ -44,7 +45,10 @@ class LocalFreezeCalendarAdapter:
 
     def _load_from_file(self) -> None:
         if not self._path or not self._path.is_file():
+            self._windows = {}
+            self._loaded_mtime_ns = None
             return
+        mtime_ns = self._path.stat().st_mtime_ns
         raw = json.loads(self._path.read_text(encoding="utf-8"))
         if isinstance(raw, dict):
             self._windows = {
@@ -52,12 +56,26 @@ class LocalFreezeCalendarAdapter:
                 for svc, items in raw.items()
                 if isinstance(items, list)
             }
+        self._loaded_mtime_ns = mtime_ns
+
+    def _refresh_if_file_changed(self) -> None:
+        if not self._path:
+            return
+        if not self._path.is_file():
+            if self._loaded_mtime_ns is not None:
+                self._windows = {}
+                self._loaded_mtime_ns = None
+            return
+        mtime_ns = self._path.stat().st_mtime_ns
+        if self._loaded_mtime_ns != mtime_ns:
+            self._load_from_file()
 
     def _save_to_file(self) -> None:
         if not self._path:
             return
         self._path.parent.mkdir(parents=True, exist_ok=True)
         self._path.write_text(json.dumps(self._windows, ensure_ascii=False, indent=2), encoding="utf-8")
+        self._loaded_mtime_ns = self._path.stat().st_mtime_ns
 
     def add_freeze_window(self, service_name: str, start: str, end: str, reason: str = "") -> dict[str, str]:
         """로컬 저장소에 변경 금지 구간을 추가한다."""
@@ -83,8 +101,10 @@ class LocalFreezeCalendarAdapter:
         if start_dt >= end_dt:
             return _err("INVALID_INPUT", "허용 시작 시각은 종료 시각보다 이전이어야 합니다.")
 
-        if self._path and self._path.is_file() and not self._windows:
-            self._load_from_file()
+        try:
+            self._refresh_if_file_changed()
+        except (OSError, json.JSONDecodeError, ValueError):
+            return _err("UPSTREAM_ERROR", "로컬 변경 금지 캘린더 파일을 읽지 못했습니다.")
 
         overlapping: list[dict[str, str]] = []
         for item in self._windows.get(svc, []):

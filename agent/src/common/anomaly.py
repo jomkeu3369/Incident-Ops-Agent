@@ -209,13 +209,13 @@ class SessionAnomalyAnalyzer:
             )
 
         findings_payload = [f.to_dict() for f in findings]
-        diagnosis = await self._diagnose_anomaly(session_id, findings, findings_payload, events)
+        diagnosis, llm_calls = await self._diagnose_anomaly(session_id, findings, findings_payload, events)
         return AnomalyReport(
             session_id=session_id,
             status="ANOMALY",
             findings=findings,
             diagnosis=_trim_to_three_sentences(diagnosis),
-            llm_calls=1,
+            llm_calls=llm_calls,
             evaluated_event_count=len(events),
         )
 
@@ -225,19 +225,19 @@ class SessionAnomalyAnalyzer:
         findings: list[AnomalyFinding],
         findings_payload: list[dict[str, Any]],
         events: list[dict[str, Any]],
-    ) -> str:
+    ) -> tuple[str, int]:
         if self._diagnosis_fn is not None:
             try:
                 text = await self._diagnosis_fn(session_id, findings_payload, events)
                 if text and text.strip():
-                    return text
+                    return text, 1
             except Exception:
-                return _fallback_three_sentence_diagnosis(findings)
-            return _fallback_three_sentence_diagnosis(findings)
+                return _fallback_three_sentence_diagnosis(findings), 1
+            return _fallback_three_sentence_diagnosis(findings), 1
 
         api_key = self._settings.openai_api_key.get_secret_value() if self._settings else ""
         if not api_key:
-            return _fallback_three_sentence_diagnosis(findings)
+            return _fallback_three_sentence_diagnosis(findings), 0
 
         try:
             client = AsyncOpenAI(api_key=api_key, timeout=self._settings.http_timeout_seconds if self._settings else 15.0)
@@ -258,6 +258,6 @@ class SessionAnomalyAnalyzer:
                 temperature=0.0,
             )
             content = (resp.choices[0].message.content or "").strip() if resp.choices else ""
-            return content or _fallback_three_sentence_diagnosis(findings)
+            return (content or _fallback_three_sentence_diagnosis(findings)), 1
         except Exception:
-            return _fallback_three_sentence_diagnosis(findings)
+            return _fallback_three_sentence_diagnosis(findings), 1
