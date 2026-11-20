@@ -106,10 +106,7 @@ export function Workspace({ incident, incidents, initialDetail, initialMode, ini
   function switchMode(nextMode: AgUiMode) {
     if (nextMode === mode) return;
     const viewSuffix = view !== "workspace" ? `&view=${view}` : "";
-    const target = incident
-      ? `/?incident=${encodeURIComponent(incident.incidentCode)}&mode=${nextMode}${viewSuffix}`
-      : `/?mode=${nextMode}${viewSuffix}`;
-    router.push(target);
+    router.push(`/?mode=${nextMode}${viewSuffix}`);
   }
 
   if (!incident) {
