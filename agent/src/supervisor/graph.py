@@ -223,7 +223,24 @@ def build_supervisor_graph(settings: Settings, http_client: httpx.AsyncClient, b
             await publish_safe(event_bus, sid, "tool_call", tc)
             await _emit(ui, {"kind": "tool_call", "id": f"tc-{uuid.uuid4().hex[:6]}", "name": tc.get("tool", "external_tool"), "args": tc.get("args", {}), "result": {"ok": tc.get("ok"), "errorCode": tc.get("errorCode"), "elapsedMs": tc.get("elapsedMs")}})
 
-        await publish_safe(event_bus, sid, "tool_call", {"tool": "a2a:remediation-agent", "args": {"incidentCode": state["incident_code"]}, "ok": bool(rem_res.get("ok")), "status": rem_res.get("status"), "verdict": rem_res.get("verdict"), "elapsedMs": rem_ms})
+        await publish_safe(
+            event_bus,
+            sid,
+            "tool_call",
+            {
+                "tool": "a2a:remediation-agent",
+                "args": {
+                    "incidentCode": state["incident_code"],
+                    "evidenceChunkIds": sorted(e["chunkId"] for e in evidence),
+                    "allowedWindowStart": win_start,
+                    "allowedWindowEnd": win_end,
+                },
+                "ok": bool(rem_res.get("ok")),
+                "status": rem_res.get("status"),
+                "verdict": rem_res.get("verdict"),
+                "elapsedMs": rem_ms,
+            },
+        )
         await _emit(ui, {"kind": "tool_call", "id": rem_call_id, "name": "remediation-agent", "args": {"incidentCode": state["incident_code"], "serviceName": state["service_name"]}, "result": {"status": rem_res.get("status"), "verdict": rem_res.get("verdict")}})
 
         await publish_safe(event_bus, sid, "step_finished", {"step": "execute"})

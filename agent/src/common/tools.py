@@ -4,6 +4,7 @@ import re
 from typing import Any
 import httpx
 
+from common.calendar_adapter import FreezeCalendarAdapter, GoogleCalendarFreezeAdapter, LocalFreezeCalendarAdapter
 from common.config import Settings
 from common.planner_math import parse_rfc3339
 
@@ -60,9 +61,20 @@ def get_external_tool_specs() -> list[dict[str, Any]]:
 class ExternalToolsClient:
     """docs/05-external-api-tools.md 계약을 따르는 외부 API Tool 3종 클라이언트."""
 
-    def __init__(self, settings: Settings, http_client: httpx.AsyncClient) -> None:
+    def __init__(
+        self,
+        settings: Settings,
+        http_client: httpx.AsyncClient,
+        calendar_adapter: FreezeCalendarAdapter | None = None,
+    ) -> None:
         self._settings = settings
         self._http = http_client
+        if calendar_adapter is not None:
+            self._calendar_adapter: FreezeCalendarAdapter = calendar_adapter
+        elif settings.calendar_adapter_mode.strip().lower() == "local":
+            self._calendar_adapter = LocalFreezeCalendarAdapter(settings.local_freeze_calendar_path or None)
+        else:
+            self._calendar_adapter = GoogleCalendarFreezeAdapter(settings, http_client)
 
     async def list_rollback_candidates(self, service_name: str, incident_started_at: str, environment: str | None = None) -> dict[str, Any]:
         """GitHub Deployments에서 장애 기준 시각 이전의 기준 배포와 롤백 후보를 조회한다."""
@@ -201,49 +213,8 @@ class ExternalToolsClient:
             return None, _err("UPSTREAM_ERROR", "Grafana 지표 응답을 해석하지 못했습니다.")
 
     async def get_change_freeze_windows(self, service_name: str, window_start: str, window_end: str) -> dict[str, Any]:
-        """Google Calendar FreeBusy API로 변경 금지 구간 목록을 조회한다."""
-        svc = self._settings.resolve_service_config(service_name)
-        if svc is None:
-            return _err("INVALID_INPUT", f"등록되지 않은 서비스입니다: {service_name}")
-        if not svc.google_calendar_id:
-            return _err("INVALID_INPUT", "변경 금지 캘린더 ID가 설정되지 않았습니다.")
-        try:
-            start_dt, end_dt = parse_rfc3339(window_start), parse_rfc3339(window_end)
-        except ValueError as exc:
-            return _err("INVALID_INPUT", str(exc))
-        if start_dt >= end_dt:
-            return _err("INVALID_INPUT", "허용 시작 시각은 종료 시각보다 이전이어야 합니다.")
-
-        token = self._settings.google_calendar_token.get_secret_value()
-        if not token:
-            return _err("AUTH_FAILED", "Google Calendar 인증 토큰이 설정되지 않았습니다.")
-
-        url = f"{self._settings.google_calendar_base_url.rstrip('/')}/freeBusy"
-        payload = {"timeMin": start_dt.isoformat(), "timeMax": end_dt.isoformat(), "items": [{"id": svc.google_calendar_id}]}
-
-        try:
-            resp = await self._http.post(url, json=payload, headers={"Authorization": f"Bearer {token}"})
-            failure = _map_http_failure(resp, "Google Calendar FreeBusy")
-            if failure:
-                return failure
-            body = resp.json()
-            cal = body.get("calendars", {}).get(svc.google_calendar_id)
-            if not isinstance(cal, dict):
-                return _err("UPSTREAM_ERROR", "Google Calendar FreeBusy 응답에 대상 캘린더가 없습니다.")
-            # 캘린더별 errors[]는 빈 바쁨 목록과 반드시 구분해 실패 코드로 반환한다
-            cal_errors = cal.get("errors")
-            if cal_errors:
-                reasons = {str(e.get("reason", "")) for e in cal_errors if isinstance(e, dict)}
-                if reasons & {"notFound", "forbidden", "unauthorized"}:
-                    return _err("AUTH_FAILED", "변경 금지 캘린더에 접근할 수 없습니다.")
-                return _err("UPSTREAM_ERROR", "변경 금지 캘린더 조회 중 오류가 반환되었습니다.")
-
-            windows = [{"start": parse_rfc3339(item["start"]).isoformat(), "end": parse_rfc3339(item["end"]).isoformat()} for item in cal.get("busy", []) if isinstance(item, dict) and item.get("start") and item.get("end")]
-            return _ok({"freezeWindows": windows})
-        except httpx.HTTPError:
-            return _err("UPSTREAM_ERROR", "Google Calendar API 요청 중 네트워크 오류가 발생했습니다.")
-        except (ValueError, KeyError, TypeError):
-            return _err("UPSTREAM_ERROR", "Google Calendar 응답을 해석하지 못했습니다.")
+        """교체형 캘린더 어댑터(Google Calendar 또는 로컬 저장소)로 변경 금지 구간 목록을 조회한다."""
+        return await self._calendar_adapter.get_freeze_windows(service_name, window_start, window_end)
 
 
 def _serialize_deployment(item: dict[str, Any]) -> dict[str, Any]:
