@@ -74,12 +74,18 @@ npm ci
 npm run dev -- --port 3100
 ```
 * 모의 SSE 모드 접속: `http://localhost:3100/?mode=mock`
-* 로컬 Supervisor(`:8000`) 연동 실행: `SUPERVISOR_URL=http://localhost:8000 npm run dev -- --port 3100`
+* 로컬 Supervisor(`:8000`) + Spring(`:8080`) 연동 실행:
+  ```bash
+  SUPERVISOR_URL=http://localhost:8000 \
+  BACKEND_INTERNAL_URL=http://localhost:8080 \
+  INTERNAL_SERVICE_TOKEN=<공유_내부_토큰> \
+  npm run dev -- --port 3100
+  ```
 
 ### 3.4 자동화 테스트 실행
 ```bash
 # Backend (Java 21 + Maven, 23건)
-cd backend && ./mvnw test
+cd backend && mvn test
 
 # Agent (Python 3.12 + pytest, 35건)
 cd agent && .venv/Scripts/pytest tests
