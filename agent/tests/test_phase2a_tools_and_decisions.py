@@ -170,3 +170,117 @@ async def test_decisions_client_all_verdicts_and_fail_safe():
     # API 키 누락 시 예외를 던지지 않고 UNDECIDABLE을 반환해야 한다
     res = await DecisionsClient(_settings(openai_api_key=SecretStr(""))).judge_plan_evidence(proposed_action="x", runbook="y", evidence="z")
     assert res.verdict == "UNDECIDABLE"
+
+
+async def test_github_list_rollback_candidates_parallel_status_and_error_propagation():
+    """다수 배포 상태 조회가 병렬 처리되고 중간 실패 시 실패 코드가 결정론적으로 반환되는지 검증한다."""
+    import asyncio
+
+    active = 0
+    peak_active = 0
+
+    async def async_handler(req: httpx.Request) -> httpx.Response:
+        nonlocal active, peak_active
+        if req.url.path.endswith("/deployments"):
+            return httpx.Response(200, json=[
+                {"id": 100 + i, "sha": f"sha-v{10 - i}", "ref": f"v{10 - i}"}
+                for i in range(8)
+            ])
+        active += 1
+        peak_active = max(peak_active, active)
+        await asyncio.sleep(0.02)
+        active -= 1
+        dep_idx = int(req.url.path.split("/")[-2]) - 100
+        return httpx.Response(200, json=[{"state": "success", "created_at": f"2026-11-18T13:0{7 - dep_idx}:00+09:00"}])
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(async_handler)) as http:
+        res = await ExternalToolsClient(_settings(), http).list_rollback_candidates("payment-service", "2026-11-18T14:00:00+09:00")
+
+    assert res["ok"] is True
+    assert peak_active >= 2
+    assert res["data"]["referenceDeployment"]["gitSha"] == "sha-v10"
+    assert len(res["data"]["candidates"]) == 7
+
+    def fail_mid_handler(req: httpx.Request) -> httpx.Response:
+        if req.url.path.endswith("/deployments"):
+            return httpx.Response(200, json=[
+                {"id": 101, "sha": "sha-v2", "ref": "v2"},
+                {"id": 102, "sha": "sha-v1", "ref": "v1"},
+            ])
+        if "/101/" in req.url.path:
+            return httpx.Response(403, headers={"X-RateLimit-Remaining": "0"})
+        return httpx.Response(500)
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(fail_mid_handler)) as http:
+        err_res = await ExternalToolsClient(_settings(), http).list_rollback_candidates("payment-service", "2026-11-18T14:00:00+09:00")
+    assert err_res["ok"] is False and err_res["error"]["code"] == "RATE_LIMITED"
+
+
+async def test_github_list_rollback_candidates_cancels_siblings_on_network_error():
+    """네트워크 오류 발생 시 실행 중이거나 세마포어 대기 중인 형제 요청을 즉시 취소·정리하는지 검증한다."""
+    import asyncio
+
+    in_flight = 0
+    started_ids: list[int] = []
+    cancelled_count = 0
+
+    async def slow_or_fail_handler(req: httpx.Request) -> httpx.Response:
+        nonlocal in_flight, cancelled_count
+        if req.url.path.endswith("/deployments"):
+            return httpx.Response(200, json=[
+                {"id": 200 + i, "sha": f"sha-v{10 - i}", "ref": f"v{10 - i}"}
+                for i in range(10)
+            ])
+        dep_id = int(req.url.path.split("/")[-2])
+        started_ids.append(dep_id)
+        if dep_id == 200:
+            await asyncio.sleep(0.01)
+            raise httpx.ConnectError("network down", request=req)
+        in_flight += 1
+        try:
+            await asyncio.sleep(5)
+            return httpx.Response(200, json=[])
+        except asyncio.CancelledError:
+            cancelled_count += 1
+            raise
+        finally:
+            in_flight -= 1
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(slow_or_fail_handler)) as http:
+        res = await asyncio.wait_for(
+            ExternalToolsClient(_settings(), http).list_rollback_candidates("payment-service", "2026-11-18T14:00:00+09:00"),
+            timeout=1.0,
+        )
+
+    assert res["ok"] is False and res["error"]["code"] == "UPSTREAM_ERROR"
+    assert in_flight == 0
+    assert cancelled_count >= 1
+    started_snapshot = len(started_ids)
+    await asyncio.sleep(0.05)
+    assert len(started_ids) == started_snapshot
+    assert started_snapshot < 10
+
+
+async def test_grafana_metrics_rejects_nan_inf_and_negative_values():
+    """Prometheus 응답이 NaN, Inf 또는 음수일 때 INSUFFICIENT_DATA를 반환하는지 검증한다."""
+
+    def make_handler(err_val: str, total_val: str = "1000"):
+        def handler(req: httpx.Request) -> httpx.Response:
+            q = req.url.params["query"]
+            val = err_val if 'status="502"' in q else total_val
+            return httpx.Response(200, json={"status": "success", "data": {"result": [{"value": [1, val]}]}})
+
+        return handler
+
+    for bad_val in ("NaN", "Inf", "-Inf", "-1"):
+        async with httpx.AsyncClient(transport=httpx.MockTransport(make_handler(bad_val))) as http:
+            res = await ExternalToolsClient(_settings(), http).get_release_metrics(
+                "payment-service", "sha-v41", "2026-11-18T14:05:00+09:00", "2026-11-18T14:10:00+09:00"
+            )
+        assert res["ok"] is False and res["error"]["code"] == "INSUFFICIENT_DATA"
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(make_handler("0", "NaN"))) as http:
+        res_total_nan = await ExternalToolsClient(_settings(), http).get_release_metrics(
+            "payment-service", "sha-v41", "2026-11-18T14:05:00+09:00", "2026-11-18T14:10:00+09:00"
+        )
+    assert res_total_nan["ok"] is False and res_total_nan["error"]["code"] == "INSUFFICIENT_DATA"

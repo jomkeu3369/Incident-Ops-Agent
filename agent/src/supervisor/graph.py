@@ -22,6 +22,23 @@ _GREETING_PATTERNS = ("안녕", "hello", "hi", "도움말", "사용법", "기능
 _TIME_RANGE_RE = re.compile(r"(\d{1,2}:\d{2})\s*[~-]\s*(\d{1,2}:\d{2})")
 _DURATION_RE = re.compile(r"(\d+)\s*분")
 _RATE_RE = re.compile(r"(\d+(?:\.\d+)?)\s*%")
+_DEFAULT_LOG_KEYWORDS = ["HikariPool", "502", "rollback"]
+_STOPWORDS = frozenset({"http", "https", "api", "service", "the", "and", "for", "with", "from", "this", "that", "into", "when"})
+_KO_INCIDENT_KEYWORDS = (
+    "커넥션",
+    "타임아웃",
+    "누수",
+    "롤백",
+    "배포",
+    "지연",
+    "메모리",
+    "과부하",
+    "풀",
+    "오류",
+    "실패",
+    "장애",
+    "차단",
+)
 
 
 class SupervisorState(TypedDict, total=False):
@@ -31,6 +48,8 @@ class SupervisorState(TypedDict, total=False):
     run_id: str
     incident_code: str
     service_name: str
+    incident_title: str
+    incident_summary: str
     user_message: str
     incident_started_at: str | None
     intent: str
@@ -53,6 +72,68 @@ class SupervisorState(TypedDict, total=False):
     ui_events: list[dict[str, Any]]
 
 
+def _parse_hm_range(start_hm: str, end_hm: str) -> tuple[tuple[int, int], tuple[int, int]] | None:
+    """HH:MM 시작/종료 문자열을 검증해 (시, 분) 튜플 쌍으로 반환하며, 유효하지 않으면 None을 반환한다."""
+    try:
+        sh, sm = (int(x) for x in str(start_hm).split(":"))
+        eh, em = (int(x) for x in str(end_hm).split(":"))
+    except ValueError:
+        return None
+    if not (0 <= sh <= 23 and 0 <= sm <= 59 and 0 <= eh <= 23 and 0 <= em <= 59):
+        return None
+    if (sh, sm) == (eh, em):
+        return None
+    return (sh, sm), (eh, em)
+
+
+def _extract_log_keywords(user_message: str, incident_title: str = "", incident_summary: str = "") -> list[str]:
+    """장애 제목·요약·사용자 요청에서 동적 로그 검색 키워드를 추출하고 비어 있으면 기본값으로 폴백한다."""
+    combined = " ".join(part for part in (incident_title, incident_summary, user_message) if part)
+    tokens: list[str] = []
+    seen_lower: set[str] = set()
+
+    def _add(tok: str) -> None:
+        key = tok.lower()
+        if key in _STOPWORDS or key in seen_lower:
+            return
+        seen_lower.add(key)
+        tokens.append(tok)
+
+    for m in re.finditer(r"\b(?:500|502|503|504|429)\b", combined):
+        _add(m.group(0))
+    for m in re.finditer(r"\b[A-Za-z][A-Za-z0-9_-]{2,}\b", combined):
+        _add(m.group(0))
+    for ko_kw in _KO_INCIDENT_KEYWORDS:
+        if ko_kw in combined:
+            _add(ko_kw)
+
+    return tokens[:6] if tokens else list(_DEFAULT_LOG_KEYWORDS)
+
+
+def _find_unfinished_plan_approval(detail: dict[str, Any] | None) -> dict[str, Any] | None:
+    """백엔드 상세 응답에서 아직 실행 결과가 없는 계획 연결 승인 건(PENDING/APPROVED)을 찾는다."""
+    if not isinstance(detail, dict):
+        return None
+    approvals = detail.get("approvals")
+    if not isinstance(approvals, list):
+        return None
+    executions = detail.get("executions")
+    executed_ids = {
+        str(e.get("approvalId"))
+        for e in (executions if isinstance(executions, list) else [])
+        if isinstance(e, dict) and e.get("approvalId")
+    }
+    for apr in approvals:
+        if not isinstance(apr, dict):
+            continue
+        if not apr.get("planId") or apr.get("decision") not in ("PENDING", "APPROVED"):
+            continue
+        aid = str(apr.get("approvalId") or "")
+        if aid and aid not in executed_ids:
+            return apr
+    return None
+
+
 def _extract_constraints(message: str, prev: dict[str, Any], incident_started_at: str | None) -> tuple[dict[str, Any], str, str]:
     """사용자 메시지에서 의도와 제약 조건을 추출해 이전 대화 조건과 병합한다(F3005, F3010)."""
     text = message.strip()
@@ -65,13 +146,25 @@ def _extract_constraints(message: str, prev: dict[str, Any], incident_started_at
     # 시간 범위(예: 14:28~14:50), 작업 시간(예: 5분), 오류율 기준(예: 1%) 추출
     range_match = _TIME_RANGE_RE.search(text)
     if range_match:
+        if _parse_hm_range(range_match.group(1), range_match.group(2)) is None:
+            return (
+                merged,
+                "invalid_time_range",
+                f"허용 작업 시간 범위({range_match.group(1)}~{range_match.group(2)})가 올바르지 않습니다. 00:00~23:59 형식의 서로 다른 시작·종료 시각을 입력해 주세요.",
+            )
         merged["allowedRangeHm"] = (range_match.group(1), range_match.group(2))
     dur_match = _DURATION_RE.search(text)
     if dur_match:
-        merged["durationMinutes"] = int(dur_match.group(1))
+        dur_val = int(dur_match.group(1))
+        if dur_val <= 0:
+            return merged, "invalid_time_range", "작업 시간(분)은 1분 이상이어야 합니다."
+        merged["durationMinutes"] = dur_val
     rate_match = _RATE_RE.search(text)
     if rate_match:
-        merged["max502RatePercent"] = float(rate_match.group(1))
+        rate_val = float(rate_match.group(1))
+        if rate_val <= 0:
+            return merged, "invalid_time_range", "허용 502 비율 기준(%)은 0보다 커야 합니다."
+        merged["max502RatePercent"] = rate_val
 
     # Tool 호출이 불필요한 인사·사용법 질문 분류
     has_ops_signal = any(tok in lower for tok in ("롤백", "502", "장애", "복구", "계획", "작업 창", "시간", "분", "hikari", "커넥션", "바꿔", "다시"))
@@ -91,11 +184,21 @@ def _resolve_time_bounds(constraints: dict[str, Any]) -> tuple[str, str, str, st
     metrics_to = (started + timedelta(minutes=6)).isoformat()
 
     hm_range = constraints.get("allowedRangeHm")
-    if isinstance(hm_range, (list, tuple)) and len(hm_range) == 2:
-        sh, sm = (int(x) for x in str(hm_range[0]).split(":"))
-        eh, em = (int(x) for x in str(hm_range[1]).split(":"))
+    parsed = (
+        _parse_hm_range(str(hm_range[0]), str(hm_range[1]))
+        if isinstance(hm_range, (list, tuple)) and len(hm_range) == 2
+        else None
+    )
+    if parsed is not None:
+        (sh, sm), (eh, em) = parsed
         win_start = started.replace(hour=sh, minute=sm, second=0, microsecond=0)
         win_end = started.replace(hour=eh, minute=em, second=0, microsecond=0)
+        # 자정 넘김(예: 23:50~00:15)과 익일 새벽 창(예: 장애 23:50, 요청 00:10~00:30) 보정
+        if win_end <= win_start:
+            win_end = win_end + timedelta(days=1)
+        if started - win_start > timedelta(hours=12):
+            win_start = win_start + timedelta(days=1)
+            win_end = win_end + timedelta(days=1)
     else:
         win_start = started + timedelta(minutes=24)
         win_end = started + timedelta(minutes=46)
@@ -125,20 +228,35 @@ def build_supervisor_graph(settings: Settings, http_client: httpx.AsyncClient, b
 
         constraints, intent, reason = _extract_constraints(state.get("user_message", ""), state.get("constraints") or {}, state.get("incident_started_at"))
         service_name = state.get("service_name") or settings.default_service_name
-        # 백엔드에 장애가 등록되어 있으면 서비스명을 동기화한다
+        incident_title = state.get("incident_title") or ""
+        incident_summary = state.get("incident_summary") or ""
+        # 백엔드에 장애가 등록되어 있으면 서비스명·제목·요약을 동기화한다
         if intent == "plan_remediation":
             try:
                 detail = await backend.get_incident_detail(state["incident_code"])
                 inc = detail.get("incident") if isinstance(detail, dict) else None
-                if isinstance(inc, dict) and inc.get("serviceName"):
-                    service_name = str(inc["serviceName"])
+                if isinstance(inc, dict):
+                    if inc.get("serviceName"):
+                        service_name = str(inc["serviceName"])
+                    if inc.get("title"):
+                        incident_title = str(inc["title"])
+                    if inc.get("summary"):
+                        incident_summary = str(inc["summary"])
             except BackendApiError:
                 pass
 
         await publish_safe(event_bus, sid, "llm_decision", {"step": "analyze", "intent": intent, "reason": reason})
         await publish_safe(event_bus, sid, "step_finished", {"step": "analyze", "intent": intent})
         await _emit(ui, {"kind": "step_finish", "step": "analyze"})
-        return {"service_name": service_name, "constraints": constraints, "intent": intent, "intent_reason": reason, "ui_events": ui}
+        return {
+            "service_name": service_name,
+            "incident_title": incident_title,
+            "incident_summary": incident_summary,
+            "constraints": constraints,
+            "intent": intent,
+            "intent_reason": reason,
+            "ui_events": ui,
+        }
 
     async def plan_node(state: SupervisorState) -> SupervisorState:
         """2단계: 필요한 A2A 워커 호출 계획 수립(재계획 시 캐시 유지)."""
@@ -166,7 +284,12 @@ def build_supervisor_graph(settings: Settings, http_client: httpx.AsyncClient, b
         remaining_ids = list(state.get("remaining_chunk_ids") or [])
 
         # 3-1) 로그 분석 A2A 호출 (이미 인출한 청크는 제외해 추가 조회만 수행)
-        log_req = {"incidentCode": state["incident_code"], "keywords": ["HikariPool", "502", "rollback"], "excludeChunkIds": pulled_ids, "maxPulls": 2 if pulled_ids else settings.dr_dci_max_pull_steps}
+        keywords = _extract_log_keywords(
+            state.get("user_message", ""),
+            state.get("incident_title", ""),
+            state.get("incident_summary", ""),
+        )
+        log_req = {"incidentCode": state["incident_code"], "keywords": keywords, "excludeChunkIds": pulled_ids, "maxPulls": 2 if pulled_ids else settings.dr_dci_max_pull_steps}
         log_call_id = f"tc-log-{uuid.uuid4().hex[:6]}"
         t0 = time.perf_counter()
         try:
@@ -294,6 +417,26 @@ def build_supervisor_graph(settings: Settings, http_client: httpx.AsyncClient, b
             plan_id = draft["planId"]
             step_no = int(draft.get("approvalStepNo") or 2)
             approval_id = f"APR-{state['incident_code']}-{uuid.uuid4().hex[:6].upper()}"
+
+            # 미완료 계획 연결 승인이 이미 있으면 POST /plans로 고아 계획을 남기지 않고 즉시 차단한다
+            try:
+                detail = await backend.get_incident_detail(state["incident_code"])
+            except BackendApiError:
+                detail = None
+            existing_apr = _find_unfinished_plan_approval(detail)
+            if existing_apr is not None:
+                existing_aid = str(existing_apr.get("approvalId") or "")
+                existing_decision = str(existing_apr.get("decision") or "")
+                if existing_decision == "PENDING":
+                    msg = f"이미 처리 대기 중인 승인 요청({existing_aid})이 있어 새 계획을 등록하지 않았습니다. 기존 승인 요청을 검토·반려한 뒤 다시 진행해 주세요."
+                else:
+                    msg = f"이미 승인된 미실행 요청({existing_aid})이 있어 새 계획을 등록하지 않았습니다. 해당 승인 건의 실행 완료를 먼저 처리해 주세요."
+                rem = {**rem, "message": msg}
+                snapshot = {"incidentCode": state["incident_code"], "workflowStatus": "BLOCKED", "plan": None, "approval": None, "replanHistory": replan_history}
+                await publish_safe(event_bus, sid, "step_finished", {"step": "evaluate", "workflowStatus": "BLOCKED", "reason": "unfinished_approval_exists"})
+                await _emit(ui, {"kind": "step_finish", "step": "evaluate"})
+                return {"should_replan": False, "workflow_status": "BLOCKED", "snapshot": snapshot, "remediation_result": rem, "replan_history": replan_history, "ui_events": ui}
+
             # Spring 백엔드에 복구 계획과 승인 대기 요청을 등록한다 (MCP 미노출 REST 2종)
             try:
                 await backend.create_plan(state["incident_code"], {"planId": plan_id, "createdBy": "supervisor-agent", "steps": draft["steps"], "verificationCriteria": draft["verificationCriteria"]})
@@ -335,6 +478,9 @@ def build_supervisor_graph(settings: Settings, http_client: httpx.AsyncClient, b
         elif intent == "missing_info":
             reply = "롤백 후보 배포를 조회하려면 장애 시작 시각(`incidentStartedAt`, RFC 3339 형식)이 필요합니다. 장애 발생 시각을 알려주시면 분석을 시작하겠습니다."
             snapshot = {"incidentCode": state["incident_code"], "workflowStatus": "IDLE", "plan": None, "approval": None, "replanHistory": list(state.get("replan_history") or [])}
+        elif intent == "invalid_time_range":
+            reply = state.get("intent_reason") or "허용 작업 시간 또는 조건 입력이 올바르지 않습니다. 다시 확인해 주세요."
+            snapshot = state.get("snapshot") or {"incidentCode": state["incident_code"], "workflowStatus": "IDLE", "plan": None, "approval": None, "replanHistory": list(state.get("replan_history") or [])}
         else:
             rem = state.get("remediation_result") or {}
             snapshot = state.get("snapshot") or {"incidentCode": state["incident_code"], "workflowStatus": "BLOCKED", "plan": None, "approval": None, "replanHistory": list(state.get("replan_history") or [])}
@@ -367,7 +513,7 @@ def build_supervisor_graph(settings: Settings, http_client: httpx.AsyncClient, b
         return {"reply_text": reply, "snapshot": snapshot, "workflow_status": snapshot.get("workflowStatus", "IDLE"), "ui_events": ui}
 
     def _route_after_analyze(state: SupervisorState) -> str:
-        return "respond" if state.get("intent") in ("general_chat", "missing_info") else "plan"
+        return "respond" if state.get("intent") in ("general_chat", "missing_info", "invalid_time_range") else "plan"
 
     def _route_after_evaluate(state: SupervisorState) -> str:
         return "plan" if state.get("should_replan") else "respond"

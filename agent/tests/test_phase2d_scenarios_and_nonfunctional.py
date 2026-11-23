@@ -586,3 +586,162 @@ async def test_review_fixes_log_broaden_and_redis_reconcile_and_live_stream() ->
     fail_backend = BackendClient(settings, httpx.AsyncClient(), mcp_caller=mcp_pull_fail)
     fail_out = await run_dr_dci_investigation(fail_backend, settings, LogInvestigationRequest(incidentCode="INC-2026-001", keywords=["HikariPool"], maxPulls=2))
     assert fail_out.evidenceChunkIds == [] and "LOG-FAIL" in fail_out.remainingChunkIds
+
+
+def test_invalid_time_range_and_midnight_rollover() -> None:
+    """잘못된 시각 범위 입력은 크래시 없이 IDLE 안내로 응답하고, 자정 넘김 범위는 익일 시각으로 정상 계산한다."""
+    scenario = _ScenarioState(freeze_windows=[])
+    settings, backend, ext_tools, decisions, log_app, rem_app, sup_app, a2a_count, a2a_fn = _wire_supervisor(scenario)
+
+    with TestClient(log_app), TestClient(rem_app), TestClient(sup_app) as client:
+        log_app.state.container.backend_client = backend
+        rem_app.state.container.external_tools = ext_tools
+        rem_app.state.container.decisions_client = decisions
+        sup_app.state.container.backend_client = backend
+        sup_app.state.container.a2a_caller = a2a_fn
+
+        bad_res = _run_agui(client, {
+            "threadId": "s-bad-time", "runId": "r-bad", "state": {},
+            "messages": [{"id": "m1", "role": "user", "content": "25:99~26:00 사이 5분 롤백 계획 세워줘"}],
+            "tools": [], "context": [],
+            "forwardedProps": {"incidentCode": "INC-2026-001", "incidentStartedAt": "2026-11-18T14:04:00+09:00"},
+        })
+        assert bad_res.status_code == 200
+        bad_events = _parse_sse(bad_res.text)
+        assert not any(e["type"] == "RUN_ERROR" for e in bad_events)
+        assert a2a_count["calls"] == 0
+        bad_snap = [e["snapshot"] for e in bad_events if e["type"] == "STATE_SNAPSHOT"][-1]
+        assert bad_snap["workflowStatus"] == "IDLE"
+        bad_text = "".join(e["delta"] for e in bad_events if e["type"] == "TEXT_MESSAGE_CONTENT")
+        assert "00:00~23:59" in bad_text
+
+        midnight_res = _run_agui(client, {
+            "threadId": "s-midnight", "runId": "r-mid", "state": {},
+            "messages": [{"id": "m2", "role": "user", "content": "23:50~00:15 사이 5분 롤백 계획 세워줘"}],
+            "tools": [], "context": [],
+            "forwardedProps": {"incidentCode": "INC-2026-001", "incidentStartedAt": "2026-11-18T23:40:00+09:00"},
+        })
+        assert midnight_res.status_code == 200
+        mid_events = _parse_sse(midnight_res.text)
+        mid_snap = [e["snapshot"] for e in mid_events if e["type"] == "STATE_SNAPSHOT"][-1]
+        assert mid_snap["workflowStatus"] == "AWAITING_APPROVAL"
+        assert mid_snap["plan"]["workWindow"]["start"].startswith("2026-11-18T23:50:00")
+        assert mid_snap["plan"]["workWindow"]["end"].startswith("2026-11-18T23:55:00")
+
+
+def test_dynamic_log_keywords_for_non_payment_incident() -> None:
+    """결제 502 외 장애(예: Redis OOM)에서는 장애 제목·요약·요청에서 추출한 동적 키워드가 log-analyzer-agent에 전달된다."""
+    scenario = _ScenarioState(freeze_windows=[])
+    settings, _, ext_tools, decisions, log_app, rem_app, sup_app, _, a2a_fn = _wire_supervisor(scenario)
+    captured_log_keywords: list[list[str]] = []
+
+    def custom_rest(req: httpx.Request) -> httpx.Response:
+        path = req.url.path
+        if req.method == "GET" and path.endswith("/INC-2026-002"):
+            return httpx.Response(200, json={
+                "incident": {
+                    "incidentCode": "INC-2026-002",
+                    "serviceName": "order-service",
+                    "title": "주문 서비스 Redis OOM 장애",
+                    "summary": "Redis 메모리 초과로 캐시 타임아웃 발생",
+                    "status": "OPEN",
+                },
+                "approvals": [],
+                "executions": [],
+            })
+        if req.method == "POST" and path.endswith("/plans"):
+            return httpx.Response(201, json=json.loads(req.content))
+        if req.method == "POST" and path.endswith("/approvals"):
+            body = json.loads(req.content)
+            body["decision"] = "PENDING"
+            return httpx.Response(201, json=body)
+        return httpx.Response(404)
+
+    async def custom_mcp(tool_name: str, args: dict[str, Any]) -> Any:
+        if tool_name == "searchCorpusIndex":
+            return [{"chunkId": "LOG-201", "corpusType": "LOG", "title": "Redis OOM", "keywords": "Redis,OOM", "sequenceOrder": 1}] if args["corpusType"] == "LOG" else []
+        if tool_name == "pullCorpusChunk":
+            return {"chunkId": "LOG-201", "corpusType": "LOG", "title": "Redis OOM", "content": "Redis OOM killer triggered"}
+        return {}
+
+    backend = BackendClient(settings, httpx.AsyncClient(transport=httpx.MockTransport(custom_rest)), mcp_caller=custom_mcp)
+
+    async def spying_a2a(url: str, payload: dict[str, Any], context_id: str) -> dict[str, Any]:
+        if url == settings.log_agent_a2a_url:
+            captured_log_keywords.append(list(payload.get("keywords") or []))
+        if url == settings.remediation_agent_a2a_url:
+            return {"ok": True, "status": "READY_FOR_APPROVAL", "verdict": "SUPPORTED", "planDraft": {"planId": "PLAN-ORD-1", "workWindow": {"start": "2026-11-18T14:28:00+09:00", "end": "2026-11-18T14:33:00+09:00"}, "approvalStepNo": 1, "steps": [{"stepNo": 1, "description": "복구", "condition": "승인", "actionCommand": "kubectl rollout undo deployment/order-service", "evidenceChunkIds": ["LOG-201"]}], "evidence": [{"chunkId": "LOG-201", "summary": "Redis OOM"}], "verificationCriteria": "정상화"}, "toolCalls": [], "cachedToolResults": {}}
+        return await a2a_fn(url, payload, context_id)
+
+    with TestClient(log_app), TestClient(rem_app), TestClient(sup_app) as client:
+        log_app.state.container.backend_client = backend
+        rem_app.state.container.external_tools = ext_tools
+        rem_app.state.container.decisions_client = decisions
+        sup_app.state.container.backend_client = backend
+        sup_app.state.container.a2a_caller = spying_a2a
+
+        res = _run_agui(client, {
+            "threadId": "s-redis", "runId": "r-redis", "state": {},
+            "messages": [{"id": "m1", "role": "user", "content": "14:28~14:50 사이 5분 복구 계획 세워줘"}],
+            "tools": [], "context": [],
+            "forwardedProps": {"incidentCode": "INC-2026-002", "incidentStartedAt": "2026-11-18T14:04:00+09:00"},
+        })
+        assert res.status_code == 200
+        assert captured_log_keywords
+        kws = captured_log_keywords[0]
+        assert "Redis" in kws and "OOM" in kws
+        assert "HikariPool" not in kws
+
+
+def test_unfinished_approval_prevents_orphan_plan_creation() -> None:
+    """백엔드에 미완료 계획 승인이 존재하면 POST /plans 호출 없이 BLOCKED 및 안내 메시지를 반환한다."""
+    for decision_state, expected_hint in (("PENDING", "검토·반려"), ("APPROVED", "실행 완료")):
+        scenario = _ScenarioState(freeze_windows=[])
+        settings, _, ext_tools, decisions, log_app, rem_app, sup_app, _, a2a_fn = _wire_supervisor(scenario)
+        post_counts = {"plans": 0, "approvals": 0}
+
+        def guard_rest(req: httpx.Request, dec=decision_state) -> httpx.Response:
+            path = req.url.path
+            if req.method == "GET" and path.endswith("/INC-2026-001"):
+                return httpx.Response(200, json={
+                    "incident": {"incidentCode": "INC-2026-001", "serviceName": "payment-service", "status": "OPEN"},
+                    "approvals": [{"approvalId": "APR-EXISTING", "planId": "PLAN-EXISTING", "stepNo": 2, "decision": dec}],
+                    "executions": [],
+                })
+            if req.method == "POST" and path.endswith("/plans"):
+                post_counts["plans"] += 1
+                return httpx.Response(201, json=json.loads(req.content))
+            if req.method == "POST" and path.endswith("/approvals"):
+                post_counts["approvals"] += 1
+                return httpx.Response(409, json={"message": "처리되지 않은 복구 승인 요청이 있습니다."})
+            return httpx.Response(404)
+
+        async def guard_mcp(tool_name: str, args: dict[str, Any]) -> Any:
+            if tool_name == "searchCorpusIndex":
+                return [{"chunkId": c["chunkId"], "corpusType": c["corpusType"], "title": c["title"], "summary": c["content"][:80]} for c in scenario.chunks.values() if c["corpusType"] == args["corpusType"]]
+            if tool_name == "pullCorpusChunk":
+                return scenario.chunks[args["chunkId"]]
+            return {}
+
+        backend = BackendClient(settings, httpx.AsyncClient(transport=httpx.MockTransport(guard_rest)), mcp_caller=guard_mcp)
+        with TestClient(log_app), TestClient(rem_app), TestClient(sup_app) as client:
+            log_app.state.container.backend_client = backend
+            rem_app.state.container.external_tools = ext_tools
+            rem_app.state.container.decisions_client = decisions
+            sup_app.state.container.backend_client = backend
+            sup_app.state.container.a2a_caller = a2a_fn
+
+            res = _run_agui(client, {
+                "threadId": f"s-guard-{decision_state}", "runId": "r-guard", "state": {},
+                "messages": [{"id": "m1", "role": "user", "content": "502 비율 1% 미만 14:28~14:50 5분 롤백 계획 세워줘"}],
+                "tools": [], "context": [],
+                "forwardedProps": {"incidentCode": "INC-2026-001", "incidentStartedAt": "2026-11-18T14:04:00+09:00"},
+            })
+            assert res.status_code == 200
+            events = _parse_sse(res.text)
+            snap = [e["snapshot"] for e in events if e["type"] == "STATE_SNAPSHOT"][-1]
+            text = "".join(e["delta"] for e in events if e["type"] == "TEXT_MESSAGE_CONTENT")
+            assert post_counts == {"plans": 0, "approvals": 0}
+            assert snap["workflowStatus"] == "BLOCKED"
+            assert snap["plan"] is None and snap["approval"] is None
+            assert "APR-EXISTING" in text and expected_hint in text
