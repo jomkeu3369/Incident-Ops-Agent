@@ -1,3 +1,5 @@
+> **보관용 문서.** 학습 과제 명세(`F3001~F3023`, `NF3001~NF3007`) 기준으로 작성했던 원본 요구사항 매핑입니다. 현재 기준의 검증 결과는 [10-verification.md](../10-verification.md)를 참고하세요.
+
 # 10. 요구사항 매핑 및 종합 검증 결과서
 
 `AI 코어 프로젝트 3회차` 명세서(`F3001~F3023`, `NF3001~NF3007`, 4장 검증 및 6장 산출물) 기준으로 **Incident-Ops-Agent**의 도메인 적합성, 기능별 구현 위치, 대표 시나리오 5종 검증 결과, 심화 전후 지표 비교, 제출 전 점검 결과를 정리합니다.
@@ -68,8 +70,8 @@
 
 | # | 시나리오 | 기대 동작 | 실제 검증 결과 | 로그 샘플 / 테스트 |
 | :---: | :--- | :--- | :--- | :--- |
-| 1 | **제약 한 번에 충족** | 변경 금지 구간 없음 → 14:28–14:33 초안 확정, `SUPPORTED` 판정, `AWAITING_APPROVAL` 등록 | 기대와 일치 (재계획 0회, 계획·승인 원장 등록 완료) | [session-log-normal.json](../agent/samples/session-log-normal.json), `test_phase2d` |
-| 2 | **시간 충돌 재계획** | 14:28–14:33이 14:30–14:40 금지 구간과 충돌 → 캐시 재사용(중복 Tool 호출 0건) 후 14:40–14:45로 재계획 | 기대와 일치 (`CUSTOM replan` 발행, 외부 Tool 중복 호출 0건) | [session-log-replan.json](../agent/samples/session-log-replan.json), `test_phase2d` |
+| 1 | **제약 한 번에 충족** | 변경 금지 구간 없음 → 14:28–14:33 초안 확정, `SUPPORTED` 판정, `AWAITING_APPROVAL` 등록 | 기대와 일치 (재계획 0회, 계획·승인 원장 등록 완료) | [session-log-normal.json](../../agent/samples/session-log-normal.json), `test_phase2d` |
+| 2 | **시간 충돌 재계획** | 14:28–14:33이 14:30–14:40 금지 구간과 충돌 → 캐시 재사용(중복 Tool 호출 0건) 후 14:40–14:45로 재계획 | 기대와 일치 (`CUSTOM replan` 발행, 외부 Tool 중복 호출 0건) | [session-log-replan.json](../../agent/samples/session-log-replan.json), `test_phase2d` |
 | 3 | **재계획 상한(3회) 도달** | `NEED_MORE_EVIDENCE` 반복 시 3회 한도에서 중단하고 `BLOCKED`와 사유 응답 | 기대와 일치 (무한 루프 차단, 사유 안내 확인) | `test_phase2d` |
 | 4 | **Tool 1종 실패** | Grafana 또는 Calendar 호출 실패 시 예외 미전파, 서비스 정상 응답 및 사유 안내 | 기대와 일치 (API 키·스택트레이스 미노출, `BLOCKED` 안전 안내) | `test_phase2d` |
 | 5 | **Tool 불필요 요청** | `"안녕하세요, 어떤 기능을 지원하나요?"` → `general_chat` 분류, 외부 Tool·A2A 호출 0건 | 기대와 일치 (즉시 기능 안내 응답, Tool 호출 0회) | `test_phase2d` |
