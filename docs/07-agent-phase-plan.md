@@ -25,7 +25,7 @@
 - **백엔드 인증:** MCP(`/sse`, `/mcp/message`)와 REST(`/api/incidents/**`) 모든 요청에 `X-Internal-Token` 헤더 전달 ([백엔드 API 및 MCP 명세](02-backend-api-and-mcp-spec.md#sse로-연결하기))
 - **FastAPI 공통 필수 기준 (DI · Security):**
   - **DI (`Depends`):** `Settings`, `httpx.AsyncClient`, `Redis`, `BackendClient`, `EventBus`, 외부 Tool/Decisions 클라이언트를 전역 하드코딩 대신 FastAPI `lifespan` + `Depends`로 주입 (`app.dependency_overrides`로 테스트 교체 가능)
-  - **Security:** 내부 엔드포인트(`/a2a/**`, 관리 API 등)에 `X-Internal-Token` 검증(`hmac.compare_digest`, `/health` 제외), CORS 허용 오리진 제한, 예외 핸들러에서 API 키·토큰·스택트레이스 노출 차단(NF3001·NF3002)
+  - **Security:** 내부 엔드포인트(`/a2a/**`, 관리 API 등)에 `X-Internal-Token` 검증(`hmac.compare_digest`, `/health` 제외), CORS 허용 오리진 제한, 예외 핸들러에서 API 키·토큰·스택트레이스 노출 차단
 - **MCP vs REST 호출 구분:**
   - **MCP 4종:** `searchCorpusIndex`, `pullCorpusChunk`, `getIncidentDetail`, `completeIncidentWithPostMortem` (JSON 텍스트 응답, 검증·상태 오류 시 `isError: true`)
   - **REST 필수 2종:** `POST /api/incidents/{incidentCode}/plans`, `POST /api/incidents/{incidentCode}/approvals`
@@ -107,9 +107,9 @@ agent/
   - [x] 미승인 상태에서 완료 호출 시 실 Spring MCP `409` 거절 및 정상 승인 후 `RESOLVED` + 포스트모템 반영 확인
 
 ### Phase 3: 심화 기능 *(Phase 2D 통과 후 선택 착수)*
-- [x] **로깅 이상 징후 판단 (F3020):** 규칙 기반 판정(동일 입력 반복, 과다 재계획, 미계획 Tool 호출, 근거 부재 시 `판정 불가`) + 이상 판정 건에만 LLM 3문장 원인 진단(정상 시 LLM 0회) (`agent/src/common/anomaly.py`, `GET /api/ag-ui/sessions/{session_id}/anomalies`)
-- [x] **Planner·Worker LLM 분리 비교 (F3021):** 정상 경로 Worker LLM 호출 0회, 수정 가능한 실패(`NO_RESULT` 등)에만 고정 인자 보존 재시도 + 전후 지표 비교 (`agent/src/common/worker_executor.py`)
-- [x] **Tool 확장 (F3022 / F3023, 선택):** 로컬 저장소 ↔ Google Calendar 교체형 어댑터 (`agent/src/common/calendar_adapter.py`, `CALENDAR_ADAPTER_MODE=google|local`)
+- [x] **로깅 이상 징후 판단:** 규칙 기반 판정(동일 입력 반복, 과다 재계획, 미계획 Tool 호출, 근거 부재 시 `판정 불가`) + 이상 판정 건에만 LLM 3문장 원인 진단(정상 시 LLM 0회) (`agent/src/common/anomaly.py`, `GET /api/ag-ui/sessions/{session_id}/anomalies`)
+- [x] **Planner·Worker LLM 분리 비교:** 정상 경로 Worker LLM 호출 0회, 수정 가능한 실패(`NO_RESULT` 등)에만 고정 인자 보존 재시도 + 전후 지표 비교 (`agent/src/common/worker_executor.py`)
+- [x] **교체형 캘린더 어댑터:** 로컬 저장소 ↔ Google Calendar 교체형 어댑터 (`agent/src/common/calendar_adapter.py`, `CALENDAR_ADAPTER_MODE=google|local`)
 
 ---
 
