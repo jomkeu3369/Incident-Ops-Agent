@@ -9,12 +9,14 @@ from fastapi.testclient import TestClient
 import httpx
 from pydantic import SecretStr
 
+from common.anomaly import SessionAnomalyAnalyzer
 from common.backend_client import BackendClient
 from common.config import Settings
 from log_agent.main import create_log_agent_app
 from remediation_agent.main import create_remediation_agent_app
 from supervisor.cruds import StoreUnavailableError, SupervisorRedisStore
 from supervisor.main import create_supervisor_app
+from supervisor.routers import get_anomaly_analyzer
 from supervisor.schemas import ManagedPlanCreate
 from supervisor.services import SupervisorService
 
@@ -508,4 +510,109 @@ async def test_redis_store_atomic_eval_deduplicates_after_ambiguous_rpush_timeou
     # 5) 세션 삭제 시 실행 로그와 ID 중복 제거 셋이 모두 정리된다.
     assert await store.delete_session_logs("sess-ambig") is True
     assert "exec_log:sess-ambig" not in redis.lists
-    assert "exec_log:ids:sess-ambig" not in redis.sets
+    assert "exec_log_ids:sess-ambig" not in redis.sets
+
+
+async def test_redis_store_dedup_keys_are_disjoint_from_session_log_keys() -> None:
+    """sessionId에 'ids:' 접두어가 포함되어도 실행 로그 키와 중복 제거 SET 키가 충돌하지 않는지 검증한다."""
+
+    class _DisjointCheckRedis(_FullFakeRedis):
+        async def eval(self, script: str, numkeys: int, *keys_and_args: Any) -> int:
+            keys = keys_and_args[:numkeys]
+            args = keys_and_args[numkeys:]
+            log_key, ids_key, index_key = str(keys[0]), str(keys[1]), str(keys[2])
+            event_id, raw_json, session_id = str(args[0]), str(args[1]), str(args[2])
+            assert log_key != ids_key
+            seen = self.sets.setdefault(ids_key, set())
+            if event_id not in seen:
+                seen.add(event_id)
+                self.lists.setdefault(log_key, []).append(raw_json)
+            self.sets.setdefault(index_key, set()).add(session_id)
+            return 1
+
+        async def delete(self, k: str) -> int:
+            removed_set = self.sets.pop(k, None) is not None
+            return int(bool(await super().delete(k)) or removed_set)
+
+    redis = _DisjointCheckRedis()
+    store = SupervisorRedisStore(redis, health_check_interval=60.0)
+
+    await store.append_session_log("foo", {"sessionId": "foo", "timestamp": "2026-11-23T00:00:01Z", "tag": "plain"})
+    await store.append_session_log("ids:foo", {"sessionId": "ids:foo", "timestamp": "2026-11-23T00:00:02Z", "tag": "prefixed"})
+
+    assert len(redis.lists["exec_log:foo"]) == 1
+    assert len(redis.lists["exec_log:ids:foo"]) == 1
+    assert len(redis.sets["exec_log_ids:foo"]) == 1
+    assert len(redis.sets["exec_log_ids:ids:foo"]) == 1
+
+    assert await store.delete_session_logs("ids:foo") is True
+    assert "exec_log:ids:foo" not in redis.lists
+    assert "exec_log_ids:ids:foo" not in redis.sets
+    assert [ev["tag"] for ev in await store.get_session_logs("foo")] == ["plain"]
+    assert len(redis.sets["exec_log_ids:foo"]) == 1
+
+
+async def test_anomaly_endpoint_rejects_incomplete_fallback_logs_with_503() -> None:
+    """Redis 장애로 실행 로그가 불완전할 때 이상 분석이 거짓 NORMAL/UNDETERMINED 대신 503을 반환하는지 검증한다."""
+    cfg = Settings(_env_file=None, internal_service_token=SecretStr("secret-token"))
+    redis = _FullFakeRedis()
+    store = SupervisorRedisStore(redis, health_check_interval=0.0)
+    headers = {"X-Internal-Token": "secret-token"}
+
+    async def fake_diag(sid: str, findings: list[dict[str, Any]], events: list[dict[str, Any]]) -> str:
+        return "미계획 도구 호출이 감지되었습니다. 허용 도구 목록을 점검하세요. 실행 로그를 보완하세요."
+
+    app = create_supervisor_app(cfg)
+    app.dependency_overrides[get_anomaly_analyzer] = lambda: SessionAnomalyAnalyzer(diagnosis_fn=fake_diag)
+
+    async with app.router.lifespan_context(app):
+        app.state.container.supervisor_store = store
+        await store.append_session_log(
+            "sess-partial",
+            {
+                "sessionId": "sess-partial",
+                "eventType": "step_finished",
+                "timestamp": "2026-11-23T00:00:01Z",
+                "payload": {"step": "plan", "steps": ["a2a:log-analyzer-agent"]},
+            },
+        )
+
+        async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as client:
+            redis.up = False
+            await store.append_session_log(
+                "sess-partial",
+                {
+                    "sessionId": "sess-partial",
+                    "eventType": "tool_call",
+                    "timestamp": "2026-11-23T00:00:02Z",
+                    "payload": {"tool": "unknown_shell_exec", "args": {"cmd": "ls"}},
+                },
+            )
+
+            res_partial = await client.get("/api/ag-ui/sessions/sess-partial/anomalies", headers=headers)
+            assert res_partial.status_code == 503
+
+            redis.up = True
+            store._redis_retry_after = 0.0
+            res_recovered = await client.get("/api/ag-ui/sessions/sess-partial/anomalies", headers=headers)
+            assert res_recovered.status_code == 200
+            body = res_recovered.json()
+            assert body["status"] == "ANOMALY"
+            assert body["findings"][0]["rule"] == "UNPLANNED_TOOL_CALL"
+
+            # 아직 한 번도 Redis에 연결되지 않은 신규 스토어의 단절 폴백에서도 거짓 NORMAL 대신 503을 반환한다.
+            cold_redis = _FullFakeRedis()
+            cold_redis.up = False
+            cold_store = SupervisorRedisStore(cold_redis, health_check_interval=0.0)
+            app.state.container.supervisor_store = cold_store
+            await cold_store.append_session_log(
+                "sess-cold-outage",
+                {
+                    "sessionId": "sess-cold-outage",
+                    "eventType": "tool_call",
+                    "timestamp": "2026-11-23T00:00:03Z",
+                    "payload": {"tool": "unknown_shell_exec", "args": {"cmd": "id"}},
+                },
+            )
+            res_cold = await client.get("/api/ag-ui/sessions/sess-cold-outage/anomalies", headers=headers)
+            assert res_cold.status_code == 503

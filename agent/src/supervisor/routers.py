@@ -72,10 +72,18 @@ async def analyze_session_anomalies(
     analyzer: SessionAnomalyAnalyzer = Depends(get_anomaly_analyzer),
 ) -> SessionAnomalyResponse:
     """저장된 세션 실행 로그의 이상 징후를 규칙 기반으로 판정하고 이상 건에만 3문장 진단을 반환한다."""
-    events = await store.get_session_logs(session_id)
+    try:
+        events, is_complete = await store.get_session_logs_for_analysis(session_id)
+    except StoreUnavailableError as exc:
+        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(exc))
     if not events:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"실행 로그를 찾을 수 없습니다: {session_id}")
     report = await analyzer.analyze(session_id, events)
+    if not is_complete and report.status != "ANOMALY":
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Redis 연결이 일시 중단되어 전체 실행 로그를 확인할 수 없으므로 정상/판정 불가 응답을 보류합니다.",
+        )
     return SessionAnomalyResponse.model_validate(report.to_dict())
 
 

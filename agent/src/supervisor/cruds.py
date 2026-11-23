@@ -14,7 +14,7 @@ from supervisor.schemas import ManagedPlanCreate, ManagedPlanItem, ManagedPlanMu
 # Redis 키 프리픽스 분리: 대화 메모리(memory:), 실행 로그(exec_log:), 작업 계획(planner_plan:)
 _MEM_PREFIX = "memory:"
 _LOG_PREFIX = "exec_log:"
-_LOG_IDS_PREFIX = "exec_log:ids:"
+_LOG_IDS_PREFIX = "exec_log_ids:"
 _LOG_INDEX_KEY = "exec_log:index"
 _PLAN_PREFIX = "planner_plan:"
 _PLAN_INDEX_KEY = "planner_plan:index"
@@ -79,6 +79,7 @@ class SupervisorRedisStore:
         self._max_cached_threads = max(0, max_cached_threads)
         self._redis_healthy_until = 0.0
         self._redis_retry_after = 0.0
+        self._redis_ever_connected = False
         self._reconcile_lock = asyncio.Lock()
         self._thread_locks: dict[str, list[Any]] = {}
         # 로컬 테스트나 Redis 일시 단절 시 사용하는 프로세스 메모리 폴백 저장소 및 복구 재반영 큐
@@ -228,6 +229,7 @@ class SupervisorRedisStore:
                 return False
         try:
             await self._redis.ping()
+            self._redis_ever_connected = True
             await self._reconcile_fallback_to_redis()
             self._redis_healthy_until = time.monotonic() + self._health_check_interval
             return True
@@ -388,6 +390,18 @@ class SupervisorRedisStore:
             except Exception:
                 self._mark_redis_down()
         return list(self._mem_logs.get(session_id, []))
+
+    async def get_session_logs_for_analysis(self, session_id: str) -> tuple[list[dict[str, Any]], bool]:
+        """이상 징후 분석용 실행 로그와 전체 이력 완전성(is_complete) 여부를 함께 반환한다."""
+        if await self._use_redis():
+            try:
+                rows = await self._redis.lrange(f"{_LOG_PREFIX}{session_id}", 0, -1)
+                return [json.loads(r) for r in rows], True
+            except Exception:
+                self._mark_redis_down()
+        if self._redis is not None and self._redis_ever_connected:
+            raise StoreUnavailableError("Redis 연결이 일시 중단되어 전체 실행 로그 기반 이상 징후 분석을 수행할 수 없습니다.")
+        return list(self._mem_logs.get(session_id, [])), self._redis is None
 
     async def delete_session_logs(self, session_id: str) -> bool:
         """특정 세션의 실행 로그를 삭제한다. Redis 단절로 존재 미확인 시 StoreUnavailableError를 발생시킨다."""
