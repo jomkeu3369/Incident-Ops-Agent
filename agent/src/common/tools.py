@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import asyncio
+import math
 import re
 from typing import Any
 import httpx
@@ -107,12 +109,26 @@ class ExternalToolsClient:
             if not isinstance(deployments, list):
                 return _err("UPSTREAM_ERROR", "GitHub 배포 목록 응답 형식이 올바르지 않습니다.")
 
-            succeeded: list[dict[str, Any]] = []
+            valid_deps: list[tuple[int, str, str]] = []
             for dep in deployments:
                 dep_id, sha = dep.get("id"), dep.get("sha")
                 if dep_id is None or not sha:
                     continue
-                st_resp = await self._http.get(f"{base}/repos/{svc.github_repo}/deployments/{dep_id}/statuses", params={"per_page": 30}, headers=headers)
+                valid_deps.append((int(dep_id), str(sha), str(dep.get("ref") or "")))
+
+            sem = asyncio.Semaphore(6)
+
+            async def _fetch_statuses(dep_id: int) -> httpx.Response:
+                async with sem:
+                    return await self._http.get(
+                        f"{base}/repos/{svc.github_repo}/deployments/{dep_id}/statuses",
+                        params={"per_page": 30},
+                        headers=headers,
+                    )
+
+            status_resps = await asyncio.gather(*(_fetch_statuses(dep_id) for dep_id, _, _ in valid_deps))
+            succeeded: list[dict[str, Any]] = []
+            for (dep_id, sha, ref), st_resp in zip(valid_deps, status_resps):
                 failure = _map_http_failure(st_resp, "GitHub Deployment Statuses")
                 if failure:
                     return failure
@@ -122,7 +138,7 @@ class ExternalToolsClient:
                 # 배포 생성일이 아니라 장애 시작 시각 이전(<=)의 state=success 기록 중 최신 시각을 사용한다
                 eligible_times = [ts for st in statuses if st.get("state") == "success" and st.get("created_at") and (ts := parse_rfc3339(st["created_at"])) <= started_dt]
                 if eligible_times:
-                    succeeded.append({"deploymentId": int(dep_id), "gitSha": str(sha), "ref": str(dep.get("ref") or ""), "succeededAt": max(eligible_times)})
+                    succeeded.append({"deploymentId": dep_id, "gitSha": sha, "ref": ref, "succeededAt": max(eligible_times)})
         except httpx.HTTPError:
             return _err("UPSTREAM_ERROR", "GitHub API 요청 중 네트워크 오류가 발생했습니다.")
         except (ValueError, KeyError, TypeError):
@@ -189,8 +205,8 @@ class ExternalToolsClient:
         except httpx.HTTPError:
             return _err("UPSTREAM_ERROR", "Grafana Cloud API 요청 중 네트워크 오류가 발생했습니다.")
 
-        # 시계열 누락이나 요청 수 0은 오류율 0%와 구분해 INSUFFICIENT_DATA로 반환한다
-        if total_val is None or err_val is None or total_val <= 0:
+        # 시계열 누락, 음수 또는 요청 수 0은 오류율 0%와 구분해 INSUFFICIENT_DATA로 반환한다
+        if total_val is None or err_val is None or total_val <= 0 or err_val < 0:
             return _err("INSUFFICIENT_DATA", "관측 구간에 필요한 시계열 또는 요청 데이터가 없어 오류율을 계산할 수 없습니다.")
 
         return _ok({"gitSha": sha, "from": from_dt.isoformat(), "to": to_dt.isoformat(), "totalRequests": round(total_val, 2), "http502Requests": round(err_val, 2), "http502RatePercent": round((err_val / total_val) * 100.0, 4)})
@@ -208,7 +224,10 @@ class ExternalToolsClient:
             results = body.get("data", {}).get("result", [])
             if not results:
                 return None, None
-            return float(results[0]["value"][1]), None
+            val = float(results[0]["value"][1])
+            if not math.isfinite(val):
+                return None, _err("INSUFFICIENT_DATA", "관측 구간 지표에 유효하지 않은 수치(NaN/Inf)가 포함되어 있습니다.")
+            return val, None
         except (ValueError, KeyError, IndexError, TypeError):
             return None, _err("UPSTREAM_ERROR", "Grafana 지표 응답을 해석하지 못했습니다.")
 
