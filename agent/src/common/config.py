@@ -54,6 +54,7 @@ class Settings(BaseSettings):
     dr_dci_max_pull_steps: int = 5
     max_replan_attempts: int = 3
     http_timeout_seconds: float = 15.0
+    tool_cache_ttl_seconds: float = 300.0
 
     # 외부 API Tool 설정 (Phase 2A)
     default_service_name: str = "payment-service"

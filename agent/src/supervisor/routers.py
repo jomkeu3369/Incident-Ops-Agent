@@ -9,7 +9,7 @@ from common.backend_client import BackendClient
 from common.config import Settings
 from common.di import AppContainer, get_backend_client, get_container, get_settings
 from common.security import get_operator_id
-from supervisor.cruds import SupervisorRedisStore
+from supervisor.cruds import StoreUnavailableError, SupervisorRedisStore
 from supervisor.schemas import ManagedPlanCreate, ManagedPlanItem, ManagedPlanMutationResponse, ManagedPlanUpdate, SessionAnomalyResponse, SessionLogsResponse, SessionSummary
 from supervisor.services import SupervisorService
 
@@ -72,17 +72,29 @@ async def analyze_session_anomalies(
     analyzer: SessionAnomalyAnalyzer = Depends(get_anomaly_analyzer),
 ) -> SessionAnomalyResponse:
     """저장된 세션 실행 로그의 이상 징후를 규칙 기반으로 판정하고 이상 건에만 3문장 진단을 반환한다."""
-    events = await store.get_session_logs(session_id)
+    try:
+        events, is_complete = await store.get_session_logs_for_analysis(session_id)
+    except StoreUnavailableError as exc:
+        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(exc))
     if not events:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"실행 로그를 찾을 수 없습니다: {session_id}")
     report = await analyzer.analyze(session_id, events)
+    if not is_complete and report.status != "ANOMALY":
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Redis 연결이 일시 중단되어 전체 실행 로그를 확인할 수 없으므로 정상/판정 불가 응답을 보류합니다.",
+        )
     return SessionAnomalyResponse.model_validate(report.to_dict())
 
 
 @router.delete("/sessions/{session_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_session_logs(session_id: str, store: SupervisorRedisStore = Depends(get_supervisor_store)) -> None:
     """특정 세션의 실행 로그를 삭제한다."""
-    if not await store.delete_session_logs(session_id):
+    try:
+        deleted = await store.delete_session_logs(session_id)
+    except StoreUnavailableError as exc:
+        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(exc))
+    if not deleted:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"실행 로그를 찾을 수 없습니다: {session_id}")
 
 
@@ -106,7 +118,10 @@ async def get_managed_plan(plan_id: str, store: SupervisorRedisStore = Depends(g
 @router.post("/plans", response_model=ManagedPlanMutationResponse, status_code=status.HTTP_201_CREATED)
 async def create_managed_plan(body: ManagedPlanCreate, store: SupervisorRedisStore = Depends(get_supervisor_store)) -> ManagedPlanMutationResponse:
     """작업 계획을 저장하며, 같은 날짜에 시간이 겹치는 계획이 있으면 경고와 함께 반환한다."""
-    return await store.create_plan(body)
+    try:
+        return await store.create_plan(body)
+    except StoreUnavailableError as exc:
+        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(exc))
 
 
 @router.patch("/plans/{plan_id}", response_model=ManagedPlanMutationResponse)
@@ -114,6 +129,8 @@ async def update_managed_plan(plan_id: str, body: ManagedPlanUpdate, store: Supe
     """저장된 작업 계획을 수정한다."""
     try:
         res = await store.update_plan(plan_id, body)
+    except StoreUnavailableError as exc:
+        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(exc))
     except ValueError as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc))
     if res is None:
@@ -124,5 +141,9 @@ async def update_managed_plan(plan_id: str, body: ManagedPlanUpdate, store: Supe
 @router.delete("/plans/{plan_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_managed_plan(plan_id: str, store: SupervisorRedisStore = Depends(get_supervisor_store)) -> None:
     """저장된 작업 계획을 삭제한다."""
-    if not await store.delete_plan(plan_id):
+    try:
+        deleted = await store.delete_plan(plan_id)
+    except StoreUnavailableError as exc:
+        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(exc))
+    if not deleted:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"계획을 찾을 수 없습니다: {plan_id}")
