@@ -14,9 +14,22 @@ from supervisor.schemas import ManagedPlanCreate, ManagedPlanItem, ManagedPlanMu
 # Redis 키 프리픽스 분리: 대화 메모리(memory:), 실행 로그(exec_log:), 작업 계획(planner_plan:)
 _MEM_PREFIX = "memory:"
 _LOG_PREFIX = "exec_log:"
+_LOG_IDS_PREFIX = "exec_log:ids:"
 _LOG_INDEX_KEY = "exec_log:index"
 _PLAN_PREFIX = "planner_plan:"
 _PLAN_INDEX_KEY = "planner_plan:index"
+
+_APPEND_LOG_LUA = """
+if redis.call('SADD', KEYS[2], ARGV[1]) == 1 then
+    redis.call('RPUSH', KEYS[1], ARGV[2])
+end
+redis.call('SADD', KEYS[3], ARGV[3])
+return 1
+"""
+
+
+class _LogIndexSyncError(RuntimeError):
+    """eval 미지원 테스트 대역에서 RPUSH 성공 후 인덱스 동기화만 실패했을 때 내부 전파하는 예외."""
 
 
 def _empty_thread_memory(thread_id: str) -> dict[str, Any]:
@@ -74,7 +87,7 @@ class SupervisorRedisStore:
         self._mem_plans: dict[str, dict[str, Any]] = {}
         self._dirty_threads: set[str] = set()
         self._unverified_fallback_threads: set[str] = set()
-        self._pending_log_events: dict[str, list[dict[str, Any]]] = {}
+        self._pending_log_events: dict[str, list[tuple[str, dict[str, Any]]]] = {}
         self._pending_log_indices: set[str] = set()
         self._deleted_logs: set[str] = set()
         self._dirty_plans: set[str] = set()
@@ -156,6 +169,7 @@ class SupervisorRedisStore:
 
             for sid in list(self._deleted_logs):
                 await self._redis.delete(f"{_LOG_PREFIX}{sid}")
+                await self._redis.delete(f"{_LOG_IDS_PREFIX}{sid}")
                 await self._redis.srem(_LOG_INDEX_KEY, sid)
                 self._deleted_logs.discard(sid)
 
@@ -166,9 +180,17 @@ class SupervisorRedisStore:
                     self._mem_logs.pop(sid, None)
                     continue
                 while events:
-                    await self._redis.rpush(f"{_LOG_PREFIX}{sid}", json.dumps(events[0], ensure_ascii=False))
+                    event_id, ev = events[0]
+                    try:
+                        await self._append_log_to_redis(sid, event_id, json.dumps(ev, ensure_ascii=False))
+                    except _LogIndexSyncError:
+                        events.pop(0)
+                        self._pending_log_indices.add(sid)
+                        if not events:
+                            self._pending_log_events.pop(sid, None)
+                            self._mem_logs.pop(sid, None)
+                        raise
                     events.pop(0)
-                    self._pending_log_indices.add(sid)
                 self._pending_log_events.pop(sid, None)
                 self._mem_logs.pop(sid, None)
 
@@ -252,22 +274,43 @@ class SupervisorRedisStore:
 
     # --- 2) 세션 실행 로그 CRUD (exec_log:{session_id}, TTL 없음, 수정 불가) ---
 
+    async def _append_log_to_redis(self, session_id: str, event_id: str, raw_json: str) -> None:
+        """고유 이벤트 ID 기반으로 실행 로그를 멱등·중복 없이 Redis에 추가한다."""
+        log_key = f"{_LOG_PREFIX}{session_id}"
+        ids_key = f"{_LOG_IDS_PREFIX}{session_id}"
+        if hasattr(self._redis, "eval"):
+            await self._redis.eval(_APPEND_LOG_LUA, 3, log_key, ids_key, _LOG_INDEX_KEY, event_id, raw_json, session_id)
+            return
+
+        seen_ids = await self._redis.smembers(ids_key)
+        pushed = event_id in seen_ids
+        try:
+            if not pushed:
+                await self._redis.rpush(log_key, raw_json)
+                pushed = True
+                await self._redis.sadd(ids_key, event_id)
+            await self._redis.sadd(_LOG_INDEX_KEY, session_id)
+        except Exception as exc:
+            if pushed:
+                raise _LogIndexSyncError from exc
+            raise
+
     async def append_session_log(self, session_id: str, event: dict[str, Any]) -> None:
         """세션 실행 로그 끝에 이벤트를 추가한다 (수정 불가, 추가 전용)."""
+        event_id = str(event.get("eventId") or uuid.uuid4().hex)
+        raw_json = json.dumps(event, ensure_ascii=False)
         if await self._use_redis():
-            pushed = False
             try:
-                await self._redis.rpush(f"{_LOG_PREFIX}{session_id}", json.dumps(event, ensure_ascii=False))
-                pushed = True
-                await self._redis.sadd(_LOG_INDEX_KEY, session_id)
+                await self._append_log_to_redis(session_id, event_id, raw_json)
+                return
+            except _LogIndexSyncError:
+                self._mark_redis_down()
+                self._pending_log_indices.add(session_id)
                 return
             except Exception:
                 self._mark_redis_down()
-                if pushed:
-                    self._pending_log_indices.add(session_id)
-                    return
         self._mem_logs.setdefault(session_id, []).append(event)
-        self._pending_log_events.setdefault(session_id, []).append(event)
+        self._pending_log_events.setdefault(session_id, []).append((event_id, event))
 
     async def list_sessions(self) -> list[SessionSummary]:
         """저장된 실행 로그 세션 목록을 경량 조회(LLEN/LINDEX 우선)로 반환한다."""
@@ -359,6 +402,7 @@ class SupervisorRedisStore:
             try:
                 removed = int(await self._redis.delete(f"{_LOG_PREFIX}{session_id}") or 0)
                 deleted_redis = True
+                await self._redis.delete(f"{_LOG_IDS_PREFIX}{session_id}")
                 await self._redis.srem(_LOG_INDEX_KEY, session_id)
                 self._mem_logs.pop(session_id, None)
                 self._pending_log_events.pop(session_id, None)

@@ -451,3 +451,61 @@ async def test_redis_store_and_router_reject_uncertain_delete_with_503_without_q
             app.state.container.supervisor_store = SupervisorRedisStore(None)
             assert (await client.delete("/api/ag-ui/sessions/missing-sess", headers=headers)).status_code == 404
             assert (await client.delete("/api/ag-ui/plans/MISSING-PLAN", headers=headers)).status_code == 404
+
+
+async def test_redis_store_atomic_eval_deduplicates_after_ambiguous_rpush_timeout() -> None:
+    """Lua eval 기반 실행 로그 적재 시 응답 전 타임아웃(모호한 실패) 뒤 재시도해도 중복 없이 멱등 반영되는지 검증한다."""
+
+    class _AtomicEvalFakeRedis(_FullFakeRedis):
+        def __init__(self) -> None:
+            super().__init__()
+            self.eval_calls = 0
+            self.fail_after_commit_calls: set[int] = set()
+
+        async def eval(self, script: str, numkeys: int, *keys_and_args: Any) -> int:
+            self.eval_calls += 1
+            keys = keys_and_args[:numkeys]
+            args = keys_and_args[numkeys:]
+            log_key, ids_key, index_key = keys[0], keys[1], keys[2]
+            event_id, raw_json, session_id = str(args[0]), str(args[1]), str(args[2])
+            seen = self.sets.setdefault(ids_key, set())
+            if event_id not in seen:
+                seen.add(event_id)
+                self.lists.setdefault(log_key, []).append(raw_json)
+            self.sets.setdefault(index_key, set()).add(session_id)
+            if self.eval_calls in self.fail_after_commit_calls:
+                raise TimeoutError("ambiguous timeout after RPUSH")
+            return 1
+
+        async def delete(self, k: str) -> int:
+            removed_set = self.sets.pop(k, None) is not None
+            return int(bool(await super().delete(k)) or removed_set)
+
+    redis = _AtomicEvalFakeRedis()
+    store = SupervisorRedisStore(redis, health_check_interval=0.0)
+
+    # 1) 첫 실시간 적재가 서버 커밋 직후 TimeoutError로 실패해도 동일 eventId가 대기 큐에 보존된다.
+    redis.fail_after_commit_calls = {1}
+    await store.append_session_log("sess-ambig", {"sessionId": "sess-ambig", "timestamp": "2026-11-23T00:00:01Z", "seq": 1})
+    assert len(redis.lists["exec_log:sess-ambig"]) == 1
+
+    # 2) 오프라인 구간에서 두 번째 이벤트 누적
+    await store.append_session_log("sess-ambig", {"sessionId": "sess-ambig", "timestamp": "2026-11-23T00:00:02Z", "seq": 2})
+
+    # 3) 첫 복구 시도 중 2번째(seq=1 재시도)는 멱등 중복 제거되고, 3번째(seq=2 커밋 후)는 다시 TimeoutError 발생
+    redis.fail_after_commit_calls = {3}
+    store._redis_retry_after = 0.0
+    _ = await store.get_session_logs("sess-ambig")
+    assert len(redis.lists["exec_log:sess-ambig"]) == 2
+
+    # 4) 두 번째 복구 완료 후에도 중복 없이 정확히 2건만 존재한다.
+    redis.fail_after_commit_calls = set()
+    store._redis_retry_after = 0.0
+    recovered = await store.get_session_logs("sess-ambig")
+    assert [ev["seq"] for ev in recovered] == [1, 2]
+    assert "sess-ambig" in {s.sessionId for s in await store.list_sessions()}
+
+    # 5) 세션 삭제 시 실행 로그와 ID 중복 제거 셋이 모두 정리된다.
+    assert await store.delete_session_logs("sess-ambig") is True
+    assert "exec_log:sess-ambig" not in redis.lists
+    assert "exec_log:ids:sess-ambig" not in redis.sets
