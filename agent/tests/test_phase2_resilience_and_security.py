@@ -13,7 +13,8 @@ from common.backend_client import BackendClient
 from common.config import Settings
 from log_agent.main import create_log_agent_app
 from remediation_agent.main import create_remediation_agent_app
-from supervisor.cruds import SupervisorRedisStore
+from supervisor.cruds import StoreUnavailableError, SupervisorRedisStore
+from supervisor.main import create_supervisor_app
 from supervisor.schemas import ManagedPlanCreate
 from supervisor.services import SupervisorService
 
@@ -359,3 +360,94 @@ def test_a2a_401_responses_include_security_headers() -> None:
             assert resp.status_code == 401
             assert resp.headers["x-content-type-options"] == "nosniff"
             assert resp.headers["cache-control"] == "no-store"
+
+
+async def test_redis_store_pins_in_flight_locked_thread_against_lru_eviction() -> None:
+    """실행 중(thread_lock 보유) 스레드는 다른 스레드 LRU 축출에서도 캐시에 고정되어 오프라인 갱신이 유실되지 않는지 검증한다."""
+    redis = _FullFakeRedis()
+    store = SupervisorRedisStore(redis, health_check_interval=0.0, max_cached_threads=1)
+    await store.save_thread_memory("t-inflight", {"threadId": "t-inflight", "messages": [{"id": "m0"}]})
+
+    async with store.thread_lock("t-inflight"):
+        loaded = await store.get_thread_memory("t-inflight")
+        assert loaded["messages"] == [{"id": "m0"}]
+
+        await store.save_thread_memory("t-other-1", {"threadId": "t-other-1", "messages": [{"id": "o1"}]})
+        await store.save_thread_memory("t-other-2", {"threadId": "t-other-2", "messages": [{"id": "o2"}]})
+        assert "t-inflight" in store._mem_threads
+
+        redis.up = False
+        loaded["messages"].append({"id": "m1-offline"})
+        await store.save_thread_memory("t-inflight", loaded)
+
+    assert "t-inflight" not in store._unverified_fallback_threads
+    redis.up = True
+    store._redis_retry_after = 0.0
+    recovered = await store.get_thread_memory("t-inflight")
+    assert recovered["messages"] == [{"id": "m0"}, {"id": "m1-offline"}]
+    assert len(store._mem_threads) <= 1
+
+
+async def test_redis_store_and_router_reject_uncertain_delete_with_503_without_queuing() -> None:
+    """Redis 단절 중 로컬에 없는 세션·계획 삭제는 삭제 큐잉 없이 503을 반환하고 기존 데이터를 보존하는지 검증한다."""
+    cfg = Settings(_env_file=None, internal_service_token=SecretStr("secret-token"))
+    redis = _FullFakeRedis()
+    store = SupervisorRedisStore(redis, health_check_interval=0.0)
+    headers = {"X-Internal-Token": "secret-token"}
+
+    app = create_supervisor_app(cfg)
+    async with app.router.lifespan_context(app):
+        app.state.container.supervisor_store = store
+        await store.append_session_log("sess-persisted", {"sessionId": "sess-persisted", "timestamp": "2026-11-23T00:00:00Z"})
+        await store.create_plan(
+            ManagedPlanCreate(
+                planId="PLAN-PERSISTED",
+                incidentCode="INC-1",
+                title="Persisted Plan",
+                planDate="2026-11-23",
+                startTime="01:00",
+                endTime="01:10",
+            )
+        )
+
+        async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as client:
+            redis.up = False
+            try:
+                await store.delete_session_logs("sess-persisted")
+                raise AssertionError("StoreUnavailableError expected")
+            except StoreUnavailableError:
+                pass
+
+            res_sess_503 = await client.delete("/api/ag-ui/sessions/sess-persisted", headers=headers)
+            assert res_sess_503.status_code == 503
+            res_plan_503 = await client.delete("/api/ag-ui/plans/PLAN-PERSISTED", headers=headers)
+            assert res_plan_503.status_code == 503
+            assert store._deleted_logs == set()
+            assert store._deleted_plans == set()
+
+            await store.append_session_log("sess-offline", {"sessionId": "sess-offline", "timestamp": "2026-11-23T00:00:01Z"})
+            res_plan_create = await client.post(
+                "/api/ag-ui/plans",
+                headers=headers,
+                json={
+                    "planId": "PLAN-OFFLINE",
+                    "incidentCode": "INC-1",
+                    "title": "Offline Plan",
+                    "planDate": "2026-11-23",
+                    "startTime": "02:00",
+                    "endTime": "02:10",
+                },
+            )
+            assert res_plan_create.status_code == 201
+            assert (await client.delete("/api/ag-ui/sessions/sess-offline", headers=headers)).status_code == 204
+            assert (await client.delete("/api/ag-ui/plans/PLAN-OFFLINE", headers=headers)).status_code == 204
+
+            redis.up = True
+            store._redis_retry_after = 0.0
+            assert (await client.get("/api/ag-ui/sessions/sess-persisted", headers=headers)).status_code == 200
+            assert (await client.get("/api/ag-ui/plans/PLAN-PERSISTED", headers=headers)).status_code == 200
+
+            # 로컬 전용(redis=None) 저장소에서는 미존재 삭제 시 기존대로 404를 반환한다.
+            app.state.container.supervisor_store = SupervisorRedisStore(None)
+            assert (await client.delete("/api/ag-ui/sessions/missing-sess", headers=headers)).status_code == 404
+            assert (await client.delete("/api/ag-ui/plans/MISSING-PLAN", headers=headers)).status_code == 404

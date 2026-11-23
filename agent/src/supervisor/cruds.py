@@ -47,6 +47,10 @@ def _parse_log_timestamp(raw: Any) -> str | None:
     return None
 
 
+class StoreUnavailableError(RuntimeError):
+    """Redis 연결 단절로 존재 여부를 확인할 수 없는 파괴적 연산을 거부할 때 발생한다."""
+
+
 class SupervisorRedisStore:
     """기존 Redis에 대화 메모리·실행 로그·작업 계획을 키 프리픽스로 분리 저장하는 CRUD 계층."""
 
@@ -78,7 +82,7 @@ class SupervisorRedisStore:
 
     @asynccontextmanager
     async def thread_lock(self, thread_id: str) -> AsyncIterator[None]:
-        """동일 스레드 ID의 상태 읽기·수정·저장을 직렬화하고 해제 시 락 참조를 정리한다."""
+        """동일 스레드 ID의 상태 읽기·수정·저장을 직렬화하고 해제 시 락 참조·캐시를 정리한다."""
         entry = self._thread_locks.get(thread_id)
         if entry is None:
             entry = [asyncio.Lock(), 0]
@@ -92,23 +96,28 @@ class SupervisorRedisStore:
             entry[1] -= 1
             if entry[1] <= 0 and not lock.locked():
                 self._thread_locks.pop(thread_id, None)
+                self._trim_thread_cache()
+
+    def _trim_thread_cache(self, keep: str | None = None) -> None:
+        """LRU 상한을 초과한 clean·비잠금 스레드 캐시 항목을 오래된 순으로 제거한다."""
+        if len(self._mem_threads) <= self._max_cached_threads:
+            return
+        # 아직 Redis에 반영되지 않은 dirty 스레드와 실행 중인(thread_lock 보유) 스레드는 보존한다.
+        for candidate in list(self._mem_threads):
+            if len(self._mem_threads) <= self._max_cached_threads:
+                break
+            if candidate == keep or candidate in self._dirty_threads or candidate in self._thread_locks:
+                continue
+            self._mem_threads.pop(candidate, None)
 
     def _cache_thread(self, thread_id: str, data: dict[str, Any]) -> None:
         """정상·복구 구간의 스레드 메모리를 Bounded LRU 캐시에 유지해 일시 단절 시 유실을 막는다."""
-        if self._max_cached_threads <= 0 and thread_id not in self._dirty_threads:
+        if self._max_cached_threads <= 0 and thread_id not in self._dirty_threads and thread_id not in self._thread_locks:
             self._mem_threads.pop(thread_id, None)
             return
         self._mem_threads[thread_id] = dict(data)
         self._mem_threads.move_to_end(thread_id)
-        if len(self._mem_threads) <= self._max_cached_threads:
-            return
-        # 아직 Redis에 반영되지 않은 dirty 스레드는 제외하고 가장 오래된 clean 항목부터 제거한다.
-        for candidate in list(self._mem_threads):
-            if len(self._mem_threads) <= self._max_cached_threads:
-                break
-            if candidate == thread_id or candidate in self._dirty_threads:
-                continue
-            self._mem_threads.pop(candidate, None)
+        self._trim_thread_cache(keep=thread_id if self._max_cached_threads > 0 else None)
 
     def _mark_redis_down(self) -> None:
         self._redis_healthy_until = 0.0
@@ -338,25 +347,43 @@ class SupervisorRedisStore:
         return list(self._mem_logs.get(session_id, []))
 
     async def delete_session_logs(self, session_id: str) -> bool:
-        """특정 세션의 실행 로그를 삭제한다."""
+        """특정 세션의 실행 로그를 삭제한다. Redis 단절로 존재 미확인 시 StoreUnavailableError를 발생시킨다."""
         existed = (
             session_id in self._mem_logs
             or session_id in self._pending_log_events
             or session_id in self._pending_log_indices
         )
-        self._mem_logs.pop(session_id, None)
-        self._pending_log_events.pop(session_id, None)
-        self._pending_log_indices.discard(session_id)
         if await self._use_redis():
+            deleted_redis = False
+            removed = 0
             try:
-                removed = await self._redis.delete(f"{_LOG_PREFIX}{session_id}")
+                removed = int(await self._redis.delete(f"{_LOG_PREFIX}{session_id}") or 0)
+                deleted_redis = True
                 await self._redis.srem(_LOG_INDEX_KEY, session_id)
+                self._mem_logs.pop(session_id, None)
+                self._pending_log_events.pop(session_id, None)
+                self._pending_log_indices.discard(session_id)
                 self._deleted_logs.discard(session_id)
                 return bool(removed or existed)
             except Exception:
                 self._mark_redis_down()
-        self._deleted_logs.add(session_id)
-        return existed
+                if deleted_redis:
+                    self._mem_logs.pop(session_id, None)
+                    self._pending_log_events.pop(session_id, None)
+                    self._pending_log_indices.discard(session_id)
+                    if removed or existed:
+                        self._deleted_logs.add(session_id)
+                    return bool(removed or existed)
+        if not existed:
+            if self._redis is not None:
+                raise StoreUnavailableError("Redis 연결이 일시 중단되어 실행 로그 존재 여부를 확인하거나 삭제할 수 없습니다.")
+            return False
+        self._mem_logs.pop(session_id, None)
+        self._pending_log_events.pop(session_id, None)
+        self._pending_log_indices.discard(session_id)
+        if self._redis is not None:
+            self._deleted_logs.add(session_id)
+        return True
 
     # --- 3) 작업 계획 관리 CRUD (F3015~F3016, 동일 날짜 시간 겹침 경고) ---
 
@@ -452,17 +479,33 @@ class SupervisorRedisStore:
         return ManagedPlanMutationResponse(plan=item, overlappingPlans=overlaps, warning=warning)
 
     async def delete_plan(self, plan_id: str) -> bool:
-        """저장된 작업 계획을 삭제한다."""
+        """저장된 작업 계획을 삭제한다. Redis 단절로 존재 미확인 시 StoreUnavailableError를 발생시킨다."""
         existed = plan_id in self._mem_plans
-        self._mem_plans.pop(plan_id, None)
-        self._dirty_plans.discard(plan_id)
         if await self._use_redis():
+            deleted_redis = False
+            removed = 0
             try:
-                removed = await self._redis.delete(f"{_PLAN_PREFIX}{plan_id}")
+                removed = int(await self._redis.delete(f"{_PLAN_PREFIX}{plan_id}") or 0)
+                deleted_redis = True
                 await self._redis.srem(_PLAN_INDEX_KEY, plan_id)
+                self._mem_plans.pop(plan_id, None)
+                self._dirty_plans.discard(plan_id)
                 self._deleted_plans.discard(plan_id)
                 return bool(removed or existed)
             except Exception:
                 self._mark_redis_down()
-        self._deleted_plans.add(plan_id)
-        return existed
+                if deleted_redis:
+                    self._mem_plans.pop(plan_id, None)
+                    self._dirty_plans.discard(plan_id)
+                    if removed or existed:
+                        self._deleted_plans.add(plan_id)
+                    return bool(removed or existed)
+        if not existed:
+            if self._redis is not None:
+                raise StoreUnavailableError("Redis 연결이 일시 중단되어 작업 계획 존재 여부를 확인하거나 삭제할 수 없습니다.")
+            return False
+        self._mem_plans.pop(plan_id, None)
+        self._dirty_plans.discard(plan_id)
+        if self._redis is not None:
+            self._deleted_plans.add(plan_id)
+        return True

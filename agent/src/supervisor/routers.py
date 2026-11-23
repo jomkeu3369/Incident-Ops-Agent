@@ -9,7 +9,7 @@ from common.backend_client import BackendClient
 from common.config import Settings
 from common.di import AppContainer, get_backend_client, get_container, get_settings
 from common.security import get_operator_id
-from supervisor.cruds import SupervisorRedisStore
+from supervisor.cruds import StoreUnavailableError, SupervisorRedisStore
 from supervisor.schemas import ManagedPlanCreate, ManagedPlanItem, ManagedPlanMutationResponse, ManagedPlanUpdate, SessionAnomalyResponse, SessionLogsResponse, SessionSummary
 from supervisor.services import SupervisorService
 
@@ -82,7 +82,11 @@ async def analyze_session_anomalies(
 @router.delete("/sessions/{session_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_session_logs(session_id: str, store: SupervisorRedisStore = Depends(get_supervisor_store)) -> None:
     """특정 세션의 실행 로그를 삭제한다."""
-    if not await store.delete_session_logs(session_id):
+    try:
+        deleted = await store.delete_session_logs(session_id)
+    except StoreUnavailableError as exc:
+        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(exc))
+    if not deleted:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"실행 로그를 찾을 수 없습니다: {session_id}")
 
 
@@ -124,5 +128,9 @@ async def update_managed_plan(plan_id: str, body: ManagedPlanUpdate, store: Supe
 @router.delete("/plans/{plan_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_managed_plan(plan_id: str, store: SupervisorRedisStore = Depends(get_supervisor_store)) -> None:
     """저장된 작업 계획을 삭제한다."""
-    if not await store.delete_plan(plan_id):
+    try:
+        deleted = await store.delete_plan(plan_id)
+    except StoreUnavailableError as exc:
+        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(exc))
+    if not deleted:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"계획을 찾을 수 없습니다: {plan_id}")
