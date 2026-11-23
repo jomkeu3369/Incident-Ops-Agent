@@ -12,6 +12,11 @@ from common.di import build_container
 
 logger = logging.getLogger(__name__)
 
+SECURITY_HEADERS: dict[str, str] = {
+    "X-Content-Type-Options": "nosniff",
+    "Cache-Control": "no-store",
+}
+
 
 def create_app(service_name: str, *, settings: Settings | None = None, enable_redis: bool = False) -> FastAPI:
     """DI 컨테이너, CORS, 보안 헤더, 안전한 예외 처리를 갖춘 FastAPI 앱을 생성한다."""
@@ -39,8 +44,8 @@ def create_app(service_name: str, *, settings: Settings | None = None, enable_re
     @app.middleware("http")
     async def add_security_headers(request: Request, call_next):
         response = await call_next(request)
-        response.headers.setdefault("X-Content-Type-Options", "nosniff")
-        response.headers.setdefault("Cache-Control", "no-store")
+        for key, value in SECURITY_HEADERS.items():
+            response.headers.setdefault(key, value)
         return response
 
     @app.exception_handler(RequestValidationError)

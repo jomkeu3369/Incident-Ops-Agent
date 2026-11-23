@@ -14,6 +14,7 @@ from a2a.server.tasks import InMemoryTaskStore
 from a2a.types import AgentCard, Message, Part, Role
 from a2a.utils.constants import AGENT_CARD_WELL_KNOWN_PATH, PROTOCOL_VERSION_CURRENT, VERSION_HEADER
 
+from common.app_factory import SECURITY_HEADERS
 from common.config import INTERNAL_TOKEN_HEADER
 
 
@@ -29,7 +30,7 @@ def mount_a2a_agent(app: FastAPI, *, agent_card: AgentCard, executor: AgentExecu
         expected = request.app.state.container.settings.internal_service_token.get_secret_value()
         provided = request.headers.get(INTERNAL_TOKEN_HEADER)
         if not expected or not provided or not hmac.compare_digest(expected, provided):
-            return JSONResponse(status_code=status.HTTP_401_UNAUTHORIZED, content={"status": 401, "error": "Unauthorized", "message": "유효하지 않은 내부 서비스 토큰입니다."})
+            return JSONResponse(status_code=status.HTTP_401_UNAUTHORIZED, content={"status": 401, "error": "Unauthorized", "message": "유효하지 않은 내부 서비스 토큰입니다."}, headers=SECURITY_HEADERS)
         return await call_next(request)
 
     handler = DefaultRequestHandler(agent_executor=executor, task_store=InMemoryTaskStore(), agent_card=agent_card)

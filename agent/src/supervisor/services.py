@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 from contextlib import suppress
 import json
+import time
 import uuid
 from typing import Any, AsyncIterator
 import httpx
@@ -44,6 +45,35 @@ def _extract_last_user_text(run_input: RunAgentInput) -> str:
             content = getattr(msg, "content", "")
             return content if isinstance(content, str) else json.dumps(content, ensure_ascii=False)
     return ""
+
+
+def _load_fresh_tool_cache(memory: dict[str, Any], ttl_seconds: float, now: float) -> tuple[dict[str, Any], float | None]:
+    """TTL이 유효한 스레드 Tool 캐시와 최초 적재 시각을 반환하고, 만료 시 빈 캐시를 돌려준다."""
+    if ttl_seconds <= 0:
+        return {}, None
+    raw_cache = memory.get("cachedToolResults")
+    cached_at = memory.get("cachedToolResultsAt")
+    if isinstance(raw_cache, dict) and raw_cache and isinstance(cached_at, (int, float)) and (now - float(cached_at)) <= ttl_seconds:
+        return dict(raw_cache), float(cached_at)
+    return {}, None
+
+
+def _isolate_incident_memory(memory: dict[str, Any], thread_id: str, incident_code: str) -> dict[str, Any]:
+    """스레드에 묶인 장애 코드가 다르면 이전 장애의 근거·스냅샷·Tool 캐시 상속을 차단한다."""
+    bound_incident = memory.get("incidentCode") or (memory.get("snapshot") or {}).get("incidentCode")
+    if bound_incident and bound_incident != incident_code:
+        return {
+            "threadId": thread_id,
+            "incidentCode": incident_code,
+            "messages": [],
+            "constraints": {},
+            "snapshot": None,
+            "replanHistory": [],
+            "pulledChunkIds": [],
+            "cachedToolResults": {},
+            "cachedToolResultsAt": None,
+        }
+    return memory
 
 
 class SupervisorService:
@@ -119,106 +149,113 @@ class SupervisorService:
         """AG-UI 표준 SSE 이벤트 스트림을 생성한다."""
         encoder = EventEncoder(accept=accept_header)
         tid, rid = run_input.thread_id, run_input.run_id
-        memory = await self._store.get_thread_memory(tid)
-
-        # 스레드에 저장된 장애 코드가 현재 요청과 다르면 이전 장애의 근거·스냅샷 상속을 차단한다
-        bound_incident = memory.get("incidentCode") or (memory.get("snapshot") or {}).get("incidentCode")
-        if bound_incident and bound_incident != props.incidentCode:
-            memory = {"threadId": tid, "incidentCode": props.incidentCode, "messages": [], "constraints": {}, "snapshot": None, "replanHistory": [], "pulledChunkIds": [], "cachedToolResults": {}}
 
         try:
             yield encoder.encode(RunStartedEvent(thread_id=tid, run_id=rid))
 
-            # 1) 새로고침 복원 흐름 (restore=True)
+            # 1) 새로고침 복원 흐름 (restore=True, 읽기 전용)
             if props.restore:
+                memory = _isolate_incident_memory(await self._store.get_thread_memory(tid), tid, props.incidentCode)
                 snap = memory.get("snapshot") or {"incidentCode": props.incidentCode, "workflowStatus": "IDLE", "plan": None, "approval": None, "replanHistory": memory.get("replanHistory") or []}
                 yield encoder.encode(StateSnapshotEvent(snapshot=snap))
                 yield encoder.encode(MessagesSnapshotEvent(messages=memory.get("messages") or []))
                 yield encoder.encode(RunFinishedEvent(thread_id=tid, run_id=rid))
                 return
 
-            # 2) 운영자 승인/반려 처리 흐름
-            if props.approvalDecision is not None and decided_approval is not None:
-                async for chunk in self._handle_approval_stream(encoder, tid, rid, props, operator_id, decided_approval, memory):
-                    yield chunk
-                return
+            async with self._store.thread_lock(tid):
+                memory = _isolate_incident_memory(await self._store.get_thread_memory(tid), tid, props.incidentCode)
 
-            # 3) 일반 계획 요청 / 대화 흐름 (LangGraph 5단계 실시간 스트리밍 실행)
-            user_text = _extract_last_user_text(run_input)
-            history_msgs = list(memory.get("messages") or [])
-            if user_text:
-                history_msgs.append({"id": f"msg-u-{uuid.uuid4().hex[:6]}", "role": "user", "content": user_text})
+                # 2) 운영자 승인/반려 처리 흐름
+                if props.approvalDecision is not None and decided_approval is not None:
+                    async for chunk in self._handle_approval_stream(encoder, tid, rid, props, operator_id, decided_approval, memory):
+                        yield chunk
+                    return
 
-            init_state = {
-                "session_id": tid,
-                "run_id": rid,
-                "incident_code": props.incidentCode,
-                "service_name": self._settings.default_service_name,
-                "user_message": user_text,
-                "incident_started_at": props.incidentStartedAt,
-                "constraints": dict(memory.get("constraints") or {}),
-                "evidence": list(memory.get("evidence") or []),
-                "pulled_chunk_ids": list(memory.get("pulledChunkIds") or []),
-                "remaining_chunk_ids": list(memory.get("remainingChunkIds") or []),
-                "runbook_summary": str(memory.get("runbookSummary") or ""),
-                "recommended_command": memory.get("recommendedCommand"),
-                "cached_tool_results": dict(memory.get("cachedToolResults") or {}),
-                "replan_count": 0,
-                "should_replan": False,
-                "replan_history": list(memory.get("replanHistory") or []),
-                "snapshot": memory.get("snapshot"),
-                "ui_events": [],
-            }
-            ui_queue: asyncio.Queue[dict[str, Any] | None] = asyncio.Queue()
-            live_graph = build_supervisor_graph(self._settings, self._http, self._backend, event_bus=self._bus, a2a_caller=self._a2a_caller, on_ui_event=ui_queue.put)
+                # 3) 일반 계획 요청 / 대화 흐름 (LangGraph 5단계 실시간 스트리밍 실행)
+                user_text = _extract_last_user_text(run_input)
+                history_msgs = list(memory.get("messages") or [])
+                if user_text:
+                    history_msgs.append({"id": f"msg-u-{uuid.uuid4().hex[:6]}", "role": "user", "content": user_text})
 
-            async def _run_graph() -> dict[str, Any]:
+                loaded_cache, loaded_cached_at = _load_fresh_tool_cache(memory, self._settings.tool_cache_ttl_seconds, time.time())
+                init_state = {
+                    "session_id": tid,
+                    "run_id": rid,
+                    "incident_code": props.incidentCode,
+                    "service_name": self._settings.default_service_name,
+                    "user_message": user_text,
+                    "incident_started_at": props.incidentStartedAt,
+                    "constraints": dict(memory.get("constraints") or {}),
+                    "evidence": list(memory.get("evidence") or []),
+                    "pulled_chunk_ids": list(memory.get("pulledChunkIds") or []),
+                    "remaining_chunk_ids": list(memory.get("remainingChunkIds") or []),
+                    "runbook_summary": str(memory.get("runbookSummary") or ""),
+                    "recommended_command": memory.get("recommendedCommand"),
+                    "cached_tool_results": loaded_cache,
+                    "replan_count": 0,
+                    "should_replan": False,
+                    "replan_history": list(memory.get("replanHistory") or []),
+                    "snapshot": memory.get("snapshot"),
+                    "ui_events": [],
+                }
+                ui_queue: asyncio.Queue[dict[str, Any] | None] = asyncio.Queue()
+                live_graph = build_supervisor_graph(self._settings, self._http, self._backend, event_bus=self._bus, a2a_caller=self._a2a_caller, on_ui_event=ui_queue.put)
+
+                async def _run_graph() -> dict[str, Any]:
+                    try:
+                        return await live_graph.ainvoke(init_state)
+                    finally:
+                        await ui_queue.put(None)
+
+                graph_task = asyncio.create_task(_run_graph())
                 try:
-                    return await live_graph.ainvoke(init_state)
+                    while (ev := await ui_queue.get()) is not None:
+                        for encoded in _encode_ui_event(encoder, ev):
+                            yield encoded
+                    final_state = await graph_task
                 finally:
-                    await ui_queue.put(None)
+                    # SSE 클라이언트가 중간에 연결을 끊으면 백그라운드 그래프 태스크를 즉시 정리한다
+                    if not graph_task.done():
+                        graph_task.cancel()
+                        with suppress(asyncio.CancelledError):
+                            await graph_task
 
-            graph_task = asyncio.create_task(_run_graph())
-            try:
-                while (ev := await ui_queue.get()) is not None:
-                    for encoded in _encode_ui_event(encoder, ev):
-                        yield encoded
-                final_state = await graph_task
-            finally:
-                # SSE 클라이언트가 중간에 연결을 끊으면 백그라운드 그래프 태스크를 즉시 정리한다
-                if not graph_task.done():
-                    graph_task.cancel()
-                    with suppress(asyncio.CancelledError):
-                        await graph_task
+                snapshot = final_state.get("snapshot") or {"incidentCode": props.incidentCode, "workflowStatus": "IDLE", "plan": None, "approval": None, "replanHistory": []}
+                yield encoder.encode(StateSnapshotEvent(snapshot=snapshot))
 
-            snapshot = final_state.get("snapshot") or {"incidentCode": props.incidentCode, "workflowStatus": "IDLE", "plan": None, "approval": None, "replanHistory": []}
-            yield encoder.encode(StateSnapshotEvent(snapshot=snapshot))
+                reply_text = str(final_state.get("reply_text") or "")
+                msg_id = f"msg-a-{uuid.uuid4().hex[:6]}"
+                yield encoder.encode(TextMessageStartEvent(message_id=msg_id, role="assistant"))
+                yield encoder.encode(TextMessageContentEvent(message_id=msg_id, delta=reply_text))
+                yield encoder.encode(TextMessageEndEvent(message_id=msg_id))
 
-            reply_text = str(final_state.get("reply_text") or "")
-            msg_id = f"msg-a-{uuid.uuid4().hex[:6]}"
-            yield encoder.encode(TextMessageStartEvent(message_id=msg_id, role="assistant"))
-            yield encoder.encode(TextMessageContentEvent(message_id=msg_id, delta=reply_text))
-            yield encoder.encode(TextMessageEndEvent(message_id=msg_id))
-
-            history_msgs.append({"id": msg_id, "role": "assistant", "content": reply_text})
-            await self._store.save_thread_memory(
-                tid,
-                {
-                    "threadId": tid,
-                    "incidentCode": props.incidentCode,
-                    "messages": history_msgs[-20:],
-                    "constraints": final_state.get("constraints") or {},
-                    "evidence": final_state.get("evidence") or [],
-                    "pulledChunkIds": final_state.get("pulled_chunk_ids") or [],
-                    "remainingChunkIds": final_state.get("remaining_chunk_ids") or [],
-                    "runbookSummary": final_state.get("runbook_summary") or "",
-                    "recommendedCommand": final_state.get("recommended_command"),
-                    "cachedToolResults": final_state.get("cached_tool_results") or {},
-                    "snapshot": snapshot,
-                    "replanHistory": final_state.get("replan_history") or [],
-                },
-            )
-            yield encoder.encode(RunFinishedEvent(thread_id=tid, run_id=rid))
+                history_msgs.append({"id": msg_id, "role": "assistant", "content": reply_text})
+                new_cache = final_state.get("cached_tool_results") or {}
+                if not new_cache:
+                    next_cached_at: float | None = None
+                elif new_cache == loaded_cache and loaded_cached_at is not None:
+                    next_cached_at = loaded_cached_at
+                else:
+                    next_cached_at = time.time()
+                await self._store.save_thread_memory(
+                    tid,
+                    {
+                        "threadId": tid,
+                        "incidentCode": props.incidentCode,
+                        "messages": history_msgs[-20:],
+                        "constraints": final_state.get("constraints") or {},
+                        "evidence": final_state.get("evidence") or [],
+                        "pulledChunkIds": final_state.get("pulled_chunk_ids") or [],
+                        "remainingChunkIds": final_state.get("remaining_chunk_ids") or [],
+                        "runbookSummary": final_state.get("runbook_summary") or "",
+                        "recommendedCommand": final_state.get("recommended_command"),
+                        "cachedToolResults": new_cache,
+                        "cachedToolResultsAt": next_cached_at,
+                        "snapshot": snapshot,
+                        "replanHistory": final_state.get("replan_history") or [],
+                    },
+                )
+                yield encoder.encode(RunFinishedEvent(thread_id=tid, run_id=rid))
         except Exception:
             yield encoder.encode(RunErrorEvent(message="에이전트 실행 중 오류가 발생했습니다.", code="AGENT_EXECUTION_ERROR"))
 
