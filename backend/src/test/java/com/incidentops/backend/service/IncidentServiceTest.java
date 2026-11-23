@@ -4,6 +4,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.argThat;
+import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -16,6 +17,7 @@ import com.incidentops.backend.domain.RemediationPlanStep;
 import com.incidentops.backend.dto.ApprovalCreateRequest;
 import com.incidentops.backend.dto.ApprovalDecisionRequest;
 import com.incidentops.backend.dto.CompleteIncidentRequest;
+import com.incidentops.backend.dto.IncidentCreateRequest;
 import com.incidentops.backend.dto.PlanCreateRequest;
 import com.incidentops.backend.exception.ConflictException;
 import com.incidentops.backend.mapper.CorpusMapper;
@@ -29,6 +31,7 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.dao.DuplicateKeyException;
 
 @ExtendWith(MockitoExtension.class)
 class IncidentServiceTest {
@@ -163,6 +166,43 @@ class IncidentServiceTest {
         assertThatThrownBy(() -> service.completeIncidentWithPostMortem(INCIDENT, completion("SUCCESS", "오류율 정상")))
                 .isInstanceOf(ConflictException.class);
         verify(remediation, never()).insertExecution(any());
+    }
+
+    @Test
+    void concurrentDuplicateIncidentInsertTranslatesToConflict() {
+        IncidentCreateRequest request = new IncidentCreateRequest(
+                INCIDENT, "결제 502", "payment-service", "sev1", "요약");
+        when(incidents.findByIncidentCode(INCIDENT)).thenReturn(null);
+        doThrow(new DuplicateKeyException("duplicate incident_code"))
+                .when(incidents).insert(any(Incident.class));
+
+        assertThatThrownBy(() -> service.createIncident(request))
+                .isInstanceOf(ConflictException.class)
+                .hasMessageContaining(INCIDENT);
+    }
+
+    @Test
+    void rejectedApprovalResetsWaitingApprovalIncidentBackToOpen() {
+        lockIncident("WAITING_APPROVAL");
+        when(remediation.findApprovalById(APPROVAL)).thenReturn(approval(INCIDENT, "PENDING"));
+        when(remediation.updateApprovalDecision(APPROVAL, "operator", "REJECTED")).thenReturn(1);
+        when(remediation.hasUnfinishedPlanApproval(INCIDENT)).thenReturn(false);
+
+        service.decideApproval(INCIDENT, APPROVAL, new ApprovalDecisionRequest("operator", "REJECTED"));
+
+        verify(incidents).updateStatus(INCIDENT, "OPEN");
+    }
+
+    @Test
+    void rejectedApprovalPreservesWaitingStatusWhenAnotherPlanApprovalRemains() {
+        lockIncident("WAITING_APPROVAL");
+        when(remediation.findApprovalById(APPROVAL)).thenReturn(approval(INCIDENT, "PENDING"));
+        when(remediation.updateApprovalDecision(APPROVAL, "operator", "REJECTED")).thenReturn(1);
+        when(remediation.hasUnfinishedPlanApproval(INCIDENT)).thenReturn(true);
+
+        service.decideApproval(INCIDENT, APPROVAL, new ApprovalDecisionRequest("operator", "REJECTED"));
+
+        verify(incidents, never()).updateStatus(any(), any());
     }
 
     private void stubApprovedIncident(String status) {

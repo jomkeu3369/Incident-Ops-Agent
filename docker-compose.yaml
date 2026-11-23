@@ -39,7 +39,7 @@ services:
       SPRING_MCP_SSE_URL: ${SPRING_MCP_SSE_URL:-http://backend:8080/sse}
       DR_DCI_MAX_CHUNK_CHARS: ${DR_DCI_MAX_CHUNK_CHARS:-4000}
       DR_DCI_MAX_PULL_STEPS: ${DR_DCI_MAX_PULL_STEPS:-5}
-      INTERNAL_SERVICE_TOKEN: ${INTERNAL_SERVICE_TOKEN}
+      INTERNAL_SERVICE_TOKEN: ${INTERNAL_SERVICE_TOKEN:?Set INTERNAL_SERVICE_TOKEN in .env}
     ports:
       - "${LOG_AGENT_PORT:-8001}:8001"
     depends_on:
@@ -62,7 +62,7 @@ services:
       SPRING_MCP_SSE_URL: ${SPRING_MCP_SSE_URL:-http://backend:8080/sse}
       DR_DCI_MAX_CHUNK_CHARS: ${DR_DCI_MAX_CHUNK_CHARS:-4000}
       DR_DCI_MAX_PULL_STEPS: ${DR_DCI_MAX_PULL_STEPS:-5}
-      INTERNAL_SERVICE_TOKEN: ${INTERNAL_SERVICE_TOKEN}
+      INTERNAL_SERVICE_TOKEN: ${INTERNAL_SERVICE_TOKEN:?Set INTERNAL_SERVICE_TOKEN in .env}
       DEFAULT_SERVICE_NAME: ${DEFAULT_SERVICE_NAME:-payment-service}
       EXTERNAL_SERVICE_MAP_JSON: ${EXTERNAL_SERVICE_MAP_JSON:-}
       GITHUB_TOKEN: ${GITHUB_TOKEN:-}
@@ -97,12 +97,18 @@ services:
       LOG_AGENT_A2A_URL: ${LOG_AGENT_A2A_URL:-http://log-analyzer-agent:8001}
       REMEDIATION_AGENT_A2A_URL: ${REMEDIATION_AGENT_A2A_URL:-http://remediation-agent:8002}
       SPRING_MCP_SSE_URL: ${SPRING_MCP_SSE_URL:-http://backend:8080/sse}
-      INTERNAL_SERVICE_TOKEN: ${INTERNAL_SERVICE_TOKEN}
+      INTERNAL_SERVICE_TOKEN: ${INTERNAL_SERVICE_TOKEN:?Set INTERNAL_SERVICE_TOKEN in .env}
+      DEFAULT_SERVICE_NAME: ${DEFAULT_SERVICE_NAME:-payment-service}
+      CORS_ALLOWED_ORIGINS: '${CORS_ALLOWED_ORIGINS:-["http://localhost","http://localhost:3000"]}'
     ports:
       - "${SUPERVISOR_PORT:-8000}:8000"
     depends_on:
-      - log-analyzer-agent
-      - remediation-agent
+      backend:
+        condition: service_healthy
+      log-analyzer-agent:
+        condition: service_started
+      remediation-agent:
+        condition: service_started
     networks:
       - incident-ops-net
 

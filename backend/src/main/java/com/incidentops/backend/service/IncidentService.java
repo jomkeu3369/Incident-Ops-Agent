@@ -67,11 +67,15 @@ public class IncidentService {
                 .incidentCode(request.incidentCode())
                 .title(request.title())
                 .serviceName(request.serviceName())
-                .severity(request.severity().toUpperCase())
+                .severity(request.severity().toUpperCase(Locale.ROOT))
                 .status("OPEN")
                 .summary(request.summary())
                 .build();
-        incidentMapper.insert(incident);
+        try {
+            incidentMapper.insert(incident);
+        } catch (DuplicateKeyException ex) {
+            throw new ConflictException("이미 존재하는 장애 코드입니다: " + request.incidentCode());
+        }
         return incidentMapper.findByIncidentCode(request.incidentCode());
     }
 
@@ -151,6 +155,11 @@ public class IncidentService {
         }
         if (remediationMapper.updateApprovalDecision(approval.getApprovalId(), request.approvedBy(), decision) == 0) {
             throw new ConflictException("이미 처리된 승인 요청입니다.");
+        }
+        if ("REJECTED".equals(decision)
+                && "WAITING_APPROVAL".equals(incident.getStatus())
+                && !remediationMapper.hasUnfinishedPlanApproval(incident.getIncidentCode())) {
+            incidentMapper.updateStatus(incident.getIncidentCode(), "OPEN");
         }
         return remediationMapper.findApprovalById(approvalId);
     }
