@@ -216,6 +216,51 @@ async def test_github_list_rollback_candidates_parallel_status_and_error_propaga
     assert err_res["ok"] is False and err_res["error"]["code"] == "RATE_LIMITED"
 
 
+async def test_github_list_rollback_candidates_cancels_siblings_on_network_error():
+    """네트워크 오류 발생 시 실행 중이거나 세마포어 대기 중인 형제 요청을 즉시 취소·정리하는지 검증한다."""
+    import asyncio
+
+    in_flight = 0
+    started_ids: list[int] = []
+    cancelled_count = 0
+
+    async def slow_or_fail_handler(req: httpx.Request) -> httpx.Response:
+        nonlocal in_flight, cancelled_count
+        if req.url.path.endswith("/deployments"):
+            return httpx.Response(200, json=[
+                {"id": 200 + i, "sha": f"sha-v{10 - i}", "ref": f"v{10 - i}"}
+                for i in range(10)
+            ])
+        dep_id = int(req.url.path.split("/")[-2])
+        started_ids.append(dep_id)
+        if dep_id == 200:
+            await asyncio.sleep(0.01)
+            raise httpx.ConnectError("network down", request=req)
+        in_flight += 1
+        try:
+            await asyncio.sleep(5)
+            return httpx.Response(200, json=[])
+        except asyncio.CancelledError:
+            cancelled_count += 1
+            raise
+        finally:
+            in_flight -= 1
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(slow_or_fail_handler)) as http:
+        res = await asyncio.wait_for(
+            ExternalToolsClient(_settings(), http).list_rollback_candidates("payment-service", "2026-11-18T14:00:00+09:00"),
+            timeout=1.0,
+        )
+
+    assert res["ok"] is False and res["error"]["code"] == "UPSTREAM_ERROR"
+    assert in_flight == 0
+    assert cancelled_count >= 1
+    started_snapshot = len(started_ids)
+    await asyncio.sleep(0.05)
+    assert len(started_ids) == started_snapshot
+    assert started_snapshot < 10
+
+
 async def test_grafana_metrics_rejects_nan_inf_and_negative_values():
     """Prometheus 응답이 NaN, Inf 또는 음수일 때 INSUFFICIENT_DATA를 반환하는지 검증한다."""
 

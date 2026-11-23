@@ -126,7 +126,15 @@ class ExternalToolsClient:
                         headers=headers,
                     )
 
-            status_resps = await asyncio.gather(*(_fetch_statuses(dep_id) for dep_id, _, _ in valid_deps))
+            tasks = [asyncio.create_task(_fetch_statuses(dep_id)) for dep_id, _, _ in valid_deps]
+            try:
+                status_resps = await asyncio.gather(*tasks)
+            except BaseException:
+                for task in tasks:
+                    if not task.done():
+                        task.cancel()
+                await asyncio.gather(*tasks, return_exceptions=True)
+                raise
             succeeded: list[dict[str, Any]] = []
             for (dep_id, sha, ref), st_resp in zip(valid_deps, status_resps):
                 failure = _map_http_failure(st_resp, "GitHub Deployment Statuses")
