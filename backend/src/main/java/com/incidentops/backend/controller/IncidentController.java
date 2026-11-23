@@ -13,7 +13,6 @@ import com.incidentops.backend.dto.IncidentDetailResponse;
 import com.incidentops.backend.dto.PlanCreateRequest;
 import com.incidentops.backend.service.IncidentService;
 import jakarta.validation.Valid;
-import java.net.URI;
 import java.util.List;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.HttpStatus;
@@ -48,7 +47,10 @@ public class IncidentController {
     public ResponseEntity<Incident> createIncident(@Valid @RequestBody IncidentCreateRequest request) {
         Incident created = incidentService.createIncident(request);
         return ResponseEntity
-                .created(URI.create("/api/incidents/" + created.getIncidentCode()))
+                .created(UriComponentsBuilder.fromPath("/api/incidents/{incidentCode}")
+                        .encode()
+                        .buildAndExpand(created.getIncidentCode())
+                        .toUri())
                 .body(created);
     }
 

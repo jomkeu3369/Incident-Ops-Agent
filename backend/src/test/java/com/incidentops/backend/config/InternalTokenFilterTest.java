@@ -17,7 +17,8 @@ class InternalTokenFilterTest {
     private static final String TEST_TOKEN = "configured-token";
 
     @ParameterizedTest
-    @ValueSource(strings = {"", " "})
+    @NullAndEmptySource
+    @ValueSource(strings = {" "})
     void rejectsApprovalWhenTokenIsNotConfigured(String configuredToken) throws Exception {
         assertApprovalRejected(configuredToken, null);
         assertApprovalRejected(configuredToken, configuredToken);
@@ -25,7 +26,7 @@ class InternalTokenFilterTest {
 
     @ParameterizedTest
     @NullAndEmptySource
-    @ValueSource(strings = {"wrong-token"})
+    @ValueSource(strings = {"wrong-token", "short", "configured-token-extra"})
     void rejectsApprovalWithoutMatchingHeader(String providedToken) throws Exception {
         assertApprovalRejected(TEST_TOKEN, providedToken);
     }
@@ -59,6 +60,8 @@ class InternalTokenFilterTest {
         new InternalTokenFilter(configuredToken).doFilter(approvalRequest(providedToken), response, chain);
 
         assertThat(response.getStatus()).isEqualTo(HttpServletResponse.SC_UNAUTHORIZED);
+        assertThat(response.getHeader("X-Content-Type-Options")).isEqualTo("nosniff");
+        assertThat(response.getHeader("Cache-Control")).isEqualTo("no-store");
         assertThat(chain.getRequest()).isNull();
     }
 
