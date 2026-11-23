@@ -445,6 +445,36 @@ class SupervisorRedisStore:
 
     # --- 3) 작업 계획 관리 CRUD (F3015~F3016, 동일 날짜 시간 겹침 경고) ---
 
+    async def _list_plans_for_mutation(self) -> list[ManagedPlanItem]:
+        """작업 계획 변경 전 기존 일정 전체를 조회하며, Redis 단절로 불완전한 경우 StoreUnavailableError를 발생시킨다."""
+        if await self._use_redis():
+            try:
+                ids = sorted(await self._redis.smembers(_PLAN_INDEX_KEY))
+                items: list[ManagedPlanItem] = []
+                for pid in ids:
+                    raw = await self._redis.get(f"{_PLAN_PREFIX}{pid}")
+                    if raw:
+                        items.append(ManagedPlanItem.model_validate(json.loads(raw)))
+                return items
+            except Exception:
+                self._mark_redis_down()
+        if self._redis is not None and self._redis_ever_connected:
+            raise StoreUnavailableError("Redis 연결이 일시 중단되어 기존 작업 계획과의 시간 겹침 여부를 확인할 수 없습니다.")
+        return [ManagedPlanItem.model_validate(v) for _, v in sorted(self._mem_plans.items())]
+
+    async def _get_plan_for_mutation(self, plan_id: str) -> ManagedPlanItem | None:
+        """작업 계획 수정 전 대상 계획을 조회하며, Redis 단절로 확인 불가 시 StoreUnavailableError를 발생시킨다."""
+        if await self._use_redis():
+            try:
+                raw = await self._redis.get(f"{_PLAN_PREFIX}{plan_id}")
+                return ManagedPlanItem.model_validate(json.loads(raw)) if raw else None
+            except Exception:
+                self._mark_redis_down()
+        if self._redis is not None and self._redis_ever_connected:
+            raise StoreUnavailableError("Redis 연결이 일시 중단되어 기존 작업 계획을 확인하거나 수정할 수 없습니다.")
+        raw = self._mem_plans.get(plan_id)
+        return ManagedPlanItem.model_validate(raw) if raw else None
+
     async def list_plans(self) -> list[ManagedPlanItem]:
         """저장된 작업 계획 전체 목록을 조회한다."""
         if await self._use_redis():
@@ -475,7 +505,7 @@ class SupervisorRedisStore:
         """작업 계획을 저장하고, 같은 날짜에 시간이 겹치는 기존 계획이 있으면 경고와 함께 반환한다."""
         now = now_iso_utc()
         plan_id = body.planId or f"PLAN-{uuid.uuid4().hex[:8].upper()}"
-        existing = await self.list_plans()
+        existing = await self._list_plans_for_mutation()
         overlaps = [p for p in existing if p.planId != plan_id and p.planDate == body.planDate and body.startTime < p.endTime and p.startTime < body.endTime]
 
         item = ManagedPlanItem(planId=plan_id, incidentCode=body.incidentCode, title=body.title, serviceName=body.serviceName, planDate=body.planDate, startTime=body.startTime, endTime=body.endTime, actionCommand=body.actionCommand, evidenceChunkIds=body.evidenceChunkIds, notes=body.notes, createdAt=now, updatedAt=now)
@@ -502,7 +532,7 @@ class SupervisorRedisStore:
 
     async def update_plan(self, plan_id: str, body: ManagedPlanUpdate) -> ManagedPlanMutationResponse | None:
         """저장된 작업 계획의 핵심 값을 수정하고 시간 겹침 여부를 다시 확인한다."""
-        current = await self.get_plan(plan_id)
+        current = await self._get_plan_for_mutation(plan_id)
         if current is None:
             return None
         updated_data = current.model_dump()
@@ -514,7 +544,7 @@ class SupervisorRedisStore:
         item = ManagedPlanItem.model_validate(updated_data)
         item_dump = item.model_dump()
 
-        existing = await self.list_plans()
+        existing = await self._list_plans_for_mutation()
         overlaps = [p for p in existing if p.planId != plan_id and p.planDate == item.planDate and item.startTime < p.endTime and p.startTime < item.endTime]
         self._deleted_plans.discard(plan_id)
 

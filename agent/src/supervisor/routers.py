@@ -118,7 +118,10 @@ async def get_managed_plan(plan_id: str, store: SupervisorRedisStore = Depends(g
 @router.post("/plans", response_model=ManagedPlanMutationResponse, status_code=status.HTTP_201_CREATED)
 async def create_managed_plan(body: ManagedPlanCreate, store: SupervisorRedisStore = Depends(get_supervisor_store)) -> ManagedPlanMutationResponse:
     """작업 계획을 저장하며, 같은 날짜에 시간이 겹치는 계획이 있으면 경고와 함께 반환한다."""
-    return await store.create_plan(body)
+    try:
+        return await store.create_plan(body)
+    except StoreUnavailableError as exc:
+        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(exc))
 
 
 @router.patch("/plans/{plan_id}", response_model=ManagedPlanMutationResponse)
@@ -126,6 +129,8 @@ async def update_managed_plan(plan_id: str, body: ManagedPlanUpdate, store: Supe
     """저장된 작업 계획을 수정한다."""
     try:
         res = await store.update_plan(plan_id, body)
+    except StoreUnavailableError as exc:
+        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(exc))
     except ValueError as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc))
     if res is None:

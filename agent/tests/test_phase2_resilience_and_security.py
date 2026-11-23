@@ -428,6 +428,17 @@ async def test_redis_store_and_router_reject_uncertain_delete_with_503_without_q
             assert store._deleted_plans == set()
 
             await store.append_session_log("sess-offline", {"sessionId": "sess-offline", "timestamp": "2026-11-23T00:00:01Z"})
+            assert (await client.delete("/api/ag-ui/sessions/sess-offline", headers=headers)).status_code == 204
+
+            redis.up = True
+            store._redis_retry_after = 0.0
+            assert (await client.get("/api/ag-ui/sessions/sess-persisted", headers=headers)).status_code == 200
+            assert (await client.get("/api/ag-ui/plans/PLAN-PERSISTED", headers=headers)).status_code == 200
+
+            # 아직 Redis에 연결되지 않은 초기 폴백 저장소에서 생성한 오프라인 계획은 204로 삭제할 수 있다.
+            cold_redis = _FullFakeRedis()
+            cold_redis.up = False
+            app.state.container.supervisor_store = SupervisorRedisStore(cold_redis, health_check_interval=0.0)
             res_plan_create = await client.post(
                 "/api/ag-ui/plans",
                 headers=headers,
@@ -441,13 +452,7 @@ async def test_redis_store_and_router_reject_uncertain_delete_with_503_without_q
                 },
             )
             assert res_plan_create.status_code == 201
-            assert (await client.delete("/api/ag-ui/sessions/sess-offline", headers=headers)).status_code == 204
             assert (await client.delete("/api/ag-ui/plans/PLAN-OFFLINE", headers=headers)).status_code == 204
-
-            redis.up = True
-            store._redis_retry_after = 0.0
-            assert (await client.get("/api/ag-ui/sessions/sess-persisted", headers=headers)).status_code == 200
-            assert (await client.get("/api/ag-ui/plans/PLAN-PERSISTED", headers=headers)).status_code == 200
 
             # 로컬 전용(redis=None) 저장소에서는 미존재 삭제 시 기존대로 404를 반환한다.
             app.state.container.supervisor_store = SupervisorRedisStore(None)
@@ -616,3 +621,72 @@ async def test_anomaly_endpoint_rejects_incomplete_fallback_logs_with_503() -> N
             )
             res_cold = await client.get("/api/ag-ui/sessions/sess-cold-outage/anomalies", headers=headers)
             assert res_cold.status_code == 503
+
+
+async def test_plan_mutations_reject_with_503_when_redis_outage_makes_overlap_check_incomplete() -> None:
+    """Redis 단절로 기존 작업 계획 전체를 조회할 수 없을 때 겹침 없음으로 오판하지 않고 503으로 차단하는지 검증한다."""
+    cfg = Settings(_env_file=None, internal_service_token=SecretStr("secret-token"))
+    redis = _FullFakeRedis()
+    store = SupervisorRedisStore(redis, health_check_interval=0.0)
+    headers = {"X-Internal-Token": "secret-token"}
+
+    app = create_supervisor_app(cfg)
+    async with app.router.lifespan_context(app):
+        app.state.container.supervisor_store = store
+        async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as client:
+            res_create = await client.post(
+                "/api/ag-ui/plans",
+                headers=headers,
+                json={
+                    "planId": "PLAN-1",
+                    "incidentCode": "INC-1",
+                    "title": "Primary Rollback",
+                    "planDate": "2026-11-23",
+                    "startTime": "14:00",
+                    "endTime": "14:30",
+                },
+            )
+            assert res_create.status_code == 201
+            assert store._mem_plans == {}
+
+            redis.up = False
+            res_overlap_outage = await client.post(
+                "/api/ag-ui/plans",
+                headers=headers,
+                json={
+                    "planId": "PLAN-2",
+                    "incidentCode": "INC-2",
+                    "title": "Overlapping Plan",
+                    "planDate": "2026-11-23",
+                    "startTime": "14:10",
+                    "endTime": "14:20",
+                },
+            )
+            assert res_overlap_outage.status_code == 503
+
+            res_patch_outage = await client.patch(
+                "/api/ag-ui/plans/PLAN-1",
+                headers=headers,
+                json={"title": "Updated Title"},
+            )
+            assert res_patch_outage.status_code == 503
+
+            redis.up = True
+            store._redis_retry_after = 0.0
+            res_recovered = await client.post(
+                "/api/ag-ui/plans",
+                headers=headers,
+                json={
+                    "planId": "PLAN-2",
+                    "incidentCode": "INC-2",
+                    "title": "Overlapping Plan",
+                    "planDate": "2026-11-23",
+                    "startTime": "14:10",
+                    "endTime": "14:20",
+                },
+            )
+            assert res_recovered.status_code == 201
+            body = res_recovered.json()
+            assert len(body["overlappingPlans"]) == 1
+            assert body["overlappingPlans"][0]["planId"] == "PLAN-1"
+            assert body["warning"] is not None
