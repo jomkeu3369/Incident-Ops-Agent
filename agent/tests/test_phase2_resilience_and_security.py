@@ -107,9 +107,9 @@ class _FullFakeRedis:
 
 
 async def test_redis_store_caches_ping_and_avoids_memory_leak_when_healthy() -> None:
-    """정상 Redis에서 PING을 매 호출마다 반복하지 않고 인메모리 폴백 맵을 누적하지 않는지 검증한다."""
+    """정상 Redis에서 PING 반복과 무제한 인메모리 누적을 막는지 검증한다."""
     redis = _FullFakeRedis()
-    store = SupervisorRedisStore(redis, health_check_interval=60.0)
+    store = SupervisorRedisStore(redis, health_check_interval=60.0, max_cached_threads=3)
 
     for idx in range(5):
         await store.save_thread_memory(f"t-{idx}", {"threadId": f"t-{idx}", "messages": [{"id": str(idx)}]})
@@ -127,7 +127,8 @@ async def test_redis_store_caches_ping_and_avoids_memory_leak_when_healthy() -> 
         )
 
     assert redis.ping_calls == 1
-    assert store._mem_threads == {}
+    assert len(store._mem_threads) == 3
+    assert list(store._mem_threads.keys()) == ["t-2", "t-3", "t-4"]
     assert store._mem_logs == {}
     assert store._mem_plans == {}
 
@@ -224,8 +225,8 @@ async def test_supervisor_thread_lock_serializes_concurrent_runs_without_lost_up
     assert store._thread_locks == {}
 
 
-async def test_supervisor_tool_cache_expires_after_ttl() -> None:
-    """cachedToolResults가 TTL 이내에는 재사용되고 TTL 만료 후에는 빈 캐시로 재조회되는지 검증한다."""
+async def test_supervisor_tool_cache_expires_per_entry_without_sliding_extension() -> None:
+    """새 Tool 캐시 키 추가가 기존 키의 TTL을 연장하지 않고 항목별로 만료되는지 검증한다."""
     settings = Settings(_env_file=None, internal_service_token=SecretStr("sec"), tool_cache_ttl_seconds=60.0)
     store = SupervisorRedisStore(None)
 
@@ -237,12 +238,21 @@ async def test_supervisor_tool_cache_expires_after_ttl() -> None:
 
     backend = BackendClient(settings, httpx.AsyncClient(transport=httpx.MockTransport(fake_rest)), mcp_caller=fake_mcp)
     seen_cached_inputs: list[dict[str, Any]] = []
+    call_idx = 0
 
     async def spy_a2a(url: str, payload: dict[str, Any], context_id: str) -> dict[str, Any]:
+        nonlocal call_idx
         if url == settings.log_agent_a2a_url:
             return {"ok": True, "incidentCode": "INC-1", "evidence": [], "evidenceChunkIds": [], "remainingChunkIds": [], "pulledCount": 0}
+        call_idx += 1
         seen_cached_inputs.append(dict(payload.get("cachedToolResults") or {}))
-        return {"ok": False, "status": "BLOCKED", "message": "done", "toolCalls": [], "cachedToolResults": {"fresh": True}}
+        if call_idx == 1:
+            return {"ok": False, "status": "BLOCKED", "message": "r1", "toolCalls": [], "cachedToolResults": {"freeze_a": True}}
+        if call_idx == 2:
+            merged = dict(payload.get("cachedToolResults") or {})
+            merged["freeze_b"] = True
+            return {"ok": False, "status": "BLOCKED", "message": "r2", "toolCalls": [], "cachedToolResults": merged}
+        return {"ok": False, "status": "BLOCKED", "message": "r3", "toolCalls": [], "cachedToolResults": dict(payload.get("cachedToolResults") or {})}
 
     svc = SupervisorService(settings, httpx.AsyncClient(), backend, store, a2a_caller=spy_a2a)
 
@@ -261,13 +271,83 @@ async def test_supervisor_tool_cache_expires_after_ttl() -> None:
             pass
 
     await run_once("r1")
-    await run_once("r2")
     mem = await store.get_thread_memory("t-ttl")
-    mem["cachedToolResultsAt"] = time.time() - 120.0
+    mem["cachedToolResultsTimestamps"]["freeze_a"] = time.time() - 40.0
     await store.save_thread_memory("t-ttl", mem)
+
+    await run_once("r2")
+    mem2 = await store.get_thread_memory("t-ttl")
+    assert mem2["cachedToolResultsTimestamps"]["freeze_a"] < mem2["cachedToolResultsTimestamps"]["freeze_b"]
+
+    mem2["cachedToolResultsTimestamps"]["freeze_a"] -= 30.0
+    await store.save_thread_memory("t-ttl", mem2)
     await run_once("r3")
 
-    assert seen_cached_inputs == [{}, {"fresh": True}, {}]
+    assert seen_cached_inputs == [{}, {"freeze_a": True}, {"freeze_b": True}]
+
+
+async def test_redis_store_preserves_thread_history_across_outage_and_eviction() -> None:
+    """단절 전 캐시된 스레드는 보존되고 LRU에서 제거된 스레드는 복구 시 기존 Redis 이력을 덮어쓰지 않는지 검증한다."""
+    redis = _FullFakeRedis()
+    store = SupervisorRedisStore(redis, health_check_interval=0.0, max_cached_threads=1)
+
+    await store.save_thread_memory("t-old", {"threadId": "t-old", "messages": [{"id": "orig-old"}]})
+    await store.save_thread_memory("t-hot", {"threadId": "t-hot", "messages": [{"id": "orig-hot"}]})
+
+    redis.up = False
+    hot_mem = await store.get_thread_memory("t-hot")
+    assert hot_mem["messages"] == [{"id": "orig-hot"}]
+    await store.save_thread_memory("t-hot", {"threadId": "t-hot", "messages": [{"id": "orig-hot"}, {"id": "offline-hot"}]})
+
+    evicted_mem = await store.get_thread_memory("t-old")
+    assert evicted_mem["messages"] == []
+    await store.save_thread_memory("t-old", {"threadId": "t-old", "messages": [{"id": "partial-old"}]})
+    await store.save_thread_memory("t-new", {"threadId": "t-new", "messages": [{"id": "offline-new"}]})
+
+    redis.up = True
+    store._redis_retry_after = 0.0
+    assert (await store.get_thread_memory("t-hot"))["messages"] == [{"id": "orig-hot"}, {"id": "offline-hot"}]
+    assert (await store.get_thread_memory("t-old"))["messages"] == [{"id": "orig-old"}]
+    assert (await store.get_thread_memory("t-new"))["messages"] == [{"id": "offline-new"}]
+
+
+async def test_redis_store_sadd_failure_retries_index_without_duplicating_events() -> None:
+    """append_session_log와 재반영 중 SADD만 실패해도 이벤트 중복 적재 없이 인덱스 등록만 재시도되는지 검증한다."""
+
+    class _FailSaddRedis(_FullFakeRedis):
+        def __init__(self) -> None:
+            super().__init__()
+            self.fail_sadd = False
+
+        async def sadd(self, k: str, v: str) -> None:
+            if self.fail_sadd:
+                raise ConnectionError("sadd error")
+            await super().sadd(k, v)
+
+    redis = _FailSaddRedis()
+    store = SupervisorRedisStore(redis, health_check_interval=0.0)
+
+    redis.fail_sadd = True
+    await store.append_session_log("sess-live", {"sessionId": "sess-live", "timestamp": "2026-11-23T00:00:01Z"})
+
+    redis.fail_sadd = False
+    redis.up = False
+    await store.append_session_log("sess-offline", {"sessionId": "sess-offline", "timestamp": "2026-11-23T00:00:02Z"})
+
+    redis.up = True
+    redis.fail_sadd = True
+    store._redis_retry_after = 0.0
+    # 첫 복구 시도: sess-offline 이벤트 RPUSH 후 SADD 단계에서 실패한다.
+    _ = await store.get_session_logs("sess-live")
+    assert len(redis.lists["exec_log:sess-live"]) == 1
+    assert len(redis.lists["exec_log:sess-offline"]) == 1
+
+    redis.fail_sadd = False
+    store._redis_retry_after = 0.0
+    sessions = {s.sessionId for s in await store.list_sessions()}
+    assert {"sess-live", "sess-offline"} <= sessions
+    assert len(await store.get_session_logs("sess-live")) == 1
+    assert len(await store.get_session_logs("sess-offline")) == 1
 
 
 def test_a2a_401_responses_include_security_headers() -> None:

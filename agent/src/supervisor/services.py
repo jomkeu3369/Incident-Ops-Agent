@@ -47,15 +47,24 @@ def _extract_last_user_text(run_input: RunAgentInput) -> str:
     return ""
 
 
-def _load_fresh_tool_cache(memory: dict[str, Any], ttl_seconds: float, now: float) -> tuple[dict[str, Any], float | None]:
-    """TTL이 유효한 스레드 Tool 캐시와 최초 적재 시각을 반환하고, 만료 시 빈 캐시를 돌려준다."""
+def _load_fresh_tool_cache(memory: dict[str, Any], ttl_seconds: float, now: float) -> tuple[dict[str, Any], dict[str, float]]:
+    """TTL이 유효한 스레드 Tool 캐시 항목과 항목별 적재 시각을 반환하고, 만료된 항목은 제거한다."""
     if ttl_seconds <= 0:
-        return {}, None
+        return {}, {}
     raw_cache = memory.get("cachedToolResults")
-    cached_at = memory.get("cachedToolResultsAt")
-    if isinstance(raw_cache, dict) and raw_cache and isinstance(cached_at, (int, float)) and (now - float(cached_at)) <= ttl_seconds:
-        return dict(raw_cache), float(cached_at)
-    return {}, None
+    if not isinstance(raw_cache, dict) or not raw_cache:
+        return {}, {}
+    raw_timestamps = memory.get("cachedToolResultsTimestamps")
+    timestamps = raw_timestamps if isinstance(raw_timestamps, dict) else {}
+    legacy_cached_at = memory.get("cachedToolResultsAt")
+    fresh_cache: dict[str, Any] = {}
+    fresh_timestamps: dict[str, float] = {}
+    for key, val in raw_cache.items():
+        ts = timestamps.get(key, legacy_cached_at)
+        if isinstance(ts, (int, float)) and (now - float(ts)) <= ttl_seconds:
+            fresh_cache[key] = val
+            fresh_timestamps[key] = float(ts)
+    return fresh_cache, fresh_timestamps
 
 
 def _isolate_incident_memory(memory: dict[str, Any], thread_id: str, incident_code: str) -> dict[str, Any]:
@@ -71,7 +80,7 @@ def _isolate_incident_memory(memory: dict[str, Any], thread_id: str, incident_co
             "replanHistory": [],
             "pulledChunkIds": [],
             "cachedToolResults": {},
-            "cachedToolResultsAt": None,
+            "cachedToolResultsTimestamps": {},
         }
     return memory
 
@@ -177,7 +186,9 @@ class SupervisorService:
                 if user_text:
                     history_msgs.append({"id": f"msg-u-{uuid.uuid4().hex[:6]}", "role": "user", "content": user_text})
 
-                loaded_cache, loaded_cached_at = _load_fresh_tool_cache(memory, self._settings.tool_cache_ttl_seconds, time.time())
+                loaded_cache, loaded_timestamps = _load_fresh_tool_cache(
+                    memory, self._settings.tool_cache_ttl_seconds, time.time()
+                )
                 init_state = {
                     "session_id": tid,
                     "run_id": rid,
@@ -231,12 +242,15 @@ class SupervisorService:
 
                 history_msgs.append({"id": msg_id, "role": "assistant", "content": reply_text})
                 new_cache = final_state.get("cached_tool_results") or {}
-                if not new_cache:
-                    next_cached_at: float | None = None
-                elif new_cache == loaded_cache and loaded_cached_at is not None:
-                    next_cached_at = loaded_cached_at
-                else:
-                    next_cached_at = time.time()
+                now_ts = time.time()
+                next_timestamps = {
+                    key: (
+                        loaded_timestamps[key]
+                        if key in loaded_cache and loaded_cache[key] == val and key in loaded_timestamps
+                        else now_ts
+                    )
+                    for key, val in new_cache.items()
+                }
                 await self._store.save_thread_memory(
                     tid,
                     {
@@ -250,7 +264,7 @@ class SupervisorService:
                         "runbookSummary": final_state.get("runbook_summary") or "",
                         "recommendedCommand": final_state.get("recommended_command"),
                         "cachedToolResults": new_cache,
-                        "cachedToolResultsAt": next_cached_at,
+                        "cachedToolResultsTimestamps": next_timestamps,
                         "snapshot": snapshot,
                         "replanHistory": final_state.get("replan_history") or [],
                     },

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+from collections import OrderedDict
 from contextlib import asynccontextmanager
 import json
 import time
@@ -27,7 +28,7 @@ def _empty_thread_memory(thread_id: str) -> dict[str, Any]:
         "replanHistory": [],
         "pulledChunkIds": [],
         "cachedToolResults": {},
-        "cachedToolResultsAt": None,
+        "cachedToolResultsTimestamps": {},
     }
 
 
@@ -49,19 +50,28 @@ def _parse_log_timestamp(raw: Any) -> str | None:
 class SupervisorRedisStore:
     """기존 Redis에 대화 메모리·실행 로그·작업 계획을 키 프리픽스로 분리 저장하는 CRUD 계층."""
 
-    def __init__(self, redis_client: Any = None, *, health_check_interval: float = 5.0) -> None:
+    def __init__(
+        self,
+        redis_client: Any = None,
+        *,
+        health_check_interval: float = 5.0,
+        max_cached_threads: int = 128,
+    ) -> None:
         self._redis = redis_client
         self._health_check_interval = health_check_interval
+        self._max_cached_threads = max(0, max_cached_threads)
         self._redis_healthy_until = 0.0
         self._redis_retry_after = 0.0
         self._reconcile_lock = asyncio.Lock()
         self._thread_locks: dict[str, list[Any]] = {}
         # 로컬 테스트나 Redis 일시 단절 시 사용하는 프로세스 메모리 폴백 저장소 및 복구 재반영 큐
-        self._mem_threads: dict[str, dict[str, Any]] = {}
+        self._mem_threads: OrderedDict[str, dict[str, Any]] = OrderedDict()
         self._mem_logs: dict[str, list[dict[str, Any]]] = {}
         self._mem_plans: dict[str, dict[str, Any]] = {}
         self._dirty_threads: set[str] = set()
+        self._unverified_fallback_threads: set[str] = set()
         self._pending_log_events: dict[str, list[dict[str, Any]]] = {}
+        self._pending_log_indices: set[str] = set()
         self._deleted_logs: set[str] = set()
         self._dirty_plans: set[str] = set()
         self._deleted_plans: set[str] = set()
@@ -83,6 +93,23 @@ class SupervisorRedisStore:
             if entry[1] <= 0 and not lock.locked():
                 self._thread_locks.pop(thread_id, None)
 
+    def _cache_thread(self, thread_id: str, data: dict[str, Any]) -> None:
+        """정상·복구 구간의 스레드 메모리를 Bounded LRU 캐시에 유지해 일시 단절 시 유실을 막는다."""
+        if self._max_cached_threads <= 0 and thread_id not in self._dirty_threads:
+            self._mem_threads.pop(thread_id, None)
+            return
+        self._mem_threads[thread_id] = dict(data)
+        self._mem_threads.move_to_end(thread_id)
+        if len(self._mem_threads) <= self._max_cached_threads:
+            return
+        # 아직 Redis에 반영되지 않은 dirty 스레드는 제외하고 가장 오래된 clean 항목부터 제거한다.
+        for candidate in list(self._mem_threads):
+            if len(self._mem_threads) <= self._max_cached_threads:
+                break
+            if candidate == thread_id or candidate in self._dirty_threads:
+                continue
+            self._mem_threads.pop(candidate, None)
+
     def _mark_redis_down(self) -> None:
         self._redis_healthy_until = 0.0
         self._redis_retry_after = time.monotonic() + 30.0
@@ -92,6 +119,7 @@ class SupervisorRedisStore:
             self._dirty_threads
             or self._deleted_logs
             or self._pending_log_events
+            or self._pending_log_indices
             or self._deleted_plans
             or self._dirty_plans
         )
@@ -103,9 +131,19 @@ class SupervisorRedisStore:
         async with self._reconcile_lock:
             for tid in list(self._dirty_threads):
                 if tid in self._mem_threads:
+                    if tid in self._unverified_fallback_threads:
+                        existing_raw = await self._redis.get(f"{_MEM_PREFIX}{tid}")
+                        if existing_raw:
+                            # 단절 전 기존 Redis 이력을 덮어쓰지 않고 Redis 상태를 기준으로 캐시를 재동기화한다.
+                            self._dirty_threads.discard(tid)
+                            self._unverified_fallback_threads.discard(tid)
+                            self._cache_thread(tid, json.loads(existing_raw))
+                            continue
                     await self._redis.set(f"{_MEM_PREFIX}{tid}", json.dumps(self._mem_threads[tid], ensure_ascii=False))
                 self._dirty_threads.discard(tid)
-                self._mem_threads.pop(tid, None)
+                self._unverified_fallback_threads.discard(tid)
+                if tid in self._mem_threads:
+                    self._cache_thread(tid, self._mem_threads[tid])
 
             for sid in list(self._deleted_logs):
                 await self._redis.delete(f"{_LOG_PREFIX}{sid}")
@@ -118,17 +156,16 @@ class SupervisorRedisStore:
                     self._pending_log_events.pop(sid, None)
                     self._mem_logs.pop(sid, None)
                     continue
-                pushed = False
-                try:
-                    while events:
-                        await self._redis.rpush(f"{_LOG_PREFIX}{sid}", json.dumps(events[0], ensure_ascii=False))
-                        pushed = True
-                        events.pop(0)
-                finally:
-                    if pushed:
-                        await self._redis.sadd(_LOG_INDEX_KEY, sid)
+                while events:
+                    await self._redis.rpush(f"{_LOG_PREFIX}{sid}", json.dumps(events[0], ensure_ascii=False))
+                    events.pop(0)
+                    self._pending_log_indices.add(sid)
                 self._pending_log_events.pop(sid, None)
                 self._mem_logs.pop(sid, None)
+
+            for sid in list(self._pending_log_indices):
+                await self._redis.sadd(_LOG_INDEX_KEY, sid)
+                self._pending_log_indices.discard(sid)
 
             for pid in list(self._deleted_plans):
                 await self._redis.delete(f"{_PLAN_PREFIX}{pid}")
@@ -176,11 +213,17 @@ class SupervisorRedisStore:
             try:
                 raw = await self._redis.get(key)
                 if raw:
-                    return json.loads(raw)
+                    data = json.loads(raw)
+                    self._cache_thread(thread_id, data)
+                    return dict(data)
                 return _empty_thread_memory(thread_id)
             except Exception:
                 self._mark_redis_down()
-        return dict(self._mem_threads.get(thread_id) or _empty_thread_memory(thread_id))
+        cached = self._mem_threads.get(thread_id)
+        if cached is not None:
+            self._mem_threads.move_to_end(thread_id)
+            return dict(cached)
+        return _empty_thread_memory(thread_id)
 
     async def save_thread_memory(self, thread_id: str, data: dict[str, Any]) -> None:
         """스레드 대화 메모리를 저장한다."""
@@ -188,24 +231,32 @@ class SupervisorRedisStore:
             try:
                 await self._redis.set(f"{_MEM_PREFIX}{thread_id}", json.dumps(data, ensure_ascii=False))
                 self._dirty_threads.discard(thread_id)
-                self._mem_threads.pop(thread_id, None)
+                self._unverified_fallback_threads.discard(thread_id)
+                self._cache_thread(thread_id, data)
                 return
             except Exception:
                 self._mark_redis_down()
-        self._mem_threads[thread_id] = data
+        if self._redis is not None and thread_id not in self._mem_threads:
+            self._unverified_fallback_threads.add(thread_id)
         self._dirty_threads.add(thread_id)
+        self._cache_thread(thread_id, data)
 
     # --- 2) 세션 실행 로그 CRUD (exec_log:{session_id}, TTL 없음, 수정 불가) ---
 
     async def append_session_log(self, session_id: str, event: dict[str, Any]) -> None:
         """세션 실행 로그 끝에 이벤트를 추가한다 (수정 불가, 추가 전용)."""
         if await self._use_redis():
+            pushed = False
             try:
                 await self._redis.rpush(f"{_LOG_PREFIX}{session_id}", json.dumps(event, ensure_ascii=False))
+                pushed = True
                 await self._redis.sadd(_LOG_INDEX_KEY, session_id)
                 return
             except Exception:
                 self._mark_redis_down()
+                if pushed:
+                    self._pending_log_indices.add(session_id)
+                    return
         self._mem_logs.setdefault(session_id, []).append(event)
         self._pending_log_events.setdefault(session_id, []).append(event)
 
@@ -288,9 +339,14 @@ class SupervisorRedisStore:
 
     async def delete_session_logs(self, session_id: str) -> bool:
         """특정 세션의 실행 로그를 삭제한다."""
-        existed = session_id in self._mem_logs or session_id in self._pending_log_events
+        existed = (
+            session_id in self._mem_logs
+            or session_id in self._pending_log_events
+            or session_id in self._pending_log_indices
+        )
         self._mem_logs.pop(session_id, None)
         self._pending_log_events.pop(session_id, None)
+        self._pending_log_indices.discard(session_id)
         if await self._use_redis():
             try:
                 removed = await self._redis.delete(f"{_LOG_PREFIX}{session_id}")
