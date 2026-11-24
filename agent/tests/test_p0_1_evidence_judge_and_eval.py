@@ -265,6 +265,21 @@ async def test_rule_based_judge_fail_closed_behavior():
     )
     assert comma_boundary.verdict == "NEED_MORE_EVIDENCE"
 
+    # Codex 3차 P2 회귀 테스트: '외부 PG사 장애 없음', 'no external PG outage' 등 부정·배제 문맥을 충돌로 오판하지 않아야 한다
+    negated_ko = await judge.judge_plan_evidence(
+        proposed_action="Rollback payment-service to v41",
+        runbook="배포 후 502 급증 및 이전 버전 정상 시 롤백한다.",
+        evidence="[LOG-1] v42 배포 직후 HikariPool timeout 및 502 급증\n[LOG-2] 외부 PG사 장애 없음, 비가역 스키마 마이그레이션 없음\n[External] 기준 배포 v42 502 비율=18.0%, 후보 v41 502 비율=0.3%",
+    )
+    assert negated_ko.verdict == "SUPPORTED"
+
+    negated_en = await judge.judge_plan_evidence(
+        proposed_action="Rollback payment-service to v41",
+        runbook="Rollback when 502 spikes after deploy and previous version is healthy.",
+        evidence="[LOG-1] After deploy of v42, HTTP 502 spike and HikariPool timeout observed\n[LOG-2] Confirmed no external PG outage; irreversible migration ruled out\n[External] reference v42 502 rate=18.0%, candidate v41 502 rate=0.3%",
+    )
+    assert negated_en.verdict == "SUPPORTED"
+
 
 def test_bundled_golden_dataset_integrity_and_balance():
     """내장 30건 다중 장애 평가 데이터셋의 스키마·라벨 균형·다중 서비스·인젝션 포함 여부를 검증한다."""

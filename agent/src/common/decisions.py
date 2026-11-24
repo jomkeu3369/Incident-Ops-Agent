@@ -47,7 +47,7 @@ _CONTRADICTION_PATTERNS: tuple[tuple[str, re.Pattern[str]], ...] = (
     (
         "비가역 DB 마이그레이션 또는 롤백 금지 조건과 충돌",
         re.compile(
-            r"(롤백\s*(금지|불가|차단)|do\s+not\s+rollback|rollback\s+(forbidden|unsafe|blocked)|irreversible\s+(schema|db)?\s*migration|drop\s+column|비가역\s*(스키마|마이그레이션)|하위\s*호환\s*불가|backward[- ]incompatible)",
+            r"(롤백\s*(금지|불가|차단)|do\s+not\s+rollback|rollback\s+(forbidden|unsafe|blocked)|irreversible\s+(schema|db)?\s*migration|drop\s+column|비가역\s*(?:스키마\s*마이그레이션|스키마\s*변경|스키마|마이그레이션)|하위\s*호환\s*불가|backward[- ]incompatible)",
             re.IGNORECASE,
         ),
     ),
@@ -468,6 +468,32 @@ class StructuredOutputJudge:
         )
 
 
+_PRE_NEGATION_PATTERN = re.compile(
+    r"(?:\b(?:no|not|without|zero|never|ruled\s+out|excluding)\s+|비\s*)$",
+    re.IGNORECASE,
+)
+
+_POST_NEGATION_PATTERN = re.compile(
+    r"^(?:\s+(?:마이그레이션|변경|이슈|현상|징후|원인|여부|기록|사례))?"
+    r"(?:\s*(?:은|는|이|가|도)?\s*(?:없음|없다|없으며|없었고|없어|아님|아니며|아니고|아니다|미발생|배제됨?|해당\s*없음|정상)|"
+    r"\s*(?:is\s+|was\s+)?(?:not\s+(?:detected|observed|present|found|applicable)|ruled\s+out|absent|none|n/a)\b)",
+    re.IGNORECASE,
+)
+
+
+def _has_unnegated_match(pattern: re.Pattern[str], text: str) -> bool:
+    """패턴이 매칭되더라도 직전·직후 문맥이 부정·배제 표현('없음', 'no ...', 'ruled out' 등)이면 제외한다."""
+    for match in pattern.finditer(text):
+        prefix_raw = text[max(0, match.start() - 28) : match.start()]
+        prefix_clause = re.split(r"[\n.,;:()\[\]]", prefix_raw)[-1]
+        suffix_raw = text[match.end() : min(len(text), match.end() + 28)]
+        suffix_clause = re.split(r"[\n.,;:()\[\]]", suffix_raw)[0]
+        if _PRE_NEGATION_PATTERN.search(prefix_clause) or _POST_NEGATION_PATTERN.search(suffix_clause):
+            continue
+        return True
+    return False
+
+
 class RuleBasedJudge:
     """결정적 도메인 규칙 기반 오프라인 기준선(Baseline) 근거 판정기."""
 
@@ -497,9 +523,9 @@ class RuleBasedJudge:
         else:
             return self._result("NEED_MORE_EVIDENCE", 0.75, "규칙 기반 판정기는 롤백 외 조치의 런북 충족 여부를 자동 검증할 수 없습니다.", t0)
 
-        # 1순위(안전 최우선): 롤백 조건과 충돌하는 근거 확인
+        # 1순위(안전 최우선): 롤백 조건과 충돌하는 근거 확인(단, '외부 PG사 장애 없음' 등 부정·배제 문맥 제외)
         for reason, pattern in _CONTRADICTION_PATTERNS:
-            if pattern.search(ev):
+            if _has_unnegated_match(pattern, ev):
                 return self._result("CONTRADICTED", 0.85, reason, t0)
 
         cand_rate = _extract_first_rate(_CANDIDATE_RATE_PATTERN, ev)
