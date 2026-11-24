@@ -117,12 +117,12 @@ _HEALTHY_CANDIDATE_PATTERN = re.compile(
 )
 
 _CANDIDATE_RATE_PATTERN = re.compile(
-    r"(?:후보|candidate)[^\n%]{0,40}?(?:502|오류|error)\s*(?:비율|율|rate)\s*[=:]\s*([0-9]+(?:\.[0-9]+)?)\s*%",
+    r"(?:후보|candidate)[^\n%,]{0,128}?(?:502|오류|error)\s*(?:비율|율|rate)\s*[=:]\s*([0-9]+(?:\.[0-9]+)?)\s*%",
     re.IGNORECASE,
 )
 
 _REFERENCE_RATE_PATTERN = re.compile(
-    r"(?:기준\s*배포|현재\s*버전|reference|current)[^\n%]{0,40}?(?:502|오류|error)\s*(?:비율|율|rate)\s*[=:]\s*([0-9]+(?:\.[0-9]+)?)\s*%",
+    r"(?:기준\s*배포|현재\s*버전|reference|current)[^\n%,]{0,128}?(?:502|오류|error)\s*(?:비율|율|rate)\s*[=:]\s*([0-9]+(?:\.[0-9]+)?)\s*%",
     re.IGNORECASE,
 )
 

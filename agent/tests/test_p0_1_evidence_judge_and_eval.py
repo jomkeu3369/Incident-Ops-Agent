@@ -240,6 +240,31 @@ async def test_rule_based_judge_fail_closed_behavior():
     )
     assert no_actual_fault.verdict == "NEED_MORE_EVIDENCE"
 
+    # Codex 2차 P2 회귀 테스트: 40자 전체 커밋 SHA가 포함된 [External] 지표 라인 파싱 및 콤마 경계 비침범 검증
+    ref_sha = "a" * 40
+    cand_sha = "b" * 40
+    full_sha_supported = await judge.judge_plan_evidence(
+        proposed_action=f"Rollback payment-service to {cand_sha}",
+        runbook="배포 후 502 급증 및 이전 버전 정상 시 롤백한다.",
+        evidence=f"[LOG-1] v42 배포 직후 HikariPool timeout 및 502 급증\n[External] 기준 배포 {ref_sha} 502 비율=18.0%, 후보 {cand_sha} 502 비율=0.3%",
+    )
+    assert full_sha_supported.verdict == "SUPPORTED"
+
+    full_sha_unhealthy_cand = await judge.judge_plan_evidence(
+        proposed_action=f"Rollback payment-service to {cand_sha}",
+        runbook="배포 후 502 급증 및 이전 버전 정상 시 롤백한다.",
+        evidence=f"[LOG-1] v42 배포 직후 HikariPool timeout 및 502 급증\n[External] 기준 배포 {ref_sha} 502 비율=18.0%, 후보 {cand_sha} 502 비율=9.2%",
+    )
+    assert full_sha_unhealthy_cand.verdict == "CONTRADICTED"
+
+    # 콤마 앞 기준 배포가 '미확인'일 때 뒤쪽 후보 수치를 기준 비율로 오파싱하지 않아야 한다
+    comma_boundary = await judge.judge_plan_evidence(
+        proposed_action=f"Rollback payment-service to {cand_sha}",
+        runbook="배포 후 502 급증 및 이전 버전 정상 시 롤백한다.",
+        evidence=f"[LOG-1] v42 배포 직후 HikariPool timeout 및 502 급증\n[External] 기준 배포 {ref_sha} 502 비율=미확인, 후보 {cand_sha} 502 비율=0.3%",
+    )
+    assert comma_boundary.verdict == "NEED_MORE_EVIDENCE"
+
 
 def test_bundled_golden_dataset_integrity_and_balance():
     """내장 30건 다중 장애 평가 데이터셋의 스키마·라벨 균형·다중 서비스·인젝션 포함 여부를 검증한다."""
