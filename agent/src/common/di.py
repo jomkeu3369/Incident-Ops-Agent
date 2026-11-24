@@ -7,7 +7,7 @@ from fastapi import Depends, Request
 
 from common.backend_client import BackendClient
 from common.config import Settings
-from common.decisions import DecisionsClient
+from common.decisions import EvidenceJudge, build_evidence_judge
 from common.event_log import EventBus, LoggingSubAgent
 from common.tools import ExternalToolsClient
 
@@ -21,7 +21,7 @@ class AppContainer:
     redis_client: Any = None
     backend_client: BackendClient | None = None
     external_tools: ExternalToolsClient | None = None
-    decisions_client: DecisionsClient | None = None
+    decisions_client: EvidenceJudge | None = None
     event_bus: EventBus | None = None
     logging_sub_agent: LoggingSubAgent | None = None
     supervisor_store: Any = None
@@ -53,7 +53,7 @@ def build_container(settings: Settings | None = None, *, enable_redis: bool = Fa
         redis_client=redis_client,
         backend_client=BackendClient(cfg, http_client),
         external_tools=ExternalToolsClient(cfg, http_client),
-        decisions_client=DecisionsClient(cfg),
+        decisions_client=build_evidence_judge(cfg),
     )
 
 
@@ -87,6 +87,6 @@ def get_external_tools(container: AppContainer = Depends(get_container)) -> Exte
     return container.external_tools or ExternalToolsClient(container.settings, container.http_client)
 
 
-def get_decisions_client(container: AppContainer = Depends(get_container)) -> DecisionsClient:
-    """OpenAI Decisions API 클라이언트를 반환한다."""
-    return container.decisions_client or DecisionsClient(container.settings)
+def get_decisions_client(container: AppContainer = Depends(get_container)) -> EvidenceJudge:
+    """설정된 근거 판정기(EvidenceJudge) 구현체를 반환한다."""
+    return container.decisions_client or build_evidence_judge(container.settings)

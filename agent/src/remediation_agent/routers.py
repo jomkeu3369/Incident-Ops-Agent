@@ -8,7 +8,7 @@ from a2a.utils.errors import UnsupportedOperationError
 from pydantic import ValidationError
 
 from common.a2a_utils import make_agent_json_message
-from common.decisions import DecisionsClient
+from common.decisions import EvidenceJudge, build_evidence_judge
 from common.di import get_decisions_client, get_external_tools
 from common.security import verify_internal_token
 from common.tools import ExternalToolsClient
@@ -30,7 +30,7 @@ async def internal_ping() -> dict[str, str]:
 
 
 @router.post("/plan", response_model=RemediationPlanResponse)
-async def create_plan_draft(body: RemediationPlanRequest, tools: ExternalToolsClient = Depends(get_external_tools), decisions: DecisionsClient = Depends(get_decisions_client)) -> RemediationPlanResponse:
+async def create_plan_draft(body: RemediationPlanRequest, tools: ExternalToolsClient = Depends(get_external_tools), decisions: EvidenceJudge = Depends(get_decisions_client)) -> RemediationPlanResponse:
     """복구 계획 수립을 직접 호출하는 내부 DI 엔드포인트."""
     return await build_remediation_plan(tools, decisions, body)
 
@@ -60,7 +60,7 @@ class RemediationAgentExecutor(AgentExecutor):
         action = data.get("action", "plan") if isinstance(data, dict) else "plan"
         container = self._app.state.container
         tools = container.external_tools or ExternalToolsClient(container.settings, container.http_client)
-        decisions = container.decisions_client or DecisionsClient(container.settings)
+        decisions = container.decisions_client or build_evidence_judge(container.settings)
 
         try:
             if action == "execute":

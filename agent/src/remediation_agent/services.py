@@ -4,7 +4,7 @@ import time
 import uuid
 from typing import Any
 
-from common.decisions import DecisionsClient
+from common.decisions import EvidenceJudge
 from common.planner_math import find_work_window, select_rollback_candidate
 from common.tools import ExternalToolsClient
 from remediation_agent.schemas import (
@@ -32,7 +32,7 @@ async def _call_or_reuse(cache: dict[str, Any], cache_key: str, tool_name: str, 
     return res
 
 
-async def build_remediation_plan(tools: ExternalToolsClient, decisions: DecisionsClient, req: RemediationPlanRequest) -> RemediationPlanResponse:
+async def build_remediation_plan(tools: ExternalToolsClient, decisions: EvidenceJudge, req: RemediationPlanRequest) -> RemediationPlanResponse:
     """외부 API Tool 3종 조회 -> 제약 계산·재계획 -> Decisions 근거 판정까지 수행한다."""
     cache = dict(req.cachedToolResults)
     tool_calls: list[dict[str, Any]] = []
