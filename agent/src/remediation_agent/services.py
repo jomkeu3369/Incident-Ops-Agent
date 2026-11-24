@@ -112,6 +112,10 @@ async def build_remediation_plan(tools: ExternalToolsClient, decisions: Evidence
     target_ref = eval_res.selected.get("ref") or eval_res.selected["gitSha"]
     action_cmd = req.recommendedCommand or f"kubectl rollout undo deployment/{req.serviceName}"
     ref_rate = ref_metrics_res["data"]["http502RatePercent"] if ref_metrics_res.get("ok") else "미확인"
+    ref_total = ref_metrics_res["data"].get("totalRequests") if ref_metrics_res.get("ok") else None
+    cand_total = eval_res.selected.get("totalRequests")
+    ref_total_suffix = f" (totalRequests={int(round(ref_total))})" if isinstance(ref_total, (int, float)) else ""
+    cand_total_suffix = f" (totalRequests={int(round(cand_total))})" if isinstance(cand_total, (int, float)) else ""
     runbook_parts = [req.runbookSummary.strip()] if req.runbookSummary and req.runbookSummary.strip() else []
     evidence_lines: list[str] = []
     for e in req.evidence:
@@ -120,7 +124,10 @@ async def build_remediation_plan(tools: ExternalToolsClient, decisions: Evidence
                 runbook_parts.append(e.summary.strip())
         else:
             evidence_lines.append(f"[{e.chunkId}] {e.summary}")
-    evidence_lines.append(f"[External] 기준 배포 {reference_dep.get('ref', reference_dep['gitSha'])} 502 비율={ref_rate}%, 후보 {target_ref} 502 비율={eval_res.selected['http502RatePercent']}%")
+    evidence_lines.append(
+        f"[External] 기준 배포 {reference_dep.get('ref', reference_dep['gitSha'])} 502 비율={ref_rate}%{ref_total_suffix}, "
+        f"후보 {target_ref} 502 비율={eval_res.selected['http502RatePercent']}%{cand_total_suffix}"
+    )
     verdict = await decisions.judge_plan_evidence(
         proposed_action=f"Rollback {req.serviceName} to {target_ref} ({action_cmd}) during {win_dec.selected_window.start.isoformat()}~{win_dec.selected_window.end.isoformat()}",
         runbook="\n".join(runbook_parts) or _DEFAULT_RUNBOOK,

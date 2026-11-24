@@ -548,6 +548,74 @@ async def test_rule_based_judge_fail_closed_behavior():
     assert sufficient_sample.verdict == "SUPPORTED"
 
 
+async def test_build_remediation_plan_forwards_total_requests_to_rule_based_judge():
+    """build_remediation_plan이 get_release_metrics의 totalRequests를 판정 근거에 포함해 최소 표본 조건을 검증하는지 확인한다."""
+    import httpx
+    from common.tools import ExternalToolsClient
+    from remediation_agent.schemas import RemediationPlanRequest
+    from remediation_agent.services import build_remediation_plan
+
+    cal_id = "freeze@group.calendar.google.com"
+    cfg = _settings(
+        github_token=SecretStr("ghp_test"),
+        github_repo="acme/payment-service",
+        github_environment="production",
+        grafana_prometheus_url="https://prometheus.example.com",
+        grafana_instance_id="12345",
+        grafana_metrics_token=SecretStr("glc_test"),
+        google_calendar_id=cal_id,
+        google_calendar_token=SecretStr("ya29_test"),
+    )
+
+    def make_transport(total_requests: str) -> httpx.MockTransport:
+        def handler(req: httpx.Request) -> httpx.Response:
+            url = str(req.url)
+            if "/deployments/" in url and url.endswith("/statuses?per_page=30"):
+                dep_id = req.url.path.split("/")[-2]
+                created = "2026-11-18T14:00:00+09:00" if dep_id == "42" else "2026-11-18T12:00:00+09:00"
+                return httpx.Response(200, json=[{"state": "success", "created_at": created}])
+            if req.url.path.endswith("/deployments"):
+                return httpx.Response(200, json=[{"id": 42, "sha": "sha-v42", "ref": "v42"}, {"id": 41, "sha": "sha-v41", "ref": "v41"}])
+            if req.url.path.endswith("/api/v1/query"):
+                q = req.url.params["query"]
+                if 'status="502"' in q:
+                    val = str(round(float(total_requests) * (0.2 if 'git_sha="sha-v42"' in q else 0.0), 2))
+                else:
+                    val = total_requests
+                return httpx.Response(200, json={"status": "success", "data": {"result": [{"value": [1, val]}]}})
+            if req.url.path.endswith("/freeBusy"):
+                return httpx.Response(200, json={"calendars": {cal_id: {"busy": []}}})
+            return httpx.Response(404)
+
+        return httpx.MockTransport(handler)
+
+    plan_req = RemediationPlanRequest.model_validate(
+        {
+            "incidentCode": "INC-2026-099",
+            "serviceName": "payment-service",
+            "incidentStartedAt": "2026-11-18T14:04:00+09:00",
+            "metricsFrom": "2026-11-18T14:05:00+09:00",
+            "metricsTo": "2026-11-18T14:10:00+09:00",
+            "allowedWindowStart": "2026-11-18T14:28:00+09:00",
+            "allowedWindowEnd": "2026-11-18T14:50:00+09:00",
+            "durationMinutes": 5,
+            "max502RatePercent": 1.0,
+            "evidence": [
+                {"chunkId": "LOG-104", "summary": "v42 배포 직후 HikariPool timeout 및 502 급증", "corpusType": "LOG"},
+                {"chunkId": "RUNBOOK-01", "summary": "충분한 요청 표본(최소 100건 이상)과 배포 후 502 급증 확인 시 롤백을 제안한다.", "corpusType": "RUNBOOK"},
+            ],
+        }
+    )
+
+    async with httpx.AsyncClient(transport=make_transport("250")) as http_ok:
+        res_ok = await build_remediation_plan(ExternalToolsClient(cfg, http_ok), RuleBasedJudge(), plan_req)
+    assert res_ok.status == "READY_FOR_APPROVAL" and res_ok.verdict == "SUPPORTED"
+
+    async with httpx.AsyncClient(transport=make_transport("5")) as http_low:
+        res_low = await build_remediation_plan(ExternalToolsClient(cfg, http_low), RuleBasedJudge(), plan_req)
+    assert res_low.status == "NEED_MORE_EVIDENCE" and res_low.verdict == "NEED_MORE_EVIDENCE"
+
+
 def test_bundled_golden_dataset_integrity_and_balance():
     """내장 30건 다중 장애 평가 데이터셋의 스키마·라벨 균형·다중 서비스·인젝션 포함 여부를 검증한다."""
     dataset = load_eval_dataset()

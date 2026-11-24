@@ -154,9 +154,9 @@ _RUNBOOK_MIN_SAMPLE_PATTERN = re.compile(
 )
 
 _OBSERVED_SAMPLE_COUNT_PATTERN = re.compile(
-    r"(?:totalRequests\s*[=:]\s*([0-9][0-9,]*)|"
+    r"(?:totalRequests\s*[=:]\s*([0-9][0-9,]*(?:\.[0-9]+)?)|"
     r"(?:총\s*)?(?:요청(?:\s*수)?|표본(?:\s*수)?)\s*(?:[=:]\s*)?([0-9][0-9,]*)\s*건|"
-    r"(?:sample\s*size|requests?)\s*[=:]\s*([0-9][0-9,]*))",
+    r"(?:sample\s*size|requests?)\s*[=:]\s*([0-9][0-9,]*(?:\.[0-9]+)?))",
     re.IGNORECASE,
 )
 
@@ -788,15 +788,17 @@ class RuleBasedJudge:
 
 
 def _parse_positive_int(raw: str) -> int | None:
-    """쉼표 포함 정수 문자열을 양의 int로 변환한다."""
+    """쉼표·소수 포함 표본 수 문자열을 비음수 int로 변환한다."""
     cleaned = raw.replace(",", "").strip()
     if not cleaned:
         return None
     try:
-        val = int(cleaned)
+        fval = float(cleaned)
     except ValueError:
         return None
-    return val if val >= 0 else None
+    if not math.isfinite(fval) or fval < 0:
+        return None
+    return int(fval)
 
 
 def _extract_min_sample_requirement(runbook: str) -> int | None:
