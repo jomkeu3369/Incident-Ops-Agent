@@ -615,6 +615,11 @@ async def test_build_remediation_plan_forwards_total_requests_to_rule_based_judg
         res_low = await build_remediation_plan(ExternalToolsClient(cfg, http_low), RuleBasedJudge(), plan_req)
     assert res_low.status == "NEED_MORE_EVIDENCE" and res_low.verdict == "NEED_MORE_EVIDENCE"
 
+    # Codex 16차 P2 회귀 테스트: 99.6처럼 임계치(100) 직전의 소수 표본이 반올림으로 100이 되어 통과해선 안 된다
+    async with httpx.AsyncClient(transport=make_transport("99.6")) as http_frac:
+        res_frac = await build_remediation_plan(ExternalToolsClient(cfg, http_frac), RuleBasedJudge(), plan_req)
+    assert res_frac.status == "NEED_MORE_EVIDENCE" and res_frac.verdict == "NEED_MORE_EVIDENCE"
+
 
 def test_bundled_golden_dataset_integrity_and_balance():
     """내장 30건 다중 장애 평가 데이터셋의 스키마·라벨 균형·다중 서비스·인젝션 포함 여부를 검증한다."""

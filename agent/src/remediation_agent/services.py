@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import math
 import time
 import uuid
 from typing import Any
@@ -114,8 +115,8 @@ async def build_remediation_plan(tools: ExternalToolsClient, decisions: Evidence
     ref_rate = ref_metrics_res["data"]["http502RatePercent"] if ref_metrics_res.get("ok") else "미확인"
     ref_total = ref_metrics_res["data"].get("totalRequests") if ref_metrics_res.get("ok") else None
     cand_total = eval_res.selected.get("totalRequests")
-    ref_total_suffix = f" (totalRequests={int(round(ref_total))})" if isinstance(ref_total, (int, float)) else ""
-    cand_total_suffix = f" (totalRequests={int(round(cand_total))})" if isinstance(cand_total, (int, float)) else ""
+    ref_total_suffix = f" (totalRequests={ref_total:g})" if isinstance(ref_total, (int, float)) and not isinstance(ref_total, bool) and math.isfinite(ref_total) else ""
+    cand_total_suffix = f" (totalRequests={cand_total:g})" if isinstance(cand_total, (int, float)) and not isinstance(cand_total, bool) and math.isfinite(cand_total) else ""
     runbook_parts = [req.runbookSummary.strip()] if req.runbookSummary and req.runbookSummary.strip() else []
     evidence_lines: list[str] = []
     for e in req.evidence:
