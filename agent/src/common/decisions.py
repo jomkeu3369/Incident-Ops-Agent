@@ -112,7 +112,12 @@ _RUNBOOK_CONDITIONAL_MARKER = re.compile(
 )
 
 _HEALTHY_CANDIDATE_PATTERN = re.compile(
-    r"(이전\s*버전\s*(정상|안정)|previous\s+version\s+(healthy|normal|stable)|후보\s*버전\s*(정상|안정)|candidate\s+healthy|회귀\s*확인|regression\s+confirmed)",
+    r"(이전\s*버전(?:이|은)?\s*(?:정상|안정)|previous\s+version\s+(?:is\s+)?(?:healthy|normal|stable)|후보\s*버전(?:이|은)?\s*(?:정상|안정)|candidate\s+(?:is\s+)?healthy)",
+    re.IGNORECASE,
+)
+
+_RUNBOOK_THRESHOLD_PATTERN = re.compile(
+    r"(?:(?:502|오류|error)\s*(?:비율|율|rate)\s*(?:이|가)?\s*(?:<\s*|(?:below|under)\s+)?)([0-9]+(?:\.[0-9]+)?)\s*%\s*(?:미만|이하)|(?:below|under|<)\s*([0-9]+(?:\.[0-9]+)?)\s*%",
     re.IGNORECASE,
 )
 
@@ -165,6 +170,7 @@ class EvidenceJudge(Protocol):
         proposed_action: str,
         runbook: str,
         evidence: str,
+        max_error_rate_percent: float | None = None,
     ) -> DecisionResult: ...
 
 
@@ -207,7 +213,14 @@ class DecisionsApiJudge:
         self._settings = settings
         self._client = openai_client
 
-    async def judge_plan_evidence(self, *, proposed_action: str, runbook: str, evidence: str) -> DecisionResult:
+    async def judge_plan_evidence(
+        self,
+        *,
+        proposed_action: str,
+        runbook: str,
+        evidence: str,
+        max_error_rate_percent: float | None = None,
+    ) -> DecisionResult:
         """수집된 근거가 런북 조건상 제안 조치를 뒷받침하는지 Decisions API로 판정한다."""
         model = self._settings.decisions_model
         api_key = _usable_api_key(self._settings)
@@ -327,7 +340,14 @@ class StructuredOutputJudge:
     def model(self) -> str:
         return self._model_override or self._settings.evidence_judge_model.strip() or self._settings.openai_model
 
-    async def judge_plan_evidence(self, *, proposed_action: str, runbook: str, evidence: str) -> DecisionResult:
+    async def judge_plan_evidence(
+        self,
+        *,
+        proposed_action: str,
+        runbook: str,
+        evidence: str,
+        max_error_rate_percent: float | None = None,
+    ) -> DecisionResult:
         """표준 OpenAI Structured Outputs로 근거 판정을 수행한다."""
         model = self.model
         api_key = _usable_api_key(self._settings)
@@ -505,7 +525,14 @@ class RuleBasedJudge:
     def __init__(self, *, max_healthy_candidate_rate_percent: float = 1.0) -> None:
         self._max_healthy_candidate_rate = max_healthy_candidate_rate_percent
 
-    async def judge_plan_evidence(self, *, proposed_action: str, runbook: str, evidence: str) -> DecisionResult:
+    async def judge_plan_evidence(
+        self,
+        *,
+        proposed_action: str,
+        runbook: str,
+        evidence: str,
+        max_error_rate_percent: float | None = None,
+    ) -> DecisionResult:
         """런북 정책 및 명시적 충돌·누락·충족 규칙을 fail-closed 우선순위로 적용해 판정한다."""
         t0 = time.perf_counter()
         action = (proposed_action or "").strip()
@@ -514,6 +541,8 @@ class RuleBasedJudge:
 
         if not ev or not rb:
             return self._result("NEED_MORE_EVIDENCE", 0.85, "런북 또는 수집 근거가 비어 있어 추가 확인이 필요합니다.", t0)
+
+        threshold = self._resolve_threshold(rb, max_error_rate_percent)
 
         # 0순위(런북 정책 우선): 제안 조치(롤백)가 런북에서 무조건 금지되었거나 허용 근거가 없으면 fail-closed 차단
         is_rollback_action = bool(_ROLLBACK_ACTION_PATTERN.search(action))
@@ -536,15 +565,15 @@ class RuleBasedJudge:
         cand_rate = _extract_candidate_rate(ev, action)
         ref_rate = _extract_reference_rate(ev)
 
-        if cand_rate is not None and cand_rate >= self._max_healthy_candidate_rate:
+        if cand_rate is not None and cand_rate >= threshold:
             return self._result(
                 "CONTRADICTED",
                 0.9,
-                f"롤백 후보 버전 오류율({cand_rate}%)이 허용 기준({self._max_healthy_candidate_rate}%) 이상입니다.",
+                f"롤백 후보 버전 오류율({cand_rate}%)이 허용 기준({threshold}%) 이상입니다.",
                 t0,
             )
 
-        if cand_rate is not None and ref_rate is not None and ref_rate < self._max_healthy_candidate_rate and cand_rate >= ref_rate:
+        if cand_rate is not None and ref_rate is not None and ref_rate < threshold and cand_rate >= ref_rate:
             return self._result(
                 "CONTRADICTED",
                 0.8,
@@ -567,9 +596,9 @@ class RuleBasedJudge:
         )
         has_post_deploy = bool(_POST_DEPLOY_FAULT_PATTERN.search(non_external_ev))
         has_fault_symptom = bool(_FAULT_SYMPTOM_PATTERN.search(non_external_ev))
-        ref_is_abnormal = ref_rate is None or ref_rate >= self._max_healthy_candidate_rate
+        ref_is_abnormal = ref_rate is None or ref_rate >= threshold
         has_healthy_candidate = (
-            (cand_rate is not None and cand_rate < self._max_healthy_candidate_rate)
+            (cand_rate is not None and cand_rate < threshold)
             or bool(_HEALTHY_CANDIDATE_PATTERN.search(non_external_ev))
         )
 
@@ -587,6 +616,18 @@ class RuleBasedJudge:
             "배포 인과관계, 실제 장애 징후, 또는 이전 버전 정상 여부에 대한 정량 근거가 충분하지 않습니다.",
             t0,
         )
+
+    def _resolve_threshold(self, runbook: str, max_error_rate_percent: float | None) -> float:
+        """요청 임계치 -> 런북 명시 임계치 -> 기본 임계치 순으로 후보 허용 오류율을 결정한다."""
+        if max_error_rate_percent is not None and math.isfinite(max_error_rate_percent) and max_error_rate_percent > 0.0:
+            return float(max_error_rate_percent)
+        match = _RUNBOOK_THRESHOLD_PATTERN.search(runbook)
+        if match:
+            raw = match.group(1) or match.group(2)
+            parsed = _parse_finite_rate(raw) if raw else None
+            if parsed is not None and parsed > 0.0:
+                return parsed
+        return self._max_healthy_candidate_rate
 
     def _result(self, verdict: Verdict, confidence: float, reason: str, t0: float) -> DecisionResult:
         elapsed_ms = round((time.perf_counter() - t0) * 1000.0, 3)
@@ -689,12 +730,20 @@ class FallbackEvidenceJudge:
         self._primary = primary
         self._fallback = fallback
 
-    async def judge_plan_evidence(self, *, proposed_action: str, runbook: str, evidence: str) -> DecisionResult:
+    async def judge_plan_evidence(
+        self,
+        *,
+        proposed_action: str,
+        runbook: str,
+        evidence: str,
+        max_error_rate_percent: float | None = None,
+    ) -> DecisionResult:
         """1차 판정기가 UNDECIDABLE을 반환할 때만 2차 판정기로 재시도한다(실제 판정값은 덮어쓰지 않음)."""
         primary_result = await self._primary.judge_plan_evidence(
             proposed_action=proposed_action,
             runbook=runbook,
             evidence=evidence,
+            max_error_rate_percent=max_error_rate_percent,
         )
         if primary_result.verdict != "UNDECIDABLE":
             return primary_result
@@ -702,6 +751,7 @@ class FallbackEvidenceJudge:
             proposed_action=proposed_action,
             runbook=runbook,
             evidence=evidence,
+            max_error_rate_percent=max_error_rate_percent,
         )
 
 

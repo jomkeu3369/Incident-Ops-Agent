@@ -146,7 +146,14 @@ async def test_fallback_evidence_judge_only_falls_back_on_undecidable_and_stays_
             self._name = name
             self._verdict = verdict
 
-        async def judge_plan_evidence(self, *, proposed_action: str, runbook: str, evidence: str) -> DecisionResult:
+        async def judge_plan_evidence(
+            self,
+            *,
+            proposed_action: str,
+            runbook: str,
+            evidence: str,
+            max_error_rate_percent: float | None = None,
+        ) -> DecisionResult:
             calls.append(self._name)
             return DecisionResult(verdict=self._verdict, confidence=0.9 if self._verdict != "UNDECIDABLE" else None, probabilities={}, provider=self._name, model=self._name)
 
@@ -303,6 +310,23 @@ async def test_rule_based_judge_fail_closed_behavior():
         evidence="[LOG-1] v42 배포 직후 HikariPool timeout 및 502 급증\n[LOG-2] 후보 v40 502 비율=0.2%",
     )
     assert mismatched_cand_only.verdict == "NEED_MORE_EVIDENCE"
+
+    # Codex 5차 P2 회귀 테스트 1: 요청 max_error_rate_percent(5.0%)가 전달되면 2.0% 후보도 SUPPORTED 허용
+    relaxed_threshold = await judge.judge_plan_evidence(
+        proposed_action="Rollback payment-service to v41",
+        runbook="배포 후 502 급증 및 후보 502 비율 5.0% 미만일 때 롤백한다.",
+        evidence="[LOG-1] v42 배포 직후 HikariPool timeout 및 502 급증\n[External] 기준 배포 v42 502 비율=18.0%, 후보 v41 502 비율=2.0%",
+        max_error_rate_percent=5.0,
+    )
+    assert relaxed_threshold.verdict == "SUPPORTED"
+
+    # Codex 5차 P2 회귀 테스트 2: 후보 버전 정상 근거 없이 '회귀 확인' 문구만 있으면 SUPPORTED 불가
+    regression_without_candidate_health = await judge.judge_plan_evidence(
+        proposed_action="Rollback payment-service to v41",
+        runbook="배포 후 502 급증 및 이전 버전 정상 시 롤백한다.",
+        evidence="[LOG-1] v42 배포 후 502 급증, 회귀 확인\n[External] 기준 배포 v42 502 비율=18.0%",
+    )
+    assert regression_without_candidate_health.verdict == "NEED_MORE_EVIDENCE"
 
 
 def test_bundled_golden_dataset_integrity_and_balance():

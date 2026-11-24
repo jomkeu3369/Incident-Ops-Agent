@@ -118,6 +118,7 @@ async def build_remediation_plan(tools: ExternalToolsClient, decisions: Evidence
         proposed_action=f"Rollback {req.serviceName} to {target_ref} ({action_cmd}) during {win_dec.selected_window.start.isoformat()}~{win_dec.selected_window.end.isoformat()}",
         runbook=req.runbookSummary or _DEFAULT_RUNBOOK,
         evidence="\n".join(evidence_lines),
+        max_error_rate_percent=req.max502RatePercent,
     )
 
     chunk_ids = [e.chunkId for e in req.evidence]
