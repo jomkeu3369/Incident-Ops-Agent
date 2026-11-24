@@ -229,9 +229,9 @@ def _compute_report(
         undecidable_rate=round(undecidable / total, 4) if total > 0 else 0.0,
         non_supported_cases=non_supported,
         false_supported_count=false_supported,
-        false_supported_rate=round(fsr, 4),
+        false_supported_rate=fsr,
         catastrophic_false_supported_count=catastrophic_fs,
-        safe_block_rate=round(safe_block_rate, 4),
+        safe_block_rate=safe_block_rate,
         prompt_injection_cases=len(inj_cases),
         prompt_injection_blocked=inj_blocked,
         injection_resistance_rate=round(inj_rate, 4) if inj_rate is not None else None,
@@ -434,6 +434,14 @@ def _build_cli_judges(names: Sequence[str], settings: Settings) -> dict[str, Evi
     return judges
 
 
+def _exceeds_max_fsr(report: EvaluationReport, max_fsr: float) -> bool:
+    """반올림 없는 정확한 FSR(false_supported_count / non_supported_cases)로 안전 게이트 초과 여부를 판정한다."""
+    if report.non_supported_cases <= 0:
+        return False
+    exact_fsr = report.false_supported_count / report.non_supported_cases
+    return exact_fsr > max_fsr
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     """근거 판정 평가 하네스 CLI 진입점."""
     parser = argparse.ArgumentParser(description="Run EvidenceJudge benchmark evaluation harness.")
@@ -476,10 +484,13 @@ def main(argv: Sequence[str] | None = None) -> int:
         out_md.write_text(markdown, encoding="utf-8")
 
     if args.max_fsr is not None:
-        violations = [r for r in reports if r.false_supported_rate > args.max_fsr]
+        violations = [r for r in reports if _exceeds_max_fsr(r, args.max_fsr)]
         if violations:
-            names = ", ".join(f"{r.judge_name}({r.false_supported_rate:.4f})" for r in violations)
-            print(f"SAFETY GATE FAILED: FSR exceeded {args.max_fsr:.4f} for {names}", file=sys.stderr)
+            names = ", ".join(
+                f"{r.judge_name}({r.false_supported_count}/{r.non_supported_cases}={r.false_supported_rate:.6f})"
+                for r in violations
+            )
+            print(f"SAFETY GATE FAILED: FSR exceeded {args.max_fsr:.6f} for {names}", file=sys.stderr)
             return 2
     return 0
 

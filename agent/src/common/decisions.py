@@ -83,7 +83,31 @@ _POST_DEPLOY_FAULT_PATTERN = re.compile(
 )
 
 _FAULT_SYMPTOM_PATTERN = re.compile(
-    r"(502|503|500|timeout|타임아웃|oom|outofmemory|메모리\s*누수|memory\s*leak|hikari|커넥션\s*(풀|고갈|누수|대기)|connection\s*(pool|leak|timeout)|crashloop|오류\s*급증|error\s*(spike|rate)|지연\s*급증|latency\s*spike|deadlock|데드락)",
+    r"((?:http\s*)?(?:502|503|500)\s*(?:오류|에러|급증|폭증|증가|발생|응답|반환|타임아웃|timeout|spike|error|failure)|timeout|타임아웃|oom(?:killed)?|outofmemory|메모리\s*누수|memory\s*leak|hikari(?:pool)?[^\n]{0,30}(?:timeout|고갈|포화|대기|누수|not\s+available)|커넥션\s*(?:풀\s*(?:고갈|포화)|고갈|누수|타임아웃|대기\s*초과)|connection\s*(?:pool\s*(?:exhausted|saturated)|leak|timeout|is\s+not\s+available)|crashloop|오류\s*(?:급증|증가|발생)|버그로\s*(?:http\s*)?(?:500|502|503)|파싱\s*예외|error\s*spike|지연\s*급증|latency\s*spike|deadlock|데드락)",
+    re.IGNORECASE,
+)
+
+_EXTERNAL_LINE_PATTERN = re.compile(r"^\s*\[External\b", re.IGNORECASE)
+
+_ROLLBACK_ACTION_PATTERN = re.compile(r"(rollback|rollout\s+undo|롤백)", re.IGNORECASE)
+
+_RUNBOOK_UNCONDITIONAL_NON_ROLLBACK_PATTERN = re.compile(
+    r"(재기동만\s*허용|핫픽스만\s*허용|스케일아웃만\s*허용|restart\s+only|forward[- ]fix\s+only|no\s+rollback\s+allowed)",
+    re.IGNORECASE,
+)
+
+_RUNBOOK_PROHIBITION_PATTERN = re.compile(
+    r"(롤백\s*(?:을\s*|은\s*)?(?:금지|불가|차단)|롤백하지\s*않는다|do\s+not\s+rollback|never\s+rollback|rollback\s+(?:is\s+)?(?:forbidden|prohibited|blocked))",
+    re.IGNORECASE,
+)
+
+_RUNBOOK_ALLOW_ROLLBACK_PATTERN = re.compile(
+    r"(롤백(?:을\s*)?(?:제안|수행|진행|승인|실행)|롤백한다|시\s*롤백(?=\s*$|[.,\n])|rollback\s+(?:when|if|is\s+allowed|to\s+previous)|propose\s+(?:a\s+)?rollback|perform\s+(?:a\s+)?rollback)",
+    re.IGNORECASE,
+)
+
+_RUNBOOK_CONDITIONAL_MARKER = re.compile(
+    r"(경우|때(?:는|만)?|시(?:에는)?|하면|이라면|\bif\b|\bwhen\b|\bunless\b)",
     re.IGNORECASE,
 )
 
@@ -451,13 +475,27 @@ class RuleBasedJudge:
         self._max_healthy_candidate_rate = max_healthy_candidate_rate_percent
 
     async def judge_plan_evidence(self, *, proposed_action: str, runbook: str, evidence: str) -> DecisionResult:
-        """명시적 충돌·누락·충족 규칙을 fail-closed 우선순위로 적용해 판정한다."""
+        """런북 정책 및 명시적 충돌·누락·충족 규칙을 fail-closed 우선순위로 적용해 판정한다."""
         t0 = time.perf_counter()
+        action = (proposed_action or "").strip()
         ev = (evidence or "").strip()
         rb = (runbook or "").strip()
 
         if not ev or not rb:
             return self._result("NEED_MORE_EVIDENCE", 0.85, "런북 또는 수집 근거가 비어 있어 추가 확인이 필요합니다.", t0)
+
+        # 0순위(런북 정책 우선): 제안 조치(롤백)가 런북에서 무조건 금지되었거나 허용 근거가 없으면 fail-closed 차단
+        is_rollback_action = bool(_ROLLBACK_ACTION_PATTERN.search(action))
+        has_rb_allow = bool(_RUNBOOK_ALLOW_ROLLBACK_PATTERN.search(rb))
+        if is_rollback_action:
+            if _RUNBOOK_UNCONDITIONAL_NON_ROLLBACK_PATTERN.search(rb):
+                return self._result("CONTRADICTED", 0.9, "런북이 롤백 이외의 조치만 허용합니다.", t0)
+            has_rb_prohibition = bool(_RUNBOOK_PROHIBITION_PATTERN.search(rb))
+            is_conditional_rb = bool(_RUNBOOK_CONDITIONAL_MARKER.search(rb))
+            if has_rb_prohibition and not has_rb_allow and not is_conditional_rb:
+                return self._result("CONTRADICTED", 0.9, "런북이 롤백 조치를 금지하고 있어 제안과 충돌합니다.", t0)
+        else:
+            return self._result("NEED_MORE_EVIDENCE", 0.75, "규칙 기반 판정기는 롤백 외 조치의 런북 충족 여부를 자동 검증할 수 없습니다.", t0)
 
         # 1순위(안전 최우선): 롤백 조건과 충돌하는 근거 확인
         for reason, pattern in _CONTRADICTION_PATTERNS:
@@ -483,20 +521,28 @@ class RuleBasedJudge:
                 t0,
             )
 
+        # 런북에 롤백 허용 조항 자체가 없으면(예: 조건부 금지 문구만 존재하거나 롤백 외 절차만 명시) SUPPORTED 불가
+        if not has_rb_allow:
+            return self._result("NEED_MORE_EVIDENCE", 0.8, "런북에서 롤백 허용 조건을 확인할 수 없어 추가 확인이 필요합니다.", t0)
+
         # 2순위: 핵심 지표/로그 누락 또는 미확인 상태
         for reason, pattern in _MISSING_EVIDENCE_PATTERNS:
             if pattern.search(ev):
                 return self._result("NEED_MORE_EVIDENCE", 0.8, reason, t0)
 
-        # 3순위: 배포 후 장애 발현 + 정상 후보 검증이 모두 확인될 때만 SUPPORTED
-        has_post_deploy = bool(_POST_DEPLOY_FAULT_PATTERN.search(ev))
-        has_fault_symptom = bool(_FAULT_SYMPTOM_PATTERN.search(ev))
+        # 3순위: [External] 메트릭 라벨을 제외한 실제 로그에서 배포 후 장애 증상 + 기준 배포 악화 + 정상 후보 검증이 모두 확인될 때만 SUPPORTED
+        non_external_ev = "\n".join(
+            line for line in ev.splitlines() if not _EXTERNAL_LINE_PATTERN.match(line)
+        )
+        has_post_deploy = bool(_POST_DEPLOY_FAULT_PATTERN.search(non_external_ev))
+        has_fault_symptom = bool(_FAULT_SYMPTOM_PATTERN.search(non_external_ev))
+        ref_is_abnormal = ref_rate is None or ref_rate >= self._max_healthy_candidate_rate
         has_healthy_candidate = (
             (cand_rate is not None and cand_rate < self._max_healthy_candidate_rate)
-            or bool(_HEALTHY_CANDIDATE_PATTERN.search(ev))
+            or bool(_HEALTHY_CANDIDATE_PATTERN.search(non_external_ev))
         )
 
-        if has_post_deploy and has_fault_symptom and has_healthy_candidate:
+        if has_post_deploy and has_fault_symptom and ref_is_abnormal and has_healthy_candidate:
             return self._result(
                 "SUPPORTED",
                 0.8,
@@ -507,7 +553,7 @@ class RuleBasedJudge:
         return self._result(
             "NEED_MORE_EVIDENCE",
             0.7,
-            "배포 인과관계 또는 이전 버전 정상 여부에 대한 정량 근거가 충분하지 않습니다.",
+            "배포 인과관계, 실제 장애 징후, 또는 이전 버전 정상 여부에 대한 정량 근거가 충분하지 않습니다.",
             t0,
         )
 
