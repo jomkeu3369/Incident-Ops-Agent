@@ -345,6 +345,47 @@ async def test_rule_based_judge_fail_closed_behavior():
     )
     assert negated_health.verdict == "NEED_MORE_EVIDENCE"
 
+    # Codex 7차 P2 회귀 테스트 1: '502 급증 없음'처럼 부정된 장애 증상은 SUPPORTED 불가
+    negated_fault = await judge.judge_plan_evidence(
+        proposed_action="Rollback payment-service to v41",
+        runbook="배포 후 502 급증 및 이전 버전 정상 시 롤백한다.",
+        evidence="[LOG-1] v42 배포 후 502 급증 없음. 이전 버전 정상.",
+    )
+    assert negated_fault.verdict == "NEED_MORE_EVIDENCE"
+
+    # Codex 7차 P2 회귀 테스트 2: 런북 '0.0% 이하' 무오류 요구 시 0.3% 후보는 CONTRADICTED, 0.0% 후보는 SUPPORTED
+    zero_err_fail = await judge.judge_plan_evidence(
+        proposed_action="Rollback payment-service to v41",
+        runbook="배포 후 502 급증 및 후보 오류율 0.0% 이하일 때만 롤백을 제안한다.",
+        evidence="[LOG-1] v42 배포 직후 HikariPool timeout 및 502 급증\n[External] 기준 배포 v42 502 비율=18.0%, 후보 v41 502 비율=0.3%",
+        max_error_rate_percent=1.0,
+    )
+    assert zero_err_fail.verdict == "CONTRADICTED"
+
+    zero_err_pass = await judge.judge_plan_evidence(
+        proposed_action="Rollback payment-service to v41",
+        runbook="배포 후 502 급증 및 후보 오류율 0.0% 이하일 때만 롤백을 제안한다.",
+        evidence="[LOG-1] v42 배포 직후 HikariPool timeout 및 502 급증\n[External] 기준 배포 v42 502 비율=18.0%, 후보 v41 502 비율=0.0%",
+        max_error_rate_percent=1.0,
+    )
+    assert zero_err_pass.verdict == "SUPPORTED"
+
+    # Codex 7차 P2 회귀 테스트 3: 'Before deploy: error rate was 0.2%, within the normal range' 같은 정상 기준선은 충돌로 오판 금지
+    healthy_before_deploy = await judge.judge_plan_evidence(
+        proposed_action="Rollback payment-service to v41",
+        runbook="Rollback when 502 spikes after deploy and previous version is healthy.",
+        evidence="[LOG-1] Before deploy: error rate was 0.2%, within the normal range.\n[LOG-2] After deploy of v42, HTTP 502 spike and HikariPool timeout observed.\n[External] reference v42 502 rate=18.0%, candidate v41 502 rate=0.3%",
+    )
+    assert healthy_before_deploy.verdict == "SUPPORTED"
+
+    # 반대로 실제 배포 이전부터 장애가 존재한 영어 근거는 CONTRADICTED 유지
+    actual_preexisting_en = await judge.judge_plan_evidence(
+        proposed_action="Rollback payment-service to v41",
+        runbook="Rollback when 502 spikes after deploy and previous version is healthy.",
+        evidence="[LOG-1] HTTP 502 spike already failing before deploy of v42.\n[External] reference v42 502 rate=18.0%, candidate v41 502 rate=0.3%",
+    )
+    assert actual_preexisting_en.verdict == "CONTRADICTED"
+
 
 def test_bundled_golden_dataset_integrity_and_balance():
     """내장 30건 다중 장애 평가 데이터셋의 스키마·라벨 균형·다중 서비스·인젝션 포함 여부를 검증한다."""

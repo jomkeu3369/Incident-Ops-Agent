@@ -33,7 +33,12 @@ _CONTRADICTION_PATTERNS: tuple[tuple[str, re.Pattern[str]], ...] = (
     (
         "배포 이전부터 존재한 장애 징후가 확인됨",
         re.compile(
-            r"(배포\s*(이전|전)부터|배포\s*(이전|전)에도|before\s+deploy|prior\s+to\s+deploy|pre-?existing|already\s+failing\s+before)",
+            r"(?:(?:장애|오류|에러|경보|스로틀링|타임아웃|502|503|500|지연|실패|이상|부하|포화)[^\n.]{0,50}?배포\s*(?:이전|전)(?:부터|에도)|"
+            r"배포\s*(?:이전|전)(?:부터|에도)[^\n.]{0,50}?(?:장애|오류|에러|경보|스로틀링|타임아웃|502|503|500|지연|실패|이상|발생|지속)|"
+            r"pre-?existing\s+(?:issue|bug|error|fault|outage|failure|incident|problem)|"
+            r"already\s+(?:failing|broken|degraded|elevated|occurring)\s+(?:before|prior\s+to)\s+deploy|"
+            r"(?:outage|incident|502\s*(?:spike|error)|error\s*spike|timeout|failure|fault)[^\n.]{0,40}?(?:before|prior\s+to)\s+deploy|"
+            r"(?:before|prior\s+to)\s+deploy(?:ment)?[^\n.]{0,40}?(?:already\s+failing|outage|502\s*(?:spike|error)|error\s*spike|timeout|incident|degraded|broken))",
             re.IGNORECASE,
         ),
     ),
@@ -117,9 +122,24 @@ _HEALTHY_CANDIDATE_PATTERN = re.compile(
 )
 
 _RUNBOOK_THRESHOLD_PATTERN = re.compile(
-    r"(?:(?:502|오류|error)\s*(?:비율|율|rate)\s*(?:이|가)?\s*(?:<\s*|(?:below|under)\s+)?)([0-9]+(?:\.[0-9]+)?)\s*%\s*(?:미만|이하)|(?:below|under|<)\s*([0-9]+(?:\.[0-9]+)?)\s*%",
+    r"([0-9]+(?:\.[0-9]+)?)\s*%\s*(미만|이하)|(<=|<|\bat\s+most\b|\bbelow\b|\bunder\b)\s*([0-9]+(?:\.[0-9]+)?)\s*%",
     re.IGNORECASE,
 )
+
+
+@dataclass(frozen=True)
+class _RateLimit:
+    """후보 버전 허용 오류율 상한(미만/이하 구분 보존)."""
+
+    value: float
+    inclusive: bool
+
+    def is_healthy(self, rate: float) -> bool:
+        return rate <= self.value if self.inclusive else rate < self.value
+
+    def describe(self) -> str:
+        op = "<=" if self.inclusive else "<"
+        return f"{op} {self.value}%"
 
 _CANDIDATE_RATE_PATTERN = re.compile(
     r"(?:후보|candidate)(?:\s+버전)?(?:\s+([A-Za-z0-9._:/-]+))?[^\n%,]{0,128}?(?:502|오류|error)\s*(?:비율|율|rate)\s*[=:]\s*([0-9]+(?:\.[0-9]+)?)\s*%",
@@ -542,7 +562,7 @@ class RuleBasedJudge:
         if not ev or not rb:
             return self._result("NEED_MORE_EVIDENCE", 0.85, "런북 또는 수집 근거가 비어 있어 추가 확인이 필요합니다.", t0)
 
-        threshold = self._resolve_threshold(rb, max_error_rate_percent)
+        limits = self._resolve_rate_limits(rb, max_error_rate_percent)
 
         # 0순위(런북 정책 우선): 제안 조치(롤백)가 런북에서 무조건 금지되었거나 허용 근거가 없으면 fail-closed 차단
         is_rollback_action = bool(_ROLLBACK_ACTION_PATTERN.search(action))
@@ -565,15 +585,17 @@ class RuleBasedJudge:
         cand_rate = _extract_candidate_rate(ev, action)
         ref_rate = _extract_reference_rate(ev)
 
-        if cand_rate is not None and cand_rate >= threshold:
+        violated_limit = next((lim for lim in limits if cand_rate is not None and not lim.is_healthy(cand_rate)), None)
+        if violated_limit is not None:
             return self._result(
                 "CONTRADICTED",
                 0.9,
-                f"롤백 후보 버전 오류율({cand_rate}%)이 허용 기준({threshold}%) 이상입니다.",
+                f"롤백 후보 버전 오류율({cand_rate}%)이 허용 기준({violated_limit.describe()})을 위반합니다.",
                 t0,
             )
 
-        if cand_rate is not None and ref_rate is not None and ref_rate < threshold and cand_rate >= ref_rate:
+        ref_is_healthy = ref_rate is not None and all(lim.is_healthy(ref_rate) for lim in limits)
+        if cand_rate is not None and ref_is_healthy and cand_rate >= ref_rate:
             return self._result(
                 "CONTRADICTED",
                 0.8,
@@ -590,15 +612,15 @@ class RuleBasedJudge:
             if pattern.search(ev):
                 return self._result("NEED_MORE_EVIDENCE", 0.8, reason, t0)
 
-        # 3순위: [External] 메트릭 라벨을 제외한 실제 로그에서 배포 후 장애 증상 + 기준 배포 악화 + 정상 후보 검증이 모두 확인될 때만 SUPPORTED
+        # 3순위: [External] 메트릭 라벨을 제외한 실제 로그에서 배포 후 긍정 장애 증상 + 기준 배포 악화 + 긍정 후보 정상 검증이 모두 확인될 때만 SUPPORTED
         non_external_ev = "\n".join(
             line for line in ev.splitlines() if not _EXTERNAL_LINE_PATTERN.match(line)
         )
         has_post_deploy = bool(_POST_DEPLOY_FAULT_PATTERN.search(non_external_ev))
-        has_fault_symptom = bool(_FAULT_SYMPTOM_PATTERN.search(non_external_ev))
-        ref_is_abnormal = ref_rate is None or ref_rate >= threshold
+        has_fault_symptom = _has_unnegated_match(_FAULT_SYMPTOM_PATTERN, non_external_ev)
+        ref_is_abnormal = not ref_is_healthy
         has_healthy_candidate = (
-            (cand_rate is not None and cand_rate < threshold)
+            (cand_rate is not None and all(lim.is_healthy(cand_rate) for lim in limits))
             or _has_unnegated_match(_HEALTHY_CANDIDATE_PATTERN, non_external_ev)
         )
 
@@ -617,17 +639,24 @@ class RuleBasedJudge:
             t0,
         )
 
-    def _resolve_threshold(self, runbook: str, max_error_rate_percent: float | None) -> float:
-        """요청 임계치와 런북 명시 임계치 중 더 엄격한(낮은) 기준을 적용하고, 둘 다 없으면 기본 임계치를 사용한다."""
-        limits: list[float] = []
-        if max_error_rate_percent is not None and math.isfinite(max_error_rate_percent) and max_error_rate_percent > 0.0:
-            limits.append(float(max_error_rate_percent))
+    def _resolve_rate_limits(self, runbook: str, max_error_rate_percent: float | None) -> list[_RateLimit]:
+        """요청 임계치와 런북 명시 임계치(0.0% 및 미만/이하 구분 포함)를 모두 수집한다."""
+        limits: list[_RateLimit] = []
+        if max_error_rate_percent is not None and math.isfinite(max_error_rate_percent) and max_error_rate_percent >= 0.0:
+            limits.append(_RateLimit(value=float(max_error_rate_percent), inclusive=False))
         for match in _RUNBOOK_THRESHOLD_PATTERN.finditer(runbook):
-            raw = match.group(1) or match.group(2)
-            parsed = _parse_finite_rate(raw) if raw else None
-            if parsed is not None and parsed > 0.0:
-                limits.append(parsed)
-        return min(limits) if limits else self._max_healthy_candidate_rate
+            if match.group(1) is not None:
+                parsed = _parse_finite_rate(match.group(1))
+                if parsed is not None:
+                    limits.append(_RateLimit(value=parsed, inclusive=(match.group(2) == "이하")))
+            elif match.group(4) is not None:
+                parsed = _parse_finite_rate(match.group(4))
+                if parsed is not None:
+                    op = (match.group(3) or "").strip().lower()
+                    limits.append(_RateLimit(value=parsed, inclusive=(op in {"<=", "at most"})))
+        if not limits:
+            limits.append(_RateLimit(value=self._max_healthy_candidate_rate, inclusive=False))
+        return limits
 
     def _result(self, verdict: Verdict, confidence: float, reason: str, t0: float) -> DecisionResult:
         elapsed_ms = round((time.perf_counter() - t0) * 1000.0, 3)
