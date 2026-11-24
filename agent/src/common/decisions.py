@@ -117,12 +117,17 @@ _HEALTHY_CANDIDATE_PATTERN = re.compile(
 )
 
 _CANDIDATE_RATE_PATTERN = re.compile(
-    r"(?:후보|candidate)[^\n%,]{0,128}?(?:502|오류|error)\s*(?:비율|율|rate)\s*[=:]\s*([0-9]+(?:\.[0-9]+)?)\s*%",
+    r"(?:후보|candidate)(?:\s+버전)?(?:\s+([A-Za-z0-9._:/-]+))?[^\n%,]{0,128}?(?:502|오류|error)\s*(?:비율|율|rate)\s*[=:]\s*([0-9]+(?:\.[0-9]+)?)\s*%",
     re.IGNORECASE,
 )
 
 _REFERENCE_RATE_PATTERN = re.compile(
     r"(?:기준\s*배포|현재\s*버전|reference|current)[^\n%,]{0,128}?(?:502|오류|error)\s*(?:비율|율|rate)\s*[=:]\s*([0-9]+(?:\.[0-9]+)?)\s*%",
+    re.IGNORECASE,
+)
+
+_PROPOSED_TARGET_PATTERN = re.compile(
+    r"(?:\bto\s+([A-Za-z0-9._:/-]+)|([A-Za-z0-9._:/-]+)\s*(?:버전)?(?:으로|로)\s*롤백)",
     re.IGNORECASE,
 )
 
@@ -475,7 +480,7 @@ _PRE_NEGATION_PATTERN = re.compile(
 
 _POST_NEGATION_PATTERN = re.compile(
     r"^(?:\s+(?:마이그레이션|변경|이슈|현상|징후|원인|여부|기록|사례))?"
-    r"(?:\s*(?:은|는|이|가|도)?\s*(?:없음|없다|없으며|없었고|없어|아님|아니며|아니고|아니다|미발생|배제됨?|해당\s*없음|정상)|"
+    r"(?:\s*(?:은|는|이|가|도)?\s*(?:없음|없다|없으며|없었고|없어|아님|아니며|아니고|아니다|미발생|배제됨?|해당\s*없음)|"
     r"\s*(?:is\s+|was\s+)?(?:not\s+(?:detected|observed|present|found|applicable)|ruled\s+out|absent|none|n/a)\b)",
     re.IGNORECASE,
 )
@@ -528,8 +533,8 @@ class RuleBasedJudge:
             if _has_unnegated_match(pattern, ev):
                 return self._result("CONTRADICTED", 0.85, reason, t0)
 
-        cand_rate = _extract_first_rate(_CANDIDATE_RATE_PATTERN, ev)
-        ref_rate = _extract_first_rate(_REFERENCE_RATE_PATTERN, ev)
+        cand_rate = _extract_candidate_rate(ev, action)
+        ref_rate = _extract_reference_rate(ev)
 
         if cand_rate is not None and cand_rate >= self._max_healthy_candidate_rate:
             return self._result(
@@ -598,16 +603,83 @@ class RuleBasedJudge:
         )
 
 
-def _extract_first_rate(pattern: re.Pattern[str], text: str) -> float | None:
-    """텍스트에서 패턴에 매칭되는 첫 백분율 수치를 유한 float으로 추출한다."""
-    match = pattern.search(text)
-    if not match:
-        return None
+def _parse_finite_rate(raw: str) -> float | None:
+    """문자열 백분율 수치를 유한 비음수 float으로 변환한다."""
     try:
-        val = float(match.group(1))
+        val = float(raw)
     except ValueError:
         return None
     return val if math.isfinite(val) and val >= 0.0 else None
+
+
+def _extract_proposed_target(proposed_action: str) -> str | None:
+    """제안 조치 문자열에서 롤백 대상 버전/SHA 식별자를 추출한다."""
+    match = _PROPOSED_TARGET_PATTERN.search(proposed_action)
+    if not match:
+        return None
+    token = (match.group(1) or match.group(2) or "").strip(".,;()[]'\"`")
+    return token.lower() if token else None
+
+
+def _extract_reference_rate(text: str) -> float | None:
+    """[External] 메트릭 라인을 우선하여 기준 배포 오류율을 추출한다."""
+    ext_lines = "\n".join(line for line in text.splitlines() if _EXTERNAL_LINE_PATTERN.match(line))
+    for scope in (ext_lines, text):
+        if not scope:
+            continue
+        match = _REFERENCE_RATE_PATTERN.search(scope)
+        if match:
+            val = _parse_finite_rate(match.group(1))
+            if val is not None:
+                return val
+    return None
+
+
+def _extract_candidate_rate(text: str, proposed_action: str) -> float | None:
+    """제안된 롤백 대상과 [External] 라인을 우선 매칭해 후보 버전 오류율을 추출한다."""
+    target = _extract_proposed_target(proposed_action)
+    ext_lines = "\n".join(line for line in text.splitlines() if _EXTERNAL_LINE_PATTERN.match(line))
+    non_ext_lines = "\n".join(line for line in text.splitlines() if not _EXTERNAL_LINE_PATTERN.match(line))
+
+    def _collect(scope: str) -> list[tuple[str | None, float]]:
+        items: list[tuple[str | None, float]] = []
+        for match in _CANDIDATE_RATE_PATTERN.finditer(scope):
+            val = _parse_finite_rate(match.group(2))
+            if val is None:
+                continue
+            raw_label = (match.group(1) or "").strip(".,;()[]'\"`").lower()
+            label = raw_label if raw_label and raw_label not in {"502", "오류", "error", "비율", "율", "rate"} else None
+            items.append((label, val))
+        return items
+
+    ext_matches = _collect(ext_lines) if ext_lines else []
+    non_ext_matches = _collect(non_ext_lines) if non_ext_lines else []
+
+    if target:
+        # 1순위: [External] 라인에서 제안 대상과 정확히 일치하는 후보 지표
+        for label, val in ext_matches:
+            if label == target:
+                return val
+        # 2순위: [External] 라인의 무라벨 후보 지표
+        for label, val in ext_matches:
+            if label is None:
+                return val
+        # 3순위: 일반 로그에서 제안 대상과 정확히 일치하는 후보 지표
+        for label, val in non_ext_matches:
+            if label == target:
+                return val
+        # 4순위: 일반 로그의 무라벨 후보 지표 (다른 버전 라벨 지표는 교차 오용 금지)
+        for label, val in non_ext_matches:
+            if label is None:
+                return val
+        return None
+
+    # 제안 대상 식별자가 없는 경우 [External] 우선 후 일반 로그 폴백
+    if ext_matches:
+        return ext_matches[0][1]
+    if non_ext_matches:
+        return non_ext_matches[0][1]
+    return None
 
 
 class FallbackEvidenceJudge:

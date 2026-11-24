@@ -280,6 +280,30 @@ async def test_rule_based_judge_fail_closed_behavior():
     )
     assert negated_en.verdict == "SUPPORTED"
 
+    # Codex 4차 P1 회귀 테스트: '비가역 스키마 마이그레이션 정상 완료'는 부정이 아닌 정상 적용이므로 CONTRADICTED 유지
+    normal_migration_done = await judge.judge_plan_evidence(
+        proposed_action="Rollback payment-service to v41",
+        runbook="배포 후 502 급증 및 이전 버전 정상 시 롤백한다.",
+        evidence="[LOG-1] v42 배포 직후 HikariPool timeout 및 502 급증\n[LOG-2] Flyway V18 비가역 스키마 마이그레이션 정상 완료\n[External] 기준 배포 v42 502 비율=18.0%, 후보 v41 502 비율=0.3%",
+    )
+    assert normal_migration_done.verdict == "CONTRADICTED"
+
+    # Codex 4차 P2 회귀 테스트: 로그에 다른 후보(v40 3.0%)가 언급되어도 선택 대상(v41 0.3%) [External] 지표를 우선 바인딩
+    other_cand_mentioned = await judge.judge_plan_evidence(
+        proposed_action="Rollback payment-service to v41",
+        runbook="배포 후 502 급증 및 이전 버전 정상 시 롤백한다.",
+        evidence="[LOG-1] v42 배포 직후 HikariPool timeout 및 502 급증 (이전 검토 후보 v40 502 비율=3.0%로 제외됨)\n[External] 기준 배포 v42 502 비율=18.0%, 후보 v41 502 비율=0.3%",
+    )
+    assert other_cand_mentioned.verdict == "SUPPORTED"
+
+    # 반대로 다른 후보(v40 0.2%)만 정상이고 선택 대상(v41) 지표가 없으면 v40 지표로 v41을 오승인하지 않는다
+    mismatched_cand_only = await judge.judge_plan_evidence(
+        proposed_action="Rollback payment-service to v41",
+        runbook="배포 후 502 급증 및 이전 버전 정상 시 롤백한다.",
+        evidence="[LOG-1] v42 배포 직후 HikariPool timeout 및 502 급증\n[LOG-2] 후보 v40 502 비율=0.2%",
+    )
+    assert mismatched_cand_only.verdict == "NEED_MORE_EVIDENCE"
+
 
 def test_bundled_golden_dataset_integrity_and_balance():
     """내장 30건 다중 장애 평가 데이터셋의 스키마·라벨 균형·다중 서비스·인젝션 포함 여부를 검증한다."""
