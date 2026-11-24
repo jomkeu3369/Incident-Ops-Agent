@@ -146,6 +146,20 @@ _RUNBOOK_THRESHOLD_PATTERN = re.compile(
     re.IGNORECASE,
 )
 
+_RUNBOOK_MIN_SAMPLE_PATTERN = re.compile(
+    r"(?:최소\s*([0-9][0-9,]*)\s*(?:건|회|개의?\s*요청|requests?)(?:\s*이상)?|"
+    r"(?:요청|표본)\s*([0-9][0-9,]*)\s*건\s*이상|"
+    r"(?:at\s+least|minimum\s+(?:of\s+)?|min\.?\s*(?:sample\s*(?:size)?|requests?)\s*(?:of\s*|[=:]\s*)?)\s*([0-9][0-9,]*)\s*(?:requests?|samples?)?)",
+    re.IGNORECASE,
+)
+
+_OBSERVED_SAMPLE_COUNT_PATTERN = re.compile(
+    r"(?:totalRequests\s*[=:]\s*([0-9][0-9,]*)|"
+    r"(?:총\s*)?(?:요청(?:\s*수)?|표본(?:\s*수)?)\s*(?:[=:]\s*)?([0-9][0-9,]*)\s*건|"
+    r"(?:sample\s*size|requests?)\s*[=:]\s*([0-9][0-9,]*))",
+    re.IGNORECASE,
+)
+
 
 @dataclass(frozen=True)
 class _RateLimit:
@@ -697,6 +711,18 @@ class RuleBasedJudge:
             if _has_unnegated_match(pattern, observed_ev):
                 return self._result("NEED_MORE_EVIDENCE", 0.8, reason, t0)
 
+        # 런북이 최소 요청/표본 수를 명시한 경우 관측 표본이 미확인이거나 기준 미만이면 fail-closed 보류
+        min_sample = _extract_min_sample_requirement(rb)
+        if min_sample is not None:
+            observed_samples = _extract_observed_sample_count(observed_ev)
+            if observed_samples is None or observed_samples < min_sample:
+                return self._result(
+                    "NEED_MORE_EVIDENCE",
+                    0.85,
+                    f"런북이 요구하는 최소 표본 수({min_sample}건)가 충족되지 않았거나 확인되지 않았습니다.",
+                    t0,
+                )
+
         # 3순위: [External]/[RUNBOOK]을 제외한 실제 관측 로그에서 동일 문장 내 배포 후 런북 부합 긍정 장애 증상 + 기준 배포 악화(또는 비-HTTP 장애) + 긍정 후보 정상 검증이 모두 확인될 때만 SUPPORTED
         has_post_deploy_fault = _has_post_deploy_fault_matching_runbook(rb, non_external_ev)
         ref_is_abnormal = independent_non_http_fault or not ref_is_healthy
@@ -759,6 +785,46 @@ class RuleBasedJudge:
             reason=reason,
             latency_ms=elapsed_ms,
         )
+
+
+def _parse_positive_int(raw: str) -> int | None:
+    """쉼표 포함 정수 문자열을 양의 int로 변환한다."""
+    cleaned = raw.replace(",", "").strip()
+    if not cleaned:
+        return None
+    try:
+        val = int(cleaned)
+    except ValueError:
+        return None
+    return val if val >= 0 else None
+
+
+def _extract_min_sample_requirement(runbook: str) -> int | None:
+    """런북에 명시된 최소 요청/표본 수 요구 조건 중 가장 엄격한(큰) 값을 추출한다."""
+    reqs: list[int] = []
+    for match in _RUNBOOK_MIN_SAMPLE_PATTERN.finditer(runbook):
+        raw = match.group(1) or match.group(2) or match.group(3)
+        parsed = _parse_positive_int(raw) if raw else None
+        if parsed is not None and parsed > 0:
+            reqs.append(parsed)
+    return max(reqs) if reqs else None
+
+
+def _extract_observed_sample_count(text: str) -> int | None:
+    """[External] 라인을 우선해 관측된 요청/표본 수를 추출한다."""
+    ext_lines = "\n".join(line for line in text.splitlines() if _EXTERNAL_LINE_PATTERN.match(line))
+    for scope in (ext_lines, text):
+        if not scope:
+            continue
+        counts: list[int] = []
+        for match in _OBSERVED_SAMPLE_COUNT_PATTERN.finditer(scope):
+            raw = match.group(1) or match.group(2) or match.group(3)
+            parsed = _parse_positive_int(raw) if raw else None
+            if parsed is not None:
+                counts.append(parsed)
+        if counts:
+            return min(counts)
+    return None
 
 
 def _parse_finite_rate(raw: str) -> float | None:

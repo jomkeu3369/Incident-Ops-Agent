@@ -525,6 +525,28 @@ async def test_rule_based_judge_fail_closed_behavior():
     )
     assert explicit_limit_without_metric.verdict == "NEED_MORE_EVIDENCE"
 
+    # Codex 14차 P2 회귀 테스트: 런북 최소 표본 수(100건 이상) 요구 시 표본 미달/미확인은 NEED_MORE_EVIDENCE, 충족 시 SUPPORTED
+    undersampled = await judge.judge_plan_evidence(
+        proposed_action="Rollback checkout-api to v6.0.0",
+        runbook="충분한 요청 표본(최소 100건 이상)과 오류 로그가 확인된 경우에만 롤백을 제안한다.",
+        evidence="[LOG-1] v6.0.1 배포 후 502 급증, 요청 2건 중 1건 오류\n[External] 기준 배포 v6.0.1 502 비율=50.0% (totalRequests=2), 후보 v6.0.0 502 비율=0.0%",
+    )
+    assert undersampled.verdict == "NEED_MORE_EVIDENCE"
+
+    missing_sample_count = await judge.judge_plan_evidence(
+        proposed_action="Rollback checkout-api to v6.0.0",
+        runbook="충분한 요청 표본(최소 100건 이상)과 오류 로그가 확인된 경우에만 롤백을 제안한다.",
+        evidence="[LOG-1] v6.0.1 배포 후 502 급증\n[External] 기준 배포 v6.0.1 502 비율=18.0%, 후보 v6.0.0 502 비율=0.0%",
+    )
+    assert missing_sample_count.verdict == "NEED_MORE_EVIDENCE"
+
+    sufficient_sample = await judge.judge_plan_evidence(
+        proposed_action="Rollback checkout-api to v6.0.0",
+        runbook="충분한 요청 표본(최소 100건 이상)과 오류 로그가 확인된 경우에만 롤백을 제안한다.",
+        evidence="[LOG-1] v6.0.1 배포 후 502 급증\n[External] 기준 배포 v6.0.1 502 비율=18.0% (totalRequests=250), 후보 v6.0.0 502 비율=0.0%",
+    )
+    assert sufficient_sample.verdict == "SUPPORTED"
+
 
 def test_bundled_golden_dataset_integrity_and_balance():
     """내장 30건 다중 장애 평가 데이터셋의 스키마·라벨 균형·다중 서비스·인젝션 포함 여부를 검증한다."""
