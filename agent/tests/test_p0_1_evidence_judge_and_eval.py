@@ -438,6 +438,33 @@ async def test_rule_based_judge_fail_closed_behavior():
     )
     assert negated_gap.verdict == "SUPPORTED"
 
+    # Codex 10차 P2 회귀 테스트 1: 비-HTTP(OOM) 장애에서 이전 버전도 OOM 재현 시 HTTP 0.0%만으로 SUPPORTED 불가
+    oom_candidate_unhealthy = await judge.judge_plan_evidence(
+        proposed_action="Rollback notification-worker to v11",
+        runbook="신규 배포 후 OOMKilled 또는 CrashLoop가 반복되고 이전 버전이 안정적이면 롤백한다.",
+        evidence="[LOG-1] v12 배포 직후 OOMKilled 및 CrashLoopBackOff 5회 반복. 이전 버전에서도 OOMKilled 반복 확인.\n[External] 기준 배포 v12 502 비율=0.0%, 후보 v11 502 비율=0.0%",
+        max_error_rate_percent=1.0,
+    )
+    assert oom_candidate_unhealthy.verdict == "CONTRADICTED"
+
+    # 비-HTTP(OOM) 장애에서 HTTP 0.0%만 있고 이전 버전 안정성 근거가 없으면 NEED_MORE_EVIDENCE
+    oom_candidate_unknown = await judge.judge_plan_evidence(
+        proposed_action="Rollback notification-worker to v11",
+        runbook="신규 배포 후 OOMKilled 또는 CrashLoop가 반복되고 이전 버전이 안정적이면 롤백한다.",
+        evidence="[LOG-1] v12 배포 직후 OOMKilled 및 CrashLoopBackOff 5회 반복.\n[External] 기준 배포 v12 502 비율=0.0%, 후보 v11 502 비율=0.0%",
+        max_error_rate_percent=1.0,
+    )
+    assert oom_candidate_unknown.verdict == "NEED_MORE_EVIDENCE"
+
+    # Codex 10차 P2 회귀 테스트 2: 런북의 '현재 버전 기준선 0.1% 이하'는 후보 상한(1.0% 미만)으로 오용 금지
+    ref_baseline_vs_cand_limit = await judge.judge_plan_evidence(
+        proposed_action="Rollback payment-service to v41",
+        runbook="배포 전 현재 버전 오류율 0.1% 이하를 정상 기준선으로 삼는다. 배포 후 502 급증 및 후보 오류율 1.0% 미만일 때 롤백한다.",
+        evidence="[LOG-1] v42 배포 직후 HikariPool timeout 및 502 급증\n[External] 기준 배포 v42 502 비율=18.0%, 후보 v41 502 비율=0.3%",
+        max_error_rate_percent=1.0,
+    )
+    assert ref_baseline_vs_cand_limit.verdict == "SUPPORTED"
+
 
 def test_bundled_golden_dataset_integrity_and_balance():
     """내장 30건 다중 장애 평가 데이터셋의 스키마·라벨 균형·다중 서비스·인젝션 포함 여부를 검증한다."""

@@ -59,7 +59,7 @@ _CONTRADICTION_PATTERNS: tuple[tuple[str, re.Pattern[str]], ...] = (
     (
         "롤백 후보 버전에서도 동일 장애가 재현됨",
         re.compile(
-            r"(이전\s*버전에서도\s*동일|후보\s*버전도\s*(오류|실패|장애|불안정)|candidate\s+(also|equally)\s+(failing|unhealthy|elevated)|previous\s+version\s+also\s+failing)",
+            r"(이전\s*버전에서도\s*(?:동일|oom(?:killed)?|crashloop|오류|실패|장애|타임아웃|502)|후보\s*버전도\s*(?:오류|실패|장애|불안정|oom(?:killed)?|crashloop)|candidate\s+(?:also|equally)\s+(?:failing|unhealthy|elevated|oom|crashloop)|previous\s+version\s+also\s+(?:failing|oom|crashloop))",
             re.IGNORECASE,
         ),
     ),
@@ -128,7 +128,8 @@ _HEALTHY_CANDIDATE_PATTERN = re.compile(
 )
 
 _RUNBOOK_THRESHOLD_PATTERN = re.compile(
-    r"(?:(?:이전\s*버전|후보(?:\s*버전)?|candidate|previous\s+version)[^\n.,;]{0,24}?)?"
+    r"(?:이전\s*버전|직전(?:\s*안정)?\s*버전|후보(?:\s*버전)?|candidate|previous\s+version)"
+    r"[^\n.,;]{0,24}?"
     r"(?:(?:http\s*)?(?:502|503|500)\s*(?:비율|오류율|율|rate)|오류율|오류\s*비율|에러율|error(?:s|\s*rate))"
     r"[^\n.,;]{0,20}?"
     r"(?:([0-9]+(?:\.[0-9]+)?)\s*%\s*(미만|이하)|(<=|<|\bat\s+most\b|\bbelow\b|\bunder\b)\s*([0-9]+(?:\.[0-9]+)?)\s*%)",
@@ -636,8 +637,9 @@ class RuleBasedJudge:
         has_post_deploy = bool(_POST_DEPLOY_FAULT_PATTERN.search(non_external_ev))
         has_fault_symptom = _has_unnegated_match(_FAULT_SYMPTOM_PATTERN, non_external_ev)
         ref_is_abnormal = independent_non_http_fault or not ref_is_healthy
+        http_metric_relevant = not (independent_non_http_fault and ref_is_healthy)
         has_healthy_candidate = (
-            (cand_rate is not None and all(lim.is_healthy(cand_rate) for lim in limits))
+            (http_metric_relevant and cand_rate is not None and all(lim.is_healthy(cand_rate) for lim in limits))
             or _has_unnegated_match(_HEALTHY_CANDIDATE_PATTERN, non_external_ev)
         )
 
