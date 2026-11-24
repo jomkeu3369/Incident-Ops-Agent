@@ -193,7 +193,7 @@ async def test_three_protocol_e2e_plan_replan_restore_approve_and_complete():
                     )
                     assert dup.status_code == 409
 
-                    # 5) 로깅 서브 에이전트 실행 로그 조회·삭제·수정불가 및 LLM 0회 검증 (F3012~F3014)
+                    # 5) 로깅 서브 에이전트 실행 로그 조회·삭제·수정불가 및 LLM 0회 검증
                     assert sup_app.state.container.logging_sub_agent.llm_calls == 0
                     sessions = await client.get("/api/ag-ui/sessions")
                     assert sessions.status_code == 200 and any(s["sessionId"] == "thread-009" for s in sessions.json())
@@ -248,7 +248,7 @@ async def test_decoupled_logger_general_chat_memory_update_replan_cap_and_plans_
             # 초기 1회 + 재계획 2회 = 각 워커 최대 3회 호출 후 상한 정지
             assert len([c for c in a2a_calls if c["url"] == cfg.remediation_agent_a2a_url]) == 3
 
-            # 4) 후속 대화에서 조건 하나(10분)만 변경 시 기존 incidentStartedAt·허용 시간 유지 (F3010)
+            # 4) 후속 대화에서 조건 하나(10분)만 변경 시 기존 incidentStartedAt·허용 시간 유지
             follow = await client.post(
                 "/api/ag-ui",
                 json={"threadId": "t-cap", "runId": "r-cap2", "state": {}, "messages": [{"id": "m3", "role": "user", "content": "작업 시간만 10분으로 바꿔줘"}], "tools": [], "context": [], "forwardedProps": {"incidentCode": "INC-1"}},
@@ -258,7 +258,7 @@ async def test_decoupled_logger_general_chat_memory_update_replan_cap_and_plans_
             assert last_rem_payload["durationMinutes"] == 10
             assert last_rem_payload["incidentStartedAt"] == "2026-11-18T14:04:00+09:00"
 
-            # 5) 작업 계획 CRUD 및 동일 날짜 시간 겹침 경고 (F3015~F3016)
+            # 5) 작업 계획 CRUD 및 동일 날짜 시간 겹침 경고
             p1 = await client.post("/api/ag-ui/plans", json={"incidentCode": "INC-1", "title": "결제 롤백 1차", "planDate": "2026-11-18", "startTime": "14:40", "endTime": "14:45"})
             assert p1.status_code == 201 and p1.json()["warning"] is None
             p2 = await client.post("/api/ag-ui/plans", json={"incidentCode": "INC-2", "title": "주문 점검", "planDate": "2026-11-18", "startTime": "14:42", "endTime": "14:50"})

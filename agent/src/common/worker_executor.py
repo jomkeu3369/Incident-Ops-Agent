@@ -4,7 +4,7 @@ from dataclasses import dataclass, field
 import time
 from typing import Any, Awaitable, Callable
 
-# 수정 가능한 실패 코드: 파라미터 보정 후 재시도 대상 (F3021)
+# 수정 가능한 실패 코드: 파라미터 보정 후 재시도 대상
 RETRYABLE_ERROR_CODES = frozenset({"NO_RESULT", "INSUFFICIENT_DATA", "INVALID_INPUT"})
 
 ToolRunnerFn = Callable[[str, dict[str, Any]], Awaitable[dict[str, Any]]]
@@ -45,7 +45,7 @@ class WorkerStepOutcome:
 
 @dataclass(frozen=True)
 class SplitComparisonMetrics:
-    """통합형(Monolithic) vs Planner·Worker 분리형(Split) 전후 지표 비교 결과 (F3021)."""
+    """통합형(Monolithic) vs Planner·Worker 분리형(Split) 전후 지표 비교 결과."""
 
     total_steps: int
     monolithic_llm_calls: int
@@ -72,7 +72,7 @@ class SplitComparisonMetrics:
 
 
 class SplitWorkerExecutor:
-    """정상 경로 Worker LLM 0회, 수정 가능 실패에만 고정 인자 보존 재시도를 수행하는 실행기(F3021)."""
+    """정상 경로 Worker LLM 0회, 수정 가능 실패에만 고정 인자 보존 재시도를 수행하는 실행기."""
 
     def __init__(
         self,

@@ -296,7 +296,7 @@ def test_scenario_3_replan_limit_stops_cleanly_at_3() -> None:
 
 
 def test_scenario_4_external_tool_failure_keeps_service_alive_and_hides_secrets() -> None:
-    """시나리오 4: 외부 Tool 1종(Calendar) 실패 시 서비스가 중단되지 않고 시크릿/스택이 노출되지 않는다(NF3001~NF3003)."""
+    """시나리오 4: 외부 Tool 1종(Calendar) 실패 시 서비스가 중단되지 않고 시크릿/스택이 노출되지 않는다."""
     scenario = _ScenarioState(calendar_status=503)
     settings, backend, ext_tools, decisions, log_app, rem_app, sup_app, _, a2a_fn = _wire_supervisor(scenario)
 

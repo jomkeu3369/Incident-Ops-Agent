@@ -219,13 +219,13 @@ npm run dev -- --port 3100
 
 ### 4.4 자동화 테스트 실행
 ```bash
-# Backend (Java 21 + Maven, 23건)
+# Backend (Java 21 + Maven, 32건)
 cd backend && mvn test
 
 # Agent (Python 3.12 + pytest, 55건)
 cd agent && .venv/Scripts/pytest tests
 
-# Frontend (Next.js typecheck + build + 통합 테스트 16건)
+# Frontend (Next.js typecheck + build + 테스트 18건: 단위 14건 + 실서버 통합 4건)
 cd frontend && npm run typecheck && npm run build && npm test
 ```
 
@@ -282,4 +282,5 @@ cd frontend && npm run typecheck && npm run build && npm test
 * **API:** [백엔드 REST & MCP 명세](docs/02-backend-api-and-mcp-spec.md) · [프론트엔드 API 명세](docs/09-frontend-api-spec.md)
 * **Agent 설계:** [도메인 플래너 & 근거 판정](docs/04-domain-planner-and-decisions.md) · [외부 API Tool 정의서](docs/05-external-api-tools.md) · [Agent 구현 계획](docs/07-agent-phase-plan.md) · [Frontend 구현 계획](docs/08-frontend-phase-plan.md)
 * **검증:** [검증 결과서](docs/10-verification.md) — 기능별 구현·검증 근거, 시나리오 5종, 테스트 현황, 미검증 범위
+* **확장 전략·로드맵:** [제3 포트폴리오 확장 전략 및 논의 정리](docs/11-portfolio-expansion-strategy.md)
 * **출처:** 이 프로젝트는 학습 과제 명세(AI 코어 프로젝트)를 출발점으로 했습니다. 당시의 [요구사항 매핑표](docs/archive/requirements-mapping.md)는 보관용으로 남겨 두었습니다. 원본 명세 PDF는 저장소에 포함하지 않았습니다.

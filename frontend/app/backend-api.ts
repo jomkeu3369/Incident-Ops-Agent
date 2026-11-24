@@ -197,9 +197,10 @@ function toFrontendPlan(plan: BackendRemediationPlan): Plan {
 export function hydrateSnapshotFromDetail(detail: BackendIncidentDetail): Snapshot {
   const { incident, plans, approvals, executions } = detail;
   const latestApproval = approvals.length > 0 ? approvals[approvals.length - 1] : null;
+  // RemediationMapper.findPlansByIncidentCode returns plans ordered newest-first (created_at DESC, id DESC).
   const matchedPlan =
     (latestApproval?.planId ? plans.find((p) => p.planId === latestApproval.planId) : undefined) ??
-    (plans.length > 0 ? plans[plans.length - 1] : null);
+    (plans.length > 0 ? plans[0] : null);
 
   const matchedExecution = latestApproval
     ? executions.find((exec) => exec.approvalId === latestApproval.approvalId) ?? null

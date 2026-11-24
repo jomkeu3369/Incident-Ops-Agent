@@ -24,7 +24,7 @@ test("dateLabelKst derives KST calendar date consistently across midnight bounda
   assert.equal(dateLabelKst("2026-11-18T14:40:00+09:00"), "2026-11-18");
 });
 
-test("Managed plans CRUD and same-date overlap warning work end-to-end (F3015, F3016)", async (t) => {
+test("Managed plans CRUD and same-date overlap warning work end-to-end", async (t) => {
   const baseUrl = process.env.TEST_AG_UI_BASE_URL;
   if (!baseUrl) {
     t.skip("Set TEST_AG_UI_BASE_URL to run live admin API integration test");
@@ -79,7 +79,7 @@ test("Managed plans CRUD and same-date overlap warning work end-to-end (F3015, F
   }
 });
 
-test("Session logs list, detail, anomaly analysis, and delete work end-to-end (F3014, F3020)", async (t) => {
+test("Session logs list, detail, anomaly analysis, and delete work end-to-end", async (t) => {
   const baseUrl = process.env.TEST_AG_UI_BASE_URL;
   if (!baseUrl) {
     t.skip("Set TEST_AG_UI_BASE_URL to run live session log integration test");
