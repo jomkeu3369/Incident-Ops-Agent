@@ -320,6 +320,9 @@ class DecisionsApiJudge:
             )
 
         elapsed_ms = round((time.perf_counter() - t0) * 1000.0, 2)
+        usage = getattr(decision, "usage", None)
+        input_tokens = _safe_int(getattr(usage, "input_tokens", None))
+        output_tokens = _safe_int(getattr(usage, "output_tokens", None))
         answers = getattr(decision, "answers", None) or []
         if not answers or getattr(answers[0], "type", None) != "choice":
             return DecisionResult(
@@ -328,6 +331,8 @@ class DecisionsApiJudge:
                 probabilities={},
                 provider="openai",
                 model=model,
+                input_tokens=input_tokens,
+                output_tokens=output_tokens,
                 reason="판정 API가 유효한 선택지를 반환하지 않았습니다.",
                 latency_ms=elapsed_ms,
             )
@@ -341,6 +346,8 @@ class DecisionsApiJudge:
                 probabilities={},
                 provider="openai",
                 model=model,
+                input_tokens=input_tokens,
+                output_tokens=output_tokens,
                 reason="알 수 없는 판정 값이 반환되었습니다.",
                 latency_ms=elapsed_ms,
             )
@@ -351,15 +358,14 @@ class DecisionsApiJudge:
             if prob is not None:
                 probs[str(opt.value)] = prob
 
-        usage = getattr(decision, "usage", None)
         return DecisionResult(
             verdict=choice,  # type: ignore[arg-type]
             confidence=_safe_probability(getattr(answer, "confidence", None)),
             probabilities=probs,
             provider="openai",
             model=model,
-            input_tokens=_safe_int(getattr(usage, "input_tokens", None)),
-            output_tokens=_safe_int(getattr(usage, "output_tokens", None)),
+            input_tokens=input_tokens,
+            output_tokens=output_tokens,
             latency_ms=elapsed_ms,
         )
 
@@ -461,6 +467,9 @@ class StructuredOutputJudge:
             )
 
         elapsed_ms = round((time.perf_counter() - t0) * 1000.0, 2)
+        usage = getattr(response, "usage", None)
+        input_tokens = _safe_int(getattr(usage, "prompt_tokens", None) or getattr(usage, "input_tokens", None))
+        output_tokens = _safe_int(getattr(usage, "completion_tokens", None) or getattr(usage, "output_tokens", None))
         choices = getattr(response, "choices", None) or []
         if not choices:
             return DecisionResult(
@@ -469,6 +478,8 @@ class StructuredOutputJudge:
                 probabilities={},
                 provider="openai_structured",
                 model=model,
+                input_tokens=input_tokens,
+                output_tokens=output_tokens,
                 reason="Structured Outputs 응답에 선택지가 없습니다.",
                 latency_ms=elapsed_ms,
             )
@@ -481,6 +492,8 @@ class StructuredOutputJudge:
                 probabilities={},
                 provider="openai_structured",
                 model=model,
+                input_tokens=input_tokens,
+                output_tokens=output_tokens,
                 reason="모델이 판정 응답을 거부해 운영자 확인이 필요합니다.",
                 latency_ms=elapsed_ms,
             )
@@ -500,6 +513,8 @@ class StructuredOutputJudge:
                 probabilities={},
                 provider="openai_structured",
                 model=model,
+                input_tokens=input_tokens,
+                output_tokens=output_tokens,
                 reason="Structured Outputs 응답 파싱에 실패했습니다.",
                 latency_ms=elapsed_ms,
             )
@@ -512,13 +527,14 @@ class StructuredOutputJudge:
                 probabilities={},
                 provider="openai_structured",
                 model=model,
+                input_tokens=input_tokens,
+                output_tokens=output_tokens,
                 reason="유효하지 않은 판정 라벨이 반환되었습니다.",
                 latency_ms=elapsed_ms,
             )
 
         confidence = _safe_probability(getattr(parsed, "confidence", None))
         reason = str(getattr(parsed, "reason", "") or "").strip() or None
-        usage = getattr(response, "usage", None)
         probs = {verdict: confidence} if confidence is not None else {}
         return DecisionResult(
             verdict=verdict,  # type: ignore[arg-type]
@@ -526,8 +542,8 @@ class StructuredOutputJudge:
             probabilities=probs,
             provider="openai_structured",
             model=model,
-            input_tokens=_safe_int(getattr(usage, "prompt_tokens", None) or getattr(usage, "input_tokens", None)),
-            output_tokens=_safe_int(getattr(usage, "completion_tokens", None) or getattr(usage, "output_tokens", None)),
+            input_tokens=input_tokens,
+            output_tokens=output_tokens,
             reason=reason,
             latency_ms=elapsed_ms,
         )
@@ -559,6 +575,13 @@ def _has_unnegated_match(pattern: re.Pattern[str], text: str) -> bool:
     return False
 
 
+_SENTENCE_SPLIT_PATTERN = re.compile(r"(?:\n+|(?<=[.!?])\s+)")
+_POST_DEPLOY_DENIAL_PATTERN = re.compile(
+    r"(?:시작된\s*(?:것은|게)?\s*아님|발생한\s*(?:것은|게)?\s*아님|기인한\s*(?:것은|게)?\s*아님|not\s+(?:started|caused|triggered)\s+(?:after|by)\s+deploy)",
+    re.IGNORECASE,
+)
+
+
 def _fault_matches_runbook(runbook: str, observed_log_text: str) -> bool:
     """관측된 긍정 장애 증상이 런북이 명시한 장애 유형과 일치하는지 확인한다."""
     if not _has_unnegated_match(_FAULT_SYMPTOM_PATTERN, observed_log_text):
@@ -574,6 +597,19 @@ def _fault_matches_runbook(runbook: str, observed_log_text: str) -> bool:
         return True
     ev_families = {name for name, pat in families if _has_unnegated_match(pat, observed_log_text)}
     return bool(rb_families & ev_families)
+
+
+def _has_post_deploy_fault_matching_runbook(runbook: str, observed_log_text: str) -> bool:
+    """단일 문장/라인 단위로 배포 이후 시점 표현과 런북 부합 장애 증상이 긍정적으로 결합되어 있는지 검증한다."""
+    for sentence in _SENTENCE_SPLIT_PATTERN.split(observed_log_text):
+        clause = sentence.strip()
+        if not clause:
+            continue
+        if _POST_DEPLOY_DENIAL_PATTERN.search(clause):
+            continue
+        if _has_unnegated_match(_POST_DEPLOY_FAULT_PATTERN, clause) and _fault_matches_runbook(runbook, clause):
+            return True
+    return False
 
 
 class RuleBasedJudge:
@@ -660,9 +696,8 @@ class RuleBasedJudge:
             if _has_unnegated_match(pattern, observed_ev):
                 return self._result("NEED_MORE_EVIDENCE", 0.8, reason, t0)
 
-        # 3순위: [External]/[RUNBOOK]을 제외한 실제 관측 로그에서 배포 후 런북 조건에 부합하는 긍정 장애 증상 + 기준 배포 악화(또는 비-HTTP 장애) + 긍정 후보 정상 검증이 모두 확인될 때만 SUPPORTED
-        has_post_deploy = bool(_POST_DEPLOY_FAULT_PATTERN.search(non_external_ev))
-        has_fault_symptom = _fault_matches_runbook(rb, non_external_ev)
+        # 3순위: [External]/[RUNBOOK]을 제외한 실제 관측 로그에서 동일 문장 내 배포 후 런북 부합 긍정 장애 증상 + 기준 배포 악화(또는 비-HTTP 장애) + 긍정 후보 정상 검증이 모두 확인될 때만 SUPPORTED
+        has_post_deploy_fault = _has_post_deploy_fault_matching_runbook(rb, non_external_ev)
         ref_is_abnormal = independent_non_http_fault or not ref_is_healthy
         http_metric_relevant = not (independent_non_http_fault and ref_is_healthy)
         has_healthy_candidate = (
@@ -670,7 +705,7 @@ class RuleBasedJudge:
             or _has_unnegated_match(_HEALTHY_CANDIDATE_PATTERN, non_external_ev)
         )
 
-        if has_post_deploy and has_fault_symptom and ref_is_abnormal and has_healthy_candidate:
+        if has_post_deploy_fault and ref_is_abnormal and has_healthy_candidate:
             return self._result(
                 "SUPPORTED",
                 0.8,

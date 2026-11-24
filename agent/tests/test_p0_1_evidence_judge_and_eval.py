@@ -125,9 +125,11 @@ async def test_structured_output_judge_verdicts_fallback_paths_and_fail_closed()
     raw_json_judge = StructuredOutputJudge(_settings(), openai_client=_fake_structured_openai(verdict="NEED_MORE_EVIDENCE", raw_json_only=True))
     assert (await raw_json_judge.judge_plan_evidence(proposed_action="a", runbook="b", evidence="c")).verdict == "NEED_MORE_EVIDENCE"
 
-    # 거부(refusal), 예외, API 키 누락 시 모두 UNDECIDABLE fail-closed
+    # 거부(refusal), 예외, API 키 누락 시 모두 UNDECIDABLE fail-closed (거부 응답에서도 토큰 사용량 보존)
     refused = StructuredOutputJudge(_settings(), openai_client=_fake_structured_openai(refusal="cannot comply"))
-    assert (await refused.judge_plan_evidence(proposed_action="a", runbook="b", evidence="c")).verdict == "UNDECIDABLE"
+    refused_res = await refused.judge_plan_evidence(proposed_action="a", runbook="b", evidence="c")
+    assert refused_res.verdict == "UNDECIDABLE"
+    assert refused_res.input_tokens == 180 and refused_res.output_tokens == 32
 
     failing_client = SimpleNamespace(chat=SimpleNamespace(completions=SimpleNamespace(parse=lambda **kw: (_ for _ in ()).throw(RuntimeError("api down")))))
     errored = StructuredOutputJudge(_settings(), openai_client=failing_client)
@@ -473,6 +475,21 @@ async def test_rule_based_judge_fail_closed_behavior():
         max_error_rate_percent=1.0,
     )
     assert mismatched_fault_category.verdict == "NEED_MORE_EVIDENCE"
+
+    # Codex 12차 P2 회귀 테스트: 장애와 무관한 문장의 '배포 후' 또는 부정된 배포 인과관계로 SUPPORTED 불가
+    unrelated_deploy_sentence = await judge.judge_plan_evidence(
+        proposed_action="Rollback payment-service to v41",
+        runbook="배포 후 502 급증 및 이전 버전 정상 시 롤백한다.",
+        evidence="[LOG-1] 502 급증, 최초 발생 시각은 조사 중.\n[LOG-2] v42 배포 후 정기 점검 완료.\n[External] 기준 배포 v42 502 비율=18.0%, 후보 v41 502 비율=0.3%",
+    )
+    assert unrelated_deploy_sentence.verdict == "NEED_MORE_EVIDENCE"
+
+    denied_post_deploy = await judge.judge_plan_evidence(
+        proposed_action="Rollback payment-service to v41",
+        runbook="배포 후 502 급증 및 이전 버전 정상 시 롤백한다.",
+        evidence="[LOG-1] 502 급증. v42 배포 후 시작된 것은 아님.\n[External] 기준 배포 v42 502 비율=18.0%, 후보 v41 502 비율=0.3%",
+    )
+    assert denied_post_deploy.verdict == "NEED_MORE_EVIDENCE"
 
 
 def test_bundled_golden_dataset_integrity_and_balance():
