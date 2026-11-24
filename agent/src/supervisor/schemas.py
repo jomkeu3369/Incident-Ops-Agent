@@ -44,7 +44,7 @@ class SessionLogsResponse(BaseModel):
 
 
 class AnomalyFindingItem(BaseModel):
-    """규칙 기반 이상 징후 탐지 항목 스키마 (F3020)."""
+    """규칙 기반 이상 징후 탐지 항목 스키마."""
 
     rule: Literal["REPEATED_IDENTICAL_CALL", "EXCESSIVE_REPLAN", "UNPLANNED_TOOL_CALL"]
     severity: Literal["WARN", "HIGH"]
@@ -53,7 +53,7 @@ class AnomalyFindingItem(BaseModel):
 
 
 class SessionAnomalyResponse(BaseModel):
-    """특정 세션의 이상 징후 분석 결과 응답 스키마 (F3020)."""
+    """특정 세션의 이상 징후 분석 결과 응답 스키마."""
 
     sessionId: str
     status: Literal["NORMAL", "ANOMALY", "UNDETERMINED"]
@@ -64,7 +64,7 @@ class SessionAnomalyResponse(BaseModel):
 
 
 class ManagedPlanCreate(BaseModel):
-    """플래너 작업 계획 생성 요청 스키마 (F3015)."""
+    """플래너 작업 계획 생성 요청 스키마."""
 
     planId: str | None = None
     incidentCode: str = Field(..., min_length=1)
@@ -86,7 +86,7 @@ class ManagedPlanCreate(BaseModel):
 
 
 class ManagedPlanUpdate(BaseModel):
-    """플래너 작업 계획 수정 요청 스키마 (F3016)."""
+    """플래너 작업 계획 수정 요청 스키마."""
 
     title: str | None = None
     planDate: str | None = Field(default=None, pattern=r"^\d{4}-\d{2}-\d{2}$")

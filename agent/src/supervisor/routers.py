@@ -43,7 +43,7 @@ async def run_ag_ui(run_input: RunAgentInput, request: Request, operator_id: str
     return StreamingResponse(stream, media_type="text/event-stream", headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
 
 
-# --- 세션 실행 로그 조회·삭제 API (F3014: 수정 API 미제공) ---
+# --- 세션 실행 로그 조회·삭제 API (수정 API 미제공) ---
 
 @router.get("/sessions", response_model=list[SessionSummary])
 async def list_sessions(store: SupervisorRedisStore = Depends(get_supervisor_store)) -> list[SessionSummary]:
@@ -61,7 +61,7 @@ async def get_session_logs(session_id: str, store: SupervisorRedisStore = Depend
 
 
 def get_anomaly_analyzer(cfg: Settings = Depends(get_settings)) -> SessionAnomalyAnalyzer:
-    """세션 실행 로그 이상 징후 분석기(F3020)를 DI로 주입한다."""
+    """세션 실행 로그 이상 징후 분석기를 DI로 주입한다."""
     return SessionAnomalyAnalyzer(settings=cfg)
 
 
@@ -98,7 +98,7 @@ async def delete_session_logs(session_id: str, store: SupervisorRedisStore = Dep
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"실행 로그를 찾을 수 없습니다: {session_id}")
 
 
-# --- 플래너 작업 계획 관리 API (F3015~F3016: 날짜 포함, 시간 겹침 경고) ---
+# --- 플래너 작업 계획 관리 API (날짜 포함, 시간 겹침 경고) ---
 
 @router.get("/plans", response_model=list[ManagedPlanItem])
 async def list_managed_plans(store: SupervisorRedisStore = Depends(get_supervisor_store)) -> list[ManagedPlanItem]:

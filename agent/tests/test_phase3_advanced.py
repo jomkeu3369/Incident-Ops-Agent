@@ -14,10 +14,10 @@ from supervisor.main import create_supervisor_app
 from supervisor.routers import get_anomaly_analyzer
 
 
-# --- F3020: 로깅 이상 징후 판단 테스트 ---
+# --- 로깅 이상 징후 판단 테스트 ---
 
 
-async def test_f3020_normal_session_uses_zero_llm_calls() -> None:
+async def test_anomaly_normal_session_uses_zero_llm_calls() -> None:
     """정상 실행 로그는 NORMAL로 판정하고 LLM을 0회 호출해야 한다."""
     called = 0
 
@@ -41,7 +41,7 @@ async def test_f3020_normal_session_uses_zero_llm_calls() -> None:
     assert called == 0
 
 
-async def test_f3020_missing_evidence_returns_undetermined_with_zero_llm() -> None:
+async def test_anomaly_missing_evidence_returns_undetermined_with_zero_llm() -> None:
     """빈 로그나 판정 근거 없는 이벤트만 있으면 UNDETERMINED(판정 불가)와 LLM 0회를 반환한다."""
     analyzer = SessionAnomalyAnalyzer()
     empty_report = await analyzer.analyze("sess-empty", [])
@@ -53,7 +53,7 @@ async def test_f3020_missing_evidence_returns_undetermined_with_zero_llm() -> No
     assert irrelevant_report.llm_calls == 0
 
 
-async def test_f3020_detects_repeated_call_excessive_replan_and_unplanned_tool_with_3_sentence_diagnosis() -> None:
+async def test_anomaly_detects_repeated_call_excessive_replan_and_unplanned_tool_with_3_sentence_diagnosis() -> None:
     """동일 입력 반복, 과다 재계획, 미계획 Tool 호출을 탐지하고 이상 건에만 3문장 진단을 생성한다."""
     called = 0
 
@@ -84,7 +84,7 @@ async def test_f3020_detects_repeated_call_excessive_replan_and_unplanned_tool_w
     assert "네 번째" not in report.diagnosis
 
 
-def test_f3020_supervisor_session_anomaly_endpoint() -> None:
+def test_anomaly_supervisor_session_endpoint() -> None:
     """Supervisor GET /api/ag-ui/sessions/{session_id}/anomalies 엔드포인트가 정상 동작한다."""
     settings = Settings(internal_service_token="test-token")
     app = create_supervisor_app(settings)
@@ -114,10 +114,10 @@ def test_f3020_supervisor_session_anomaly_endpoint() -> None:
         assert body["findings"][0]["rule"] == "REPEATED_IDENTICAL_CALL"
 
 
-# --- F3021: Planner·Worker LLM 분리 비교 테스트 ---
+# --- Planner·Worker LLM 분리 비교 테스트 ---
 
 
-async def test_f3021_split_worker_uses_zero_llm_on_happy_path_and_reduces_calls() -> None:
+async def test_split_worker_uses_zero_llm_on_happy_path_and_reduces_calls() -> None:
     """정상 경로에서 Worker LLM 호출은 0회이며 통합형 대비 LLM 호출이 크게 감소한다."""
     async def runner(tool: str, args: dict) -> dict:
         return {"ok": True, "data": {"tool": tool, "args": args}}
@@ -140,7 +140,7 @@ async def test_f3021_split_worker_uses_zero_llm_on_happy_path_and_reduces_calls(
     assert metrics.fixed_args_preserved_all is True
 
 
-async def test_f3021_retryable_failure_preserves_fixed_args_and_non_retryable_skips_llm() -> None:
+async def test_split_worker_retryable_failure_preserves_fixed_args_and_non_retryable_skips_llm() -> None:
     """NO_RESULT 실패 시에만 Worker LLM을 호출하고, LLM이 고정 인자 변조를 시도해도 강제 보존한다."""
     seen_args: list[dict] = []
 
@@ -181,10 +181,10 @@ async def test_f3021_retryable_failure_preserves_fixed_args_and_non_retryable_sk
     assert repair_calls == 1
 
 
-# --- F3023: 로컬 저장소 ↔ Google Calendar 교체형 어댑터 테스트 ---
+# --- 로컬 저장소 ↔ Google Calendar 교체형 어댑터 테스트 ---
 
 
-async def test_f3023_local_calendar_adapter_swaps_with_google_calendar(tmp_path: Path) -> None:
+async def test_calendar_local_adapter_swaps_with_google_calendar(tmp_path: Path) -> None:
     """ExternalToolsClient가 코드 변경 없이 LocalFreezeCalendarAdapter로 교체되어 동일 계약을 반환한다."""
     cal_file = tmp_path / "freeze-windows.json"
     local_adapter = LocalFreezeCalendarAdapter(storage_path=cal_file)
@@ -208,7 +208,7 @@ async def test_f3023_local_calendar_adapter_swaps_with_google_calendar(tmp_path:
     assert res["data"]["freezeWindows"][0]["end"] == "2026-11-18T14:40:00+09:00"
 
 
-async def test_f3023_local_calendar_adapter_reloads_when_file_updates(tmp_path: Path) -> None:
+async def test_calendar_local_adapter_reloads_when_file_updates(tmp_path: Path) -> None:
     """애플리케이션 기동 이후 로컬 캘린더 파일이 갱신되면 새 변경 금지 구간을 즉시 다시 읽어야 한다(P1 회귀)."""
     cal_file = tmp_path / "freeze-live.json"
     writer = LocalFreezeCalendarAdapter(storage_path=cal_file)
@@ -229,7 +229,7 @@ async def test_f3023_local_calendar_adapter_reloads_when_file_updates(tmp_path: 
     assert len(second["data"]["freezeWindows"]) == 2
 
 
-async def test_f3020_fallback_diagnosis_reports_zero_llm_calls_and_legit_replan_not_flagged() -> None:
+async def test_anomaly_fallback_diagnosis_reports_zero_llm_calls_and_legit_replan_not_flagged() -> None:
     """폴백 진단은 llmCalls=0을 보고하고, 근거 청크가 늘어난 정상 재계획은 동일 입력 반복으로 오탐하지 않는다(P2 회귀)."""
     replan_events = [
         {"eventType": "step_finished", "payload": {"step": "plan", "steps": ["a2a:log-analyzer-agent", "a2a:remediation-agent"]}},
@@ -252,7 +252,7 @@ async def test_f3020_fallback_diagnosis_reports_zero_llm_calls_and_legit_replan_
     assert fallback_report.llm_calls == 0
 
 
-async def test_f3021_multi_retry_accumulates_mutable_repairs_while_preserving_fixed_args() -> None:
+async def test_split_worker_multi_retry_accumulates_mutable_repairs_while_preserving_fixed_args() -> None:
     """max_retries > 1에서 단계별 부분 보정(environment -> region)이 유실되지 않고 누적되어야 한다(P2 회귀)."""
     async def runner(tool: str, args: dict) -> dict:
         if args.get("environment") != "prod-kr":

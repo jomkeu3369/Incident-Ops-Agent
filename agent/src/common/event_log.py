@@ -48,7 +48,7 @@ class LoggingSubAgent:
 
     def __init__(self, log_writer: Callable[[str, dict[str, Any]], Awaitable[None]]) -> None:
         self._write_log = log_writer
-        self.llm_calls = 0  # 요구사항 F3013 검증용: 수집·저장 시 LLM 호출 0회 보장
+        self.llm_calls = 0  # 로그 수집·저장 단계 LLM 호출 0회 보장 검증용 카운터
 
     async def handle_event(self, event: dict[str, Any]) -> None:
         """수신한 원본 이벤트를 가공 없이 세션 실행 로그 저장소에 추가한다."""

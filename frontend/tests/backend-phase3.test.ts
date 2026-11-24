@@ -300,3 +300,19 @@ test("normalizeKstTimestamp and timeLabel treat offset-less Spring LocalDateTime
   assert.equal(timeLabel("2026-11-18T14:06:00"), "14:06");
   assert.equal(timeLabel("2026-11-18T05:06:00Z"), "14:06");
 });
+
+test("hydrateSnapshotFromDetail selects the newest plan (plans[0]) when approvals are empty", () => {
+  const detailNewestFirst: BackendIncidentDetail = {
+    ...sampleDetail,
+    incident: { ...sampleDetail.incident, status: "OPEN" },
+    plans: [
+      { ...sampleDetail.plans[0], id: 2, planId: "PLAN-2026-002", createdAt: "2026-11-18T14:15:00" },
+      { ...sampleDetail.plans[0], id: 1, planId: "PLAN-2026-001", createdAt: "2026-11-18T14:07:00" },
+    ],
+    approvals: [],
+  };
+
+  const snap = hydrateSnapshotFromDetail(detailNewestFirst);
+  assert.equal(snap.workflowStatus, "IDLE");
+  assert.equal(snap.plan?.planId, "PLAN-2026-002");
+});

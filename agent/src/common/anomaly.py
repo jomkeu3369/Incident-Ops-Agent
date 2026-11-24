@@ -42,7 +42,7 @@ class AnomalyFinding:
 
 @dataclass(frozen=True)
 class AnomalyReport:
-    """세션 실행 로그 이상 징후 판단 리포트 (F3020)."""
+    """세션 실행 로그 이상 징후 판단 리포트."""
 
     session_id: str
     status: AnomalyStatus
@@ -174,7 +174,7 @@ def evaluate_session_rules(
 
 
 class SessionAnomalyAnalyzer:
-    """규칙 기반 이상 징후 판정 후 이상 건에만 LLM 3문장 진단을 수행하는 분석기(F3020)."""
+    """규칙 기반 이상 징후 판정 후 이상 건에만 LLM 3문장 진단을 수행하는 분석기."""
 
     def __init__(
         self,

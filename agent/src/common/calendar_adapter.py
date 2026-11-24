@@ -19,7 +19,7 @@ def _err(code: str, message: str) -> dict[str, Any]:
 
 @runtime_checkable
 class FreezeCalendarAdapter(Protocol):
-    """변경 금지 시간 조회를 위한 교체형 어댑터 인터페이스 (로컬 저장소 ↔ Google Calendar, F3023)."""
+    """변경 금지 시간 조회를 위한 교체형 어댑터 인터페이스 (로컬 저장소 ↔ Google Calendar)."""
 
     async def get_freeze_windows(self, service_name: str, window_start: str, window_end: str) -> dict[str, Any]:
         """허용 구간과 겹치는 변경 금지 구간 목록을 공통 {ok, data | error} 계약으로 반환한다."""

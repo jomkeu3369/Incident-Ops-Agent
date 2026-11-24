@@ -62,7 +62,7 @@
 
 | 기능 | 구현 위치 | 검증 근거 |
 | :--- | :--- | :--- |
-| 백엔드 API 서버 | FastAPI 3종(`supervisor`, `log_agent`, `remediation_agent`) + Spring Boot | `test_bootstrap_security_di.py`, Maven 23건 |
+| 백엔드 API 서버 | FastAPI 3종(`supervisor`, `log_agent`, `remediation_agent`) + Spring Boot | `test_bootstrap_security_di.py`, Maven 32건 |
 | 프론트엔드 화면 | `frontend/app/workspace.tsx`, `plans-panel.tsx`, `sessions-panel.tsx` | `ag-ui-phase2`, `backend-phase3`, `admin-phase4` |
 | 실행 과정·상태 표시 | 단계·Tool 이력·재계획 구분·로딩·오류 안내·실행 재개·포스트모템 | `ag-ui-phase2.test.ts`, `backend-phase3.test.ts` |
 | 모듈 분리 | `backend/`, `agent/src/{common,log_agent,remediation_agent,supervisor}`, `frontend/app/` | 저장소 구조 |
@@ -110,12 +110,12 @@
 
 ## 5. 자동화 테스트
 
-문서화 시점에 기록한 결과이며, 이 문서를 개정하면서 다시 실행한 값은 아닙니다.
+통합 `main` 기준 최신 검증 실행 결과입니다.
 
-* **Backend (`backend/`):** Maven 테스트 **23건** (REST, MyBatis 트랜잭션·멱등성, 승인 검증, MCP 4종)
-* **Agent (`agent/`):** `pytest agent/tests` **55건** (DI·보안 4, Tool·Decisions 10, MCP·A2A 4, AG-UI·로깅 2, 시나리오 5종·비기능 11, Redis 복원력·동시성·보안 14, 심화·회귀 10)
-* **Frontend (`frontend/`):** `tsc --noEmit`, `next build`, `npm test` **16건** (AG-UI `HttpAgent` 실 SSE, Spring SSR/BFF·토큰 미노출, KST 정규화, 계획 CRUD·겹침 경고, 실행 로그·이상 징후 분석)
-* **합계:** 94건
+* **Backend (`backend/`):** Maven JUnit 테스트 **32건 통과** (`InternalTokenFilterTest` 13, `GlobalExceptionHandlerTest` 3, `IncidentMcpToolsTest` 3, `IncidentServiceTest` 13)
+* **Agent (`agent/`):** `pytest` **55건 통과** (DI·보안 4, Tool·Decisions 10, MCP·A2A 4, AG-UI·로깅 2, 시나리오 5종·비기능 11, Redis 복원력·동시성·보안 14, 심화·회귀 10)
+* **Frontend (`frontend/`):** `tsc --noEmit`, `next build`, `npm test` **18건** (단위 테스트 14건 통과 + `TEST_AG_UI_BASE_URL` 설정 시 실행되는 실서버 통합 테스트 4건)
+* **합계:** **105건** (오프라인 단독 실행 101건 통과 + 실서버 통합 4건 조건부 실행)
 
 ---
 

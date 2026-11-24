@@ -443,7 +443,7 @@ class SupervisorRedisStore:
             self._deleted_logs.add(session_id)
         return True
 
-    # --- 3) 작업 계획 관리 CRUD (F3015~F3016, 동일 날짜 시간 겹침 경고) ---
+    # --- 3) 작업 계획 관리 CRUD (동일 날짜 시간 겹침 경고) ---
 
     async def _list_plans_for_mutation(self) -> list[ManagedPlanItem]:
         """작업 계획 변경 전 기존 일정 전체를 조회하며, Redis 단절로 불완전한 경우 StoreUnavailableError를 발생시킨다."""

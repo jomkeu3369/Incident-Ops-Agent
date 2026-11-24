@@ -25,7 +25,7 @@ def _err(code: str, message: str) -> dict[str, Any]:
 
 
 def get_external_tool_specs() -> list[dict[str, Any]]:
-    """에이전트가 선택·호출할 외부 API Tool 3종 명세(F3001)를 반환한다."""
+    """에이전트가 선택·호출할 외부 API Tool 3종 명세를 반환한다."""
     return [
         {
             "name": "list_rollback_candidates",

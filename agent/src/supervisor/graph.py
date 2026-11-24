@@ -135,7 +135,7 @@ def _find_unfinished_plan_approval(detail: dict[str, Any] | None) -> dict[str, A
 
 
 def _extract_constraints(message: str, prev: dict[str, Any], incident_started_at: str | None) -> tuple[dict[str, Any], str, str]:
-    """사용자 메시지에서 의도와 제약 조건을 추출해 이전 대화 조건과 병합한다(F3005, F3010)."""
+    """사용자 메시지에서 의도와 제약 조건을 추출해 이전 대화 조건과 병합한다."""
     text = message.strip()
     lower = text.lower()
     merged = dict(prev or {})
@@ -465,7 +465,7 @@ def build_supervisor_graph(settings: Settings, http_client: httpx.AsyncClient, b
         return {"should_replan": False, "workflow_status": "BLOCKED", "snapshot": snapshot, "replan_history": replan_history, "ui_events": ui}
 
     async def respond_node(state: SupervisorState) -> SupervisorState:
-        """5단계: 근거·판단 기준·제외 사유·재계획 내역을 포함한 최종 응답을 생성한다(F3011)."""
+        """5단계: 근거·판단 기준·제외 사유·재계획 내역을 포함한 최종 응답을 생성한다."""
         sid = state["session_id"]
         ui = list(state.get("ui_events") or [])
         await _emit(ui, {"kind": "step_start", "step": "respond"})
