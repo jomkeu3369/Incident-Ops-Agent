@@ -499,9 +499,9 @@ _PRE_NEGATION_PATTERN = re.compile(
 )
 
 _POST_NEGATION_PATTERN = re.compile(
-    r"^(?:\s+(?:마이그레이션|변경|이슈|현상|징후|원인|여부|기록|사례))?"
-    r"(?:\s*(?:은|는|이|가|도)?\s*(?:없음|없다|없으며|없었고|없어|아님|아니며|아니고|아니다|미발생|배제됨?|해당\s*없음)|"
-    r"\s*(?:is\s+|was\s+)?(?:not\s+(?:detected|observed|present|found|applicable)|ruled\s+out|absent|none|n/a)\b)",
+    r"^(?:\s+(?:마이그레이션|변경|이슈|현상|징후|원인|여부|기록|사례|확인))?"
+    r"(?:\s*(?:은|는|이|가|도|이지)?\s*(?:없음|없다|없으며|없었고|없어|아님|아니며|아니고|아니다|않음|않다|안\s*됨|미발생|불가|배제됨?|해당\s*없음)|"
+    r"\s*(?:is\s+|was\s+)?(?:not\s+(?:detected|observed|present|found|applicable|healthy|normal|stable|confirmed)|ruled\s+out|absent|none|n/a)\b)",
     re.IGNORECASE,
 )
 
@@ -599,7 +599,7 @@ class RuleBasedJudge:
         ref_is_abnormal = ref_rate is None or ref_rate >= threshold
         has_healthy_candidate = (
             (cand_rate is not None and cand_rate < threshold)
-            or bool(_HEALTHY_CANDIDATE_PATTERN.search(non_external_ev))
+            or _has_unnegated_match(_HEALTHY_CANDIDATE_PATTERN, non_external_ev)
         )
 
         if has_post_deploy and has_fault_symptom and ref_is_abnormal and has_healthy_candidate:
@@ -618,16 +618,16 @@ class RuleBasedJudge:
         )
 
     def _resolve_threshold(self, runbook: str, max_error_rate_percent: float | None) -> float:
-        """요청 임계치 -> 런북 명시 임계치 -> 기본 임계치 순으로 후보 허용 오류율을 결정한다."""
+        """요청 임계치와 런북 명시 임계치 중 더 엄격한(낮은) 기준을 적용하고, 둘 다 없으면 기본 임계치를 사용한다."""
+        limits: list[float] = []
         if max_error_rate_percent is not None and math.isfinite(max_error_rate_percent) and max_error_rate_percent > 0.0:
-            return float(max_error_rate_percent)
-        match = _RUNBOOK_THRESHOLD_PATTERN.search(runbook)
-        if match:
+            limits.append(float(max_error_rate_percent))
+        for match in _RUNBOOK_THRESHOLD_PATTERN.finditer(runbook):
             raw = match.group(1) or match.group(2)
             parsed = _parse_finite_rate(raw) if raw else None
             if parsed is not None and parsed > 0.0:
-                return parsed
-        return self._max_healthy_candidate_rate
+                limits.append(parsed)
+        return min(limits) if limits else self._max_healthy_candidate_rate
 
     def _result(self, verdict: Verdict, confidence: float, reason: str, t0: float) -> DecisionResult:
         elapsed_ms = round((time.perf_counter() - t0) * 1000.0, 3)

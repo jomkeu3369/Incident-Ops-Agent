@@ -328,6 +328,23 @@ async def test_rule_based_judge_fail_closed_behavior():
     )
     assert regression_without_candidate_health.verdict == "NEED_MORE_EVIDENCE"
 
+    # Codex 6차 P2 회귀 테스트 1: 런북이 요청 임계치(1.0%)보다 더 엄격한 기준(0.1% 미만)을 요구하면 런북 기준 우선(min) 적용
+    stricter_runbook = await judge.judge_plan_evidence(
+        proposed_action="Rollback payment-service to v41",
+        runbook="배포 후 502 급증 및 후보 오류율 0.1% 미만일 때만 롤백을 제안한다.",
+        evidence="[LOG-1] v42 배포 직후 HikariPool timeout 및 502 급증\n[External] 기준 배포 v42 502 비율=18.0%, 후보 v41 502 비율=0.3%",
+        max_error_rate_percent=1.0,
+    )
+    assert stricter_runbook.verdict == "CONTRADICTED"
+
+    # Codex 6차 P2 회귀 테스트 2: '이전 버전 정상 아님' 등 부정된 후보 정상 진술은 승인 근거로 인정 금지
+    negated_health = await judge.judge_plan_evidence(
+        proposed_action="Rollback payment-service to v41",
+        runbook="배포 후 502 급증 및 이전 버전 정상 시 롤백한다.",
+        evidence="[LOG-1] v42 배포 후 502 급증. 이전 버전 정상 아님.\n[External] 기준 배포 v42 502 비율=18.0%",
+    )
+    assert negated_health.verdict == "NEED_MORE_EVIDENCE"
+
 
 def test_bundled_golden_dataset_integrity_and_balance():
     """내장 30건 다중 장애 평가 데이터셋의 스키마·라벨 균형·다중 서비스·인젝션 포함 여부를 검증한다."""
