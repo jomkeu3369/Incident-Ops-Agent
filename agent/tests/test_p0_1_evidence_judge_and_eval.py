@@ -180,19 +180,45 @@ async def test_fallback_evidence_judge_only_falls_back_on_undecidable_and_stays_
     import asyncio as _asyncio
 
     class SlowStubJudge:
-        def __init__(self, verdict: str, delay_s: float, reported_ms: float) -> None:
+        def __init__(self, verdict: str, delay_s: float, reported_ms: float, *, model: str = "stub", in_tok: int = 0, out_tok: int = 0) -> None:
             self._verdict = verdict
             self._delay_s = delay_s
             self._reported_ms = reported_ms
+            self._model = model
+            self._in_tok = in_tok
+            self._out_tok = out_tok
 
         async def judge_plan_evidence(self, *, proposed_action: str, runbook: str, evidence: str, max_error_rate_percent: float | None = None) -> DecisionResult:
             await _asyncio.sleep(self._delay_s)
-            return DecisionResult(verdict=self._verdict, confidence=0.9 if self._verdict != "UNDECIDABLE" else None, probabilities={}, provider="stub", model="stub", latency_ms=self._reported_ms)
+            return DecisionResult(
+                verdict=self._verdict,
+                confidence=0.9 if self._verdict != "UNDECIDABLE" else None,
+                probabilities={},
+                provider="stub",
+                model=self._model,
+                input_tokens=self._in_tok,
+                output_tokens=self._out_tok,
+                latency_ms=self._reported_ms,
+            )
 
-    fb_timed = FallbackEvidenceJudge(SlowStubJudge("UNDECIDABLE", 0.05, 50.0), SlowStubJudge("SUPPORTED", 0.01, 10.0))
+    fb_timed = FallbackEvidenceJudge(
+        SlowStubJudge("UNDECIDABLE", 0.05, 50.0, model="gpt-6-luna", in_tok=180, out_tok=32),
+        SlowStubJudge("SUPPORTED", 0.01, 10.0, model="gpt-4o", in_tok=200, out_tok=40),
+    )
     timed_res = await fb_timed.judge_plan_evidence(proposed_action="a", runbook="b", evidence="c")
     assert timed_res.verdict == "SUPPORTED"
     assert timed_res.latency_ms is not None and timed_res.latency_ms >= 50.0
+    assert timed_res.input_tokens == 380 and timed_res.output_tokens == 72
+    assert timed_res.usage_breakdown == (("gpt-6-luna", 180, 32), ("gpt-4o", 200, 40))
+
+    # 평가 하네스에서도 폴백 복합 판정기의 모델별 단가 합산 비용이 정확히 집계되어야 한다
+    mini_case = [
+        IncidentEvalCase(case_id="FB-1", category="db_connection_pool", service_name="svc", expected_verdict="SUPPORTED", proposed_action="a", runbook="r", evidence="e", rationale="ok")
+    ]
+    fb_report = await evaluate_judge(fb_timed, mini_case, judge_name="auto", concurrency=1)
+    expected_cost = round((180 * 0.15 + 32 * 0.60 + 200 * 2.50 + 40 * 10.00) / 1_000_000.0, 6)
+    assert fb_report.total_input_tokens == 380 and fb_report.total_output_tokens == 72
+    assert fb_report.estimated_cost_usd == pytest.approx(expected_cost)
 
 
 async def test_build_evidence_judge_and_di_container_modes():
@@ -490,6 +516,14 @@ async def test_rule_based_judge_fail_closed_behavior():
         evidence="[LOG-1] 502 급증. v42 배포 후 시작된 것은 아님.\n[External] 기준 배포 v42 502 비율=18.0%, 후보 v41 502 비율=0.3%",
     )
     assert denied_post_deploy.verdict == "NEED_MORE_EVIDENCE"
+
+    # Codex 13차 P2 회귀 테스트: 런북이 명시적 수치 상한('후보 오류율 0.1% 미만')을 요구하면 정성 문구('이전 버전 정상')만으로 SUPPORTED 불가
+    explicit_limit_without_metric = await judge.judge_plan_evidence(
+        proposed_action="Rollback payment-service to v41",
+        runbook="배포 후 502 급증 및 후보 오류율 0.1% 미만일 때만 롤백한다.",
+        evidence="[LOG-1] v42 배포 후 502 급증. 이전 버전 정상.",
+    )
+    assert explicit_limit_without_metric.verdict == "NEED_MORE_EVIDENCE"
 
 
 def test_bundled_golden_dataset_integrity_and_balance():

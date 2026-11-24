@@ -143,6 +143,14 @@ def _estimate_cost_usd(model: str, input_tokens: int, output_tokens: int) -> flo
     return round(cost, 6)
 
 
+def _estimate_result_cost_usd(res: DecisionResult) -> float:
+    """단일 판정 결과의 모델별 토큰 내역(폴백 포함)을 반영해 예상 USD 비용을 계산한다."""
+    if res.usage_breakdown:
+        total = sum(_estimate_cost_usd(m, in_t, out_t) for m, in_t, out_t in res.usage_breakdown)
+        return round(total, 6)
+    return _estimate_cost_usd(res.model, res.input_tokens or 0, res.output_tokens or 0)
+
+
 def _compute_report(
     *,
     judge_name: str,
@@ -150,6 +158,7 @@ def _compute_report(
     model: str,
     dataset_version: str,
     case_evals: list[CaseEvaluation],
+    total_cost_usd: float | None = None,
 ) -> EvaluationReport:
     """케이스별 평가 결과에서 정확도·위험 오승인율(FSR)·혼동 행렬·지연/비용을 집계한다."""
     total = len(case_evals)
@@ -241,7 +250,7 @@ def _compute_report(
         latency_p95_ms=_percentile(latencies, 95.0),
         total_input_tokens=total_in,
         total_output_tokens=total_out,
-        estimated_cost_usd=_estimate_cost_usd(model, total_in, total_out),
+        estimated_cost_usd=round(total_cost_usd, 6) if total_cost_usd is not None else _estimate_cost_usd(model, total_in, total_out),
         per_label=per_label,
         per_category=per_category,
         confusion_matrix=confusion,
@@ -306,6 +315,7 @@ async def evaluate_judge(
 
     pairs = await asyncio.gather(*(_run_case(c) for c in cases))
     case_evals = [p[0] for p in pairs]
+    total_cost_usd = sum(_estimate_result_cost_usd(p[1]) for p in pairs)
     first_res = pairs[0][1]
     return _compute_report(
         judge_name=judge_name,
@@ -313,6 +323,7 @@ async def evaluate_judge(
         model=first_res.model,
         dataset_version=version,
         case_evals=case_evals,
+        total_cost_usd=total_cost_usd,
     )
 
 

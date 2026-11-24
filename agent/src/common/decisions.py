@@ -198,6 +198,7 @@ class DecisionResult:
     reason: str | None = None
     output_tokens: int | None = None
     latency_ms: float | None = None
+    usage_breakdown: tuple[tuple[str, int, int], ...] = ()
 
 
 @runtime_checkable
@@ -635,7 +636,7 @@ class RuleBasedJudge:
         if not ev or not rb:
             return self._result("NEED_MORE_EVIDENCE", 0.85, "런북 또는 수집 근거가 비어 있어 추가 확인이 필요합니다.", t0)
 
-        limits = self._resolve_rate_limits(rb, max_error_rate_percent)
+        limits, has_explicit_runbook_limit = self._resolve_rate_limits(rb, max_error_rate_percent)
 
         # 0순위(런북 정책 우선): 제안 조치(롤백)가 런북에서 무조건 금지되었거나 허용 근거가 없으면 fail-closed 차단
         is_rollback_action = bool(_ROLLBACK_ACTION_PATTERN.search(action))
@@ -700,10 +701,13 @@ class RuleBasedJudge:
         has_post_deploy_fault = _has_post_deploy_fault_matching_runbook(rb, non_external_ev)
         ref_is_abnormal = independent_non_http_fault or not ref_is_healthy
         http_metric_relevant = not (independent_non_http_fault and ref_is_healthy)
-        has_healthy_candidate = (
-            (http_metric_relevant and cand_rate is not None and all(lim.is_healthy(cand_rate) for lim in limits))
-            or _has_unnegated_match(_HEALTHY_CANDIDATE_PATTERN, non_external_ev)
+        numeric_candidate_healthy = (
+            http_metric_relevant and cand_rate is not None and all(lim.is_healthy(cand_rate) for lim in limits)
         )
+        qualitative_candidate_healthy = (
+            not has_explicit_runbook_limit and _has_unnegated_match(_HEALTHY_CANDIDATE_PATTERN, non_external_ev)
+        )
+        has_healthy_candidate = numeric_candidate_healthy or qualitative_candidate_healthy
 
         if has_post_deploy_fault and ref_is_abnormal and has_healthy_candidate:
             return self._result(
@@ -720,24 +724,27 @@ class RuleBasedJudge:
             t0,
         )
 
-    def _resolve_rate_limits(self, runbook: str, max_error_rate_percent: float | None) -> list[_RateLimit]:
+    def _resolve_rate_limits(self, runbook: str, max_error_rate_percent: float | None) -> tuple[list[_RateLimit], bool]:
         """요청 임계치와 런북 명시 임계치(0.0% 및 미만/이하 구분 포함)를 모두 수집한다."""
         limits: list[_RateLimit] = []
         if max_error_rate_percent is not None and math.isfinite(max_error_rate_percent) and max_error_rate_percent >= 0.0:
             limits.append(_RateLimit(value=float(max_error_rate_percent), inclusive=False))
+        has_explicit_runbook_limit = False
         for match in _RUNBOOK_THRESHOLD_PATTERN.finditer(runbook):
             if match.group(1) is not None:
                 parsed = _parse_finite_rate(match.group(1))
                 if parsed is not None:
                     limits.append(_RateLimit(value=parsed, inclusive=(match.group(2) == "이하")))
+                    has_explicit_runbook_limit = True
             elif match.group(4) is not None:
                 parsed = _parse_finite_rate(match.group(4))
                 if parsed is not None:
                     op = (match.group(3) or "").strip().lower()
                     limits.append(_RateLimit(value=parsed, inclusive=(op in {"<=", "at most"})))
+                    has_explicit_runbook_limit = True
         if not limits:
             limits.append(_RateLimit(value=self._max_healthy_candidate_rate, inclusive=False))
-        return limits
+        return limits, has_explicit_runbook_limit
 
     def _result(self, verdict: Verdict, confidence: float, reason: str, t0: float) -> DecisionResult:
         elapsed_ms = round((time.perf_counter() - t0) * 1000.0, 3)
@@ -865,7 +872,34 @@ class FallbackEvidenceJudge:
             max_error_rate_percent=max_error_rate_percent,
         )
         total_ms = round((time.perf_counter() - t0) * 1000.0, 2)
-        return replace(fallback_result, latency_ms=total_ms)
+        combined_in = _sum_optional_tokens(primary_result.input_tokens, fallback_result.input_tokens)
+        combined_out = _sum_optional_tokens(primary_result.output_tokens, fallback_result.output_tokens)
+        breakdown = _merge_usage_breakdown(primary_result, fallback_result)
+        return replace(
+            fallback_result,
+            input_tokens=combined_in,
+            output_tokens=combined_out,
+            latency_ms=total_ms,
+            usage_breakdown=breakdown,
+        )
+
+
+def _sum_optional_tokens(first: int | None, second: int | None) -> int | None:
+    """두 시도 중 하나라도 토큰 기록이 있으면 합산하고, 둘 다 없으면 None을 반환한다."""
+    if first is None and second is None:
+        return None
+    return (first or 0) + (second or 0)
+
+
+def _merge_usage_breakdown(primary: DecisionResult, fallback: DecisionResult) -> tuple[tuple[str, int, int], ...]:
+    """1차·2차 판정기의 모델별 토큰 사용량 내역을 보존해 합친다."""
+    entries: list[tuple[str, int, int]] = []
+    for res in (primary, fallback):
+        if res.usage_breakdown:
+            entries.extend(res.usage_breakdown)
+        elif (res.input_tokens or 0) > 0 or (res.output_tokens or 0) > 0:
+            entries.append((res.model, res.input_tokens or 0, res.output_tokens or 0))
+    return tuple(entries)
 
 
 def build_evidence_judge(settings: Settings, openai_client: Any = None) -> EvidenceJudge:
