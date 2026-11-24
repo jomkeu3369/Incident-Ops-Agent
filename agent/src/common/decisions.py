@@ -627,9 +627,9 @@ class RuleBasedJudge:
         if not has_rb_allow:
             return self._result("NEED_MORE_EVIDENCE", 0.8, "런북에서 롤백 허용 조건을 확인할 수 없어 추가 확인이 필요합니다.", t0)
 
-        # 2순위: 핵심 지표/로그 누락 또는 미확인 상태
+        # 2순위: 핵심 지표/로그 누락 또는 미확인 상태(단, '지표 누락 없음', 'no telemetry gap' 등 부정·배제 진술 제외)
         for reason, pattern in _MISSING_EVIDENCE_PATTERNS:
-            if pattern.search(observed_ev):
+            if _has_unnegated_match(pattern, observed_ev):
                 return self._result("NEED_MORE_EVIDENCE", 0.8, reason, t0)
 
         # 3순위: [External]/[RUNBOOK]을 제외한 실제 관측 로그에서 배포 후 긍정 장애 증상 + 기준 배포 악화(또는 비-HTTP 장애) + 긍정 후보 정상 검증이 모두 확인될 때만 SUPPORTED

@@ -430,6 +430,14 @@ async def test_rule_based_judge_fail_closed_behavior():
     )
     assert runbook_only_leak.verdict == "NEED_MORE_EVIDENCE"
 
+    # Codex 9차 P2 회귀 테스트: '외부 API 지표 누락 없음', 'no telemetry gap' 등 누락 부정 진술은 NEED_MORE_EVIDENCE로 오판 금지
+    negated_gap = await judge.judge_plan_evidence(
+        proposed_action="Rollback payment-service to v41",
+        runbook="배포 후 502 급증 및 이전 버전 정상 시 롤백한다.",
+        evidence="[LOG-1] v42 배포 직후 HikariPool timeout 및 502 급증\n[LOG-2] 외부 API 지표 누락 없음 (no telemetry gap)\n[External] 기준 배포 v42 502 비율=18.0%, 후보 v41 502 비율=0.3%",
+    )
+    assert negated_gap.verdict == "SUPPORTED"
+
 
 def test_bundled_golden_dataset_integrity_and_balance():
     """내장 30건 다중 장애 평가 데이터셋의 스키마·라벨 균형·다중 서비스·인젝션 포함 여부를 검증한다."""
