@@ -96,7 +96,17 @@ _EXTERNAL_LINE_PATTERN = re.compile(r"^\s*\[External\b", re.IGNORECASE)
 _RUNBOOK_LINE_PATTERN = re.compile(r"^\s*\[RUNBOOK\b", re.IGNORECASE)
 
 _NON_HTTP_FAULT_PATTERN = re.compile(
-    r"(oom(?:killed)?|outofmemory|메모리\s*누수|memory\s*leak|crashloop|full\s*gc|힙\s*(?:급증|포화))",
+    r"(oom(?:killed)?|outofmemory|메모리\s*누수|memory\s*leak|crashloop|full\s*gc|heap|힙\s*(?:급증|포화|9[0-9]%))",
+    re.IGNORECASE,
+)
+
+_DB_CONN_FAULT_PATTERN = re.compile(
+    r"(hikari(?:pool)?|커넥션\s*(?:풀|고갈|포화|누수|대기|타임아웃|반납)|connection\s*(?:pool|leak|timeout|is\s+not\s+available)|deadlock|데드락)",
+    re.IGNORECASE,
+)
+
+_HTTP_APP_FAULT_PATTERN = re.compile(
+    r"((?:http\s*)?(?:502|503|500)\s*(?:오류|에러|급증|폭증|증가|발생|응답|반환|타임아웃|비율|timeout|spike|error|failure)|(?:http\s*)?(?:502|503|500)(?=[가-힣\s.,]|$)|timeout|타임아웃|오류(?:율)?\s*(?:급증|증가|발생)|버그로\s*(?:http\s*)?(?:500|502|503)|파싱\s*예외|error\s*spike|지연\s*급증|latency\s*spike)",
     re.IGNORECASE,
 )
 
@@ -549,6 +559,23 @@ def _has_unnegated_match(pattern: re.Pattern[str], text: str) -> bool:
     return False
 
 
+def _fault_matches_runbook(runbook: str, observed_log_text: str) -> bool:
+    """관측된 긍정 장애 증상이 런북이 명시한 장애 유형과 일치하는지 확인한다."""
+    if not _has_unnegated_match(_FAULT_SYMPTOM_PATTERN, observed_log_text):
+        return False
+
+    families: tuple[tuple[str, re.Pattern[str]], ...] = (
+        ("memory_oom", _NON_HTTP_FAULT_PATTERN),
+        ("db_connection", _DB_CONN_FAULT_PATTERN),
+        ("http_error", _HTTP_APP_FAULT_PATTERN),
+    )
+    rb_families = {name for name, pat in families if pat.search(runbook)}
+    if not rb_families:
+        return True
+    ev_families = {name for name, pat in families if _has_unnegated_match(pat, observed_log_text)}
+    return bool(rb_families & ev_families)
+
+
 class RuleBasedJudge:
     """결정적 도메인 규칙 기반 오프라인 기준선(Baseline) 근거 판정기."""
 
@@ -633,9 +660,9 @@ class RuleBasedJudge:
             if _has_unnegated_match(pattern, observed_ev):
                 return self._result("NEED_MORE_EVIDENCE", 0.8, reason, t0)
 
-        # 3순위: [External]/[RUNBOOK]을 제외한 실제 관측 로그에서 배포 후 긍정 장애 증상 + 기준 배포 악화(또는 비-HTTP 장애) + 긍정 후보 정상 검증이 모두 확인될 때만 SUPPORTED
+        # 3순위: [External]/[RUNBOOK]을 제외한 실제 관측 로그에서 배포 후 런북 조건에 부합하는 긍정 장애 증상 + 기준 배포 악화(또는 비-HTTP 장애) + 긍정 후보 정상 검증이 모두 확인될 때만 SUPPORTED
         has_post_deploy = bool(_POST_DEPLOY_FAULT_PATTERN.search(non_external_ev))
-        has_fault_symptom = _has_unnegated_match(_FAULT_SYMPTOM_PATTERN, non_external_ev)
+        has_fault_symptom = _fault_matches_runbook(rb, non_external_ev)
         ref_is_abnormal = independent_non_http_fault or not ref_is_healthy
         http_metric_relevant = not (independent_non_http_fault and ref_is_healthy)
         has_healthy_candidate = (

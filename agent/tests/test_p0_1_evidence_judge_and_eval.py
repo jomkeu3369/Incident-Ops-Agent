@@ -465,6 +465,15 @@ async def test_rule_based_judge_fail_closed_behavior():
     )
     assert ref_baseline_vs_cand_limit.verdict == "SUPPORTED"
 
+    # Codex 11차 P2 회귀 테스트: OOM/CrashLoop 전용 런북에 무관한 HTTP 502 증상만 관측되면 SUPPORTED 불가
+    mismatched_fault_category = await judge.judge_plan_evidence(
+        proposed_action="Rollback notification-worker to v11",
+        runbook="신규 배포 후 OOMKilled 또는 CrashLoop가 반복되고 이전 버전이 안정적이면 롤백한다.",
+        evidence="[LOG-1] v12 배포 후 502 급증\n[External] 기준 배포 v12 502 비율=18.0%, 후보 v11 502 비율=0.3%",
+        max_error_rate_percent=1.0,
+    )
+    assert mismatched_fault_category.verdict == "NEED_MORE_EVIDENCE"
+
 
 def test_bundled_golden_dataset_integrity_and_balance():
     """내장 30건 다중 장애 평가 데이터셋의 스키마·라벨 균형·다중 서비스·인젝션 포함 여부를 검증한다."""
