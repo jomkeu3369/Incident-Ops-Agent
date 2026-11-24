@@ -174,6 +174,24 @@ async def test_fallback_evidence_judge_only_falls_back_on_undecidable_and_stays_
     res3 = await fb3.judge_plan_evidence(proposed_action="a", runbook="b", evidence="c")
     assert res3.verdict == "UNDECIDABLE" and calls == ["primary", "secondary"]
 
+    # Codex 8차 P2 회귀 테스트: 폴백 시 1차 시도 지연시간까지 합산된 전체 latency_ms를 기록한다
+    import asyncio as _asyncio
+
+    class SlowStubJudge:
+        def __init__(self, verdict: str, delay_s: float, reported_ms: float) -> None:
+            self._verdict = verdict
+            self._delay_s = delay_s
+            self._reported_ms = reported_ms
+
+        async def judge_plan_evidence(self, *, proposed_action: str, runbook: str, evidence: str, max_error_rate_percent: float | None = None) -> DecisionResult:
+            await _asyncio.sleep(self._delay_s)
+            return DecisionResult(verdict=self._verdict, confidence=0.9 if self._verdict != "UNDECIDABLE" else None, probabilities={}, provider="stub", model="stub", latency_ms=self._reported_ms)
+
+    fb_timed = FallbackEvidenceJudge(SlowStubJudge("UNDECIDABLE", 0.05, 50.0), SlowStubJudge("SUPPORTED", 0.01, 10.0))
+    timed_res = await fb_timed.judge_plan_evidence(proposed_action="a", runbook="b", evidence="c")
+    assert timed_res.verdict == "SUPPORTED"
+    assert timed_res.latency_ms is not None and timed_res.latency_ms >= 50.0
+
 
 async def test_build_evidence_judge_and_di_container_modes():
     """build_evidence_judge와 DI 컨테이너가 모든 모드를 올바르게 조립하는지 검증한다."""
@@ -385,6 +403,32 @@ async def test_rule_based_judge_fail_closed_behavior():
         evidence="[LOG-1] HTTP 502 spike already failing before deploy of v42.\n[External] reference v42 502 rate=18.0%, candidate v41 502 rate=0.3%",
     )
     assert actual_preexisting_en.verdict == "CONTRADICTED"
+
+    # Codex 8차 P2 회귀 테스트 1: OOMKilled/CrashLoop 워커 런북에서 HTTP 502 0.0% 지표가 OOM 장애를 기각하지 않음
+    oom_worker = await judge.judge_plan_evidence(
+        proposed_action="Rollback notification-worker to v11",
+        runbook="신규 배포 후 OOMKilled 또는 CrashLoop가 반복되고 이전 버전이 안정적이면 롤백한다.",
+        evidence="[LOG-1] v12 배포 직후 OOMKilled 및 CrashLoopBackOff 5회 반복. 이전 버전 정상 가동 확인.\n[External] 기준 배포 v12 502 비율=0.0%, 후보 v11 502 비율=0.0%",
+        max_error_rate_percent=1.0,
+    )
+    assert oom_worker.verdict == "SUPPORTED"
+
+    # Codex 8차 P2 회귀 테스트 2: 런북의 타 메트릭(패킷 손실 0.1% 이하)은 후보 오류율 상한으로 오용 금지
+    multi_metric_rb = await judge.judge_plan_evidence(
+        proposed_action="Rollback payment-service to v41",
+        runbook="배포 후 502 급증 시 후보 오류율 1.0% 미만이고 패킷 손실 0.1% 이하일 때 롤백한다.",
+        evidence="[LOG-1] v42 배포 직후 HikariPool timeout 및 502 급증, 패킷 손실 0.0%\n[External] 기준 배포 v42 502 비율=18.0%, 후보 v41 502 비율=0.3%",
+        max_error_rate_percent=1.0,
+    )
+    assert multi_metric_rb.verdict == "SUPPORTED"
+
+    # Codex 8차 P2 회귀 테스트 3: [RUNBOOK-*] 정책 라인이 관측 로그 없이 SUPPORTED를 충족시켜선 안 됨
+    runbook_only_leak = await judge.judge_plan_evidence(
+        proposed_action="Rollback payment-service to v41",
+        runbook="배포 후 502 급증 및 이전 버전 정상 시 롤백한다.",
+        evidence="[LOG-1] 정기 점검 완료\n[RUNBOOK-01] 배포 후 502 급증 및 이전 버전 정상 시 롤백한다.\n[External] 기준 배포 v42 502 비율=18.0%, 후보 v41 502 비율=0.3%",
+    )
+    assert runbook_only_leak.verdict == "NEED_MORE_EVIDENCE"
 
 
 def test_bundled_golden_dataset_integrity_and_balance():

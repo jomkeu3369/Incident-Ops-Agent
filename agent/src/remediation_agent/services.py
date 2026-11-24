@@ -108,15 +108,22 @@ async def build_remediation_plan(tools: ExternalToolsClient, decisions: Evidence
     if win_dec.selected_window is None:
         return RemediationPlanResponse(ok=False, status="BLOCKED", incidentCode=req.incidentCode, selectedCandidate=eval_res.selected, rejectedCandidates=eval_res.rejected, remainingGaps=gaps_json, toolCalls=tool_calls, cachedToolResults=cache, message=win_dec.reason or "허용 시간 범위 내에 가능한 작업 창이 없습니다.")
 
-    # 4단계: Decisions API로 수집한 근거가 롤백 제안을 뒷받침하는지 판정한다
+    # 4단계: EvidenceJudge로 수집한 관측 근거(LOG + External)가 런북 조건상 롤백 제안을 뒷받침하는지 판정한다
     target_ref = eval_res.selected.get("ref") or eval_res.selected["gitSha"]
     action_cmd = req.recommendedCommand or f"kubectl rollout undo deployment/{req.serviceName}"
     ref_rate = ref_metrics_res["data"]["http502RatePercent"] if ref_metrics_res.get("ok") else "미확인"
-    evidence_lines = [f"[{e.chunkId}] {e.summary}" for e in req.evidence]
+    runbook_parts = [req.runbookSummary.strip()] if req.runbookSummary and req.runbookSummary.strip() else []
+    evidence_lines: list[str] = []
+    for e in req.evidence:
+        if (e.corpusType or "").strip().upper() == "RUNBOOK":
+            if e.summary.strip() and e.summary.strip() not in runbook_parts:
+                runbook_parts.append(e.summary.strip())
+        else:
+            evidence_lines.append(f"[{e.chunkId}] {e.summary}")
     evidence_lines.append(f"[External] 기준 배포 {reference_dep.get('ref', reference_dep['gitSha'])} 502 비율={ref_rate}%, 후보 {target_ref} 502 비율={eval_res.selected['http502RatePercent']}%")
     verdict = await decisions.judge_plan_evidence(
         proposed_action=f"Rollback {req.serviceName} to {target_ref} ({action_cmd}) during {win_dec.selected_window.start.isoformat()}~{win_dec.selected_window.end.isoformat()}",
-        runbook=req.runbookSummary or _DEFAULT_RUNBOOK,
+        runbook="\n".join(runbook_parts) or _DEFAULT_RUNBOOK,
         evidence="\n".join(evidence_lines),
         max_error_rate_percent=req.max502RatePercent,
     )

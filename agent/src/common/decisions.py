@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import asyncio
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 import math
 import re
 import time
@@ -93,6 +93,12 @@ _FAULT_SYMPTOM_PATTERN = re.compile(
 )
 
 _EXTERNAL_LINE_PATTERN = re.compile(r"^\s*\[External\b", re.IGNORECASE)
+_RUNBOOK_LINE_PATTERN = re.compile(r"^\s*\[RUNBOOK\b", re.IGNORECASE)
+
+_NON_HTTP_FAULT_PATTERN = re.compile(
+    r"(oom(?:killed)?|outofmemory|메모리\s*누수|memory\s*leak|crashloop|full\s*gc|힙\s*(?:급증|포화))",
+    re.IGNORECASE,
+)
 
 _ROLLBACK_ACTION_PATTERN = re.compile(r"(rollback|rollout\s+undo|롤백)", re.IGNORECASE)
 
@@ -122,7 +128,10 @@ _HEALTHY_CANDIDATE_PATTERN = re.compile(
 )
 
 _RUNBOOK_THRESHOLD_PATTERN = re.compile(
-    r"([0-9]+(?:\.[0-9]+)?)\s*%\s*(미만|이하)|(<=|<|\bat\s+most\b|\bbelow\b|\bunder\b)\s*([0-9]+(?:\.[0-9]+)?)\s*%",
+    r"(?:(?:이전\s*버전|후보(?:\s*버전)?|candidate|previous\s+version)[^\n.,;]{0,24}?)?"
+    r"(?:(?:http\s*)?(?:502|503|500)\s*(?:비율|오류율|율|rate)|오류율|오류\s*비율|에러율|error(?:s|\s*rate))"
+    r"[^\n.,;]{0,20}?"
+    r"(?:([0-9]+(?:\.[0-9]+)?)\s*%\s*(미만|이하)|(<=|<|\bat\s+most\b|\bbelow\b|\bunder\b)\s*([0-9]+(?:\.[0-9]+)?)\s*%)",
     re.IGNORECASE,
 )
 
@@ -577,13 +586,19 @@ class RuleBasedJudge:
         else:
             return self._result("NEED_MORE_EVIDENCE", 0.75, "규칙 기반 판정기는 롤백 외 조치의 런북 충족 여부를 자동 검증할 수 없습니다.", t0)
 
-        # 1순위(안전 최우선): 롤백 조건과 충돌하는 근거 확인(단, '외부 PG사 장애 없음' 등 부정·배제 문맥 제외)
+        # 관측 증거와 정책 문서([RUNBOOK-*]) 분리: 런북 인용 라인은 관측 사실/충돌 판정에서 제외
+        observed_ev = "\n".join(line for line in ev.splitlines() if not _RUNBOOK_LINE_PATTERN.match(line))
+        non_external_ev = "\n".join(
+            line for line in observed_ev.splitlines() if not _EXTERNAL_LINE_PATTERN.match(line)
+        )
+
+        # 1순위(안전 최우선): 롤백 조건과 충돌하는 관측 근거 확인(단, '외부 PG사 장애 없음' 등 부정·배제 문맥 제외)
         for reason, pattern in _CONTRADICTION_PATTERNS:
-            if _has_unnegated_match(pattern, ev):
+            if _has_unnegated_match(pattern, observed_ev):
                 return self._result("CONTRADICTED", 0.85, reason, t0)
 
-        cand_rate = _extract_candidate_rate(ev, action)
-        ref_rate = _extract_reference_rate(ev)
+        cand_rate = _extract_candidate_rate(observed_ev, action)
+        ref_rate = _extract_reference_rate(observed_ev)
 
         violated_limit = next((lim for lim in limits if cand_rate is not None and not lim.is_healthy(cand_rate)), None)
         if violated_limit is not None:
@@ -594,8 +609,13 @@ class RuleBasedJudge:
                 t0,
             )
 
+        # OOMKilled·CrashLoop 등 비-HTTP 리소스 장애가 런북과 관측 로그 모두에서 확인된 경우 HTTP 0% 지표로 기각하지 않는다
+        independent_non_http_fault = bool(_NON_HTTP_FAULT_PATTERN.search(rb)) and _has_unnegated_match(
+            _NON_HTTP_FAULT_PATTERN, non_external_ev
+        )
+
         ref_is_healthy = ref_rate is not None and all(lim.is_healthy(ref_rate) for lim in limits)
-        if cand_rate is not None and ref_is_healthy and cand_rate >= ref_rate:
+        if not independent_non_http_fault and cand_rate is not None and ref_is_healthy and cand_rate >= ref_rate:
             return self._result(
                 "CONTRADICTED",
                 0.8,
@@ -609,16 +629,13 @@ class RuleBasedJudge:
 
         # 2순위: 핵심 지표/로그 누락 또는 미확인 상태
         for reason, pattern in _MISSING_EVIDENCE_PATTERNS:
-            if pattern.search(ev):
+            if pattern.search(observed_ev):
                 return self._result("NEED_MORE_EVIDENCE", 0.8, reason, t0)
 
-        # 3순위: [External] 메트릭 라벨을 제외한 실제 로그에서 배포 후 긍정 장애 증상 + 기준 배포 악화 + 긍정 후보 정상 검증이 모두 확인될 때만 SUPPORTED
-        non_external_ev = "\n".join(
-            line for line in ev.splitlines() if not _EXTERNAL_LINE_PATTERN.match(line)
-        )
+        # 3순위: [External]/[RUNBOOK]을 제외한 실제 관측 로그에서 배포 후 긍정 장애 증상 + 기준 배포 악화(또는 비-HTTP 장애) + 긍정 후보 정상 검증이 모두 확인될 때만 SUPPORTED
         has_post_deploy = bool(_POST_DEPLOY_FAULT_PATTERN.search(non_external_ev))
         has_fault_symptom = _has_unnegated_match(_FAULT_SYMPTOM_PATTERN, non_external_ev)
-        ref_is_abnormal = not ref_is_healthy
+        ref_is_abnormal = independent_non_http_fault or not ref_is_healthy
         has_healthy_candidate = (
             (cand_rate is not None and all(lim.is_healthy(cand_rate) for lim in limits))
             or _has_unnegated_match(_HEALTHY_CANDIDATE_PATTERN, non_external_ev)
@@ -767,7 +784,8 @@ class FallbackEvidenceJudge:
         evidence: str,
         max_error_rate_percent: float | None = None,
     ) -> DecisionResult:
-        """1차 판정기가 UNDECIDABLE을 반환할 때만 2차 판정기로 재시도한다(실제 판정값은 덮어쓰지 않음)."""
+        """1차 판정기가 UNDECIDABLE을 반환할 때만 2차 판정기로 재시도하며 전체 경과 지연시간을 기록한다."""
+        t0 = time.perf_counter()
         primary_result = await self._primary.judge_plan_evidence(
             proposed_action=proposed_action,
             runbook=runbook,
@@ -776,12 +794,14 @@ class FallbackEvidenceJudge:
         )
         if primary_result.verdict != "UNDECIDABLE":
             return primary_result
-        return await self._fallback.judge_plan_evidence(
+        fallback_result = await self._fallback.judge_plan_evidence(
             proposed_action=proposed_action,
             runbook=runbook,
             evidence=evidence,
             max_error_rate_percent=max_error_rate_percent,
         )
+        total_ms = round((time.perf_counter() - t0) * 1000.0, 2)
+        return replace(fallback_result, latency_ms=total_ms)
 
 
 def build_evidence_judge(settings: Settings, openai_client: Any = None) -> EvidenceJudge:
