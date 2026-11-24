@@ -4,7 +4,7 @@ from dataclasses import dataclass
 import json
 from pathlib import Path
 from urllib.parse import urlsplit
-from pydantic import Field, SecretStr, model_validator
+from pydantic import Field, SecretStr, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 _ROOT_ENV = Path(__file__).resolve().parents[3] / ".env"
@@ -12,6 +12,7 @@ _ROOT_ENV = Path(__file__).resolve().parents[3] / ".env"
 # 내부 서비스 간 인증 및 운영자 식별 헤더 상수
 INTERNAL_TOKEN_HEADER = "X-Internal-Token"
 OPERATOR_ID_HEADER = "X-Operator-Id"
+VALID_EVIDENCE_JUDGE_MODES = frozenset({"decisions_api", "structured_output", "rule_based", "auto"})
 
 
 @dataclass(frozen=True)
@@ -35,6 +36,17 @@ class Settings(BaseSettings):
     openai_api_key: SecretStr = SecretStr("")
     openai_model: str = "gpt-4o-mini"
     decisions_model: str = "gpt-6-luna"
+    evidence_judge_mode: str = "decisions_api"
+    evidence_judge_model: str = ""
+
+    @field_validator("evidence_judge_mode")
+    @classmethod
+    def _validate_evidence_judge_mode(cls, value: str) -> str:
+        normalized = value.strip().lower()
+        if normalized not in VALID_EVIDENCE_JUDGE_MODES:
+            allowed = ", ".join(sorted(VALID_EVIDENCE_JUDGE_MODES))
+            raise ValueError(f"EVIDENCE_JUDGE_MODE must be one of: {allowed}")
+        return normalized
 
     # 보안 및 운영자 식별 설정
     internal_service_token: SecretStr = SecretStr("")

@@ -35,6 +35,9 @@ services:
     environment:
       OPENAI_API_KEY: ${OPENAI_API_KEY}
       OPENAI_MODEL: ${OPENAI_MODEL:-gpt-4o-mini}
+      DECISIONS_MODEL: ${DECISIONS_MODEL:-gpt-6-luna}
+      EVIDENCE_JUDGE_MODE: ${EVIDENCE_JUDGE_MODE:-decisions_api}
+      EVIDENCE_JUDGE_MODEL: ${EVIDENCE_JUDGE_MODEL:-}
       REDIS_URL: ${REDIS_URL:-redis://redis:6379/0}
       SPRING_MCP_SSE_URL: ${SPRING_MCP_SSE_URL:-http://backend:8080/sse}
       DR_DCI_MAX_CHUNK_CHARS: ${DR_DCI_MAX_CHUNK_CHARS:-4000}
@@ -58,6 +61,9 @@ services:
     environment:
       OPENAI_API_KEY: ${OPENAI_API_KEY}
       OPENAI_MODEL: ${OPENAI_MODEL:-gpt-4o-mini}
+      DECISIONS_MODEL: ${DECISIONS_MODEL:-gpt-6-luna}
+      EVIDENCE_JUDGE_MODE: ${EVIDENCE_JUDGE_MODE:-decisions_api}
+      EVIDENCE_JUDGE_MODEL: ${EVIDENCE_JUDGE_MODEL:-}
       REDIS_URL: ${REDIS_URL:-redis://redis:6379/0}
       SPRING_MCP_SSE_URL: ${SPRING_MCP_SSE_URL:-http://backend:8080/sse}
       DR_DCI_MAX_CHUNK_CHARS: ${DR_DCI_MAX_CHUNK_CHARS:-4000}
@@ -93,6 +99,9 @@ services:
     environment:
       OPENAI_API_KEY: ${OPENAI_API_KEY}
       OPENAI_MODEL: ${OPENAI_MODEL:-gpt-4o-mini}
+      DECISIONS_MODEL: ${DECISIONS_MODEL:-gpt-6-luna}
+      EVIDENCE_JUDGE_MODE: ${EVIDENCE_JUDGE_MODE:-decisions_api}
+      EVIDENCE_JUDGE_MODEL: ${EVIDENCE_JUDGE_MODEL:-}
       REDIS_URL: ${REDIS_URL:-redis://redis:6379/0}
       LOG_AGENT_A2A_URL: ${LOG_AGENT_A2A_URL:-http://log-analyzer-agent:8001}
       REMEDIATION_AGENT_A2A_URL: ${REMEDIATION_AGENT_A2A_URL:-http://remediation-agent:8002}
