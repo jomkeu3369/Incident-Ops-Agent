@@ -572,11 +572,18 @@ def plot_four_way_latency_and_steps(payload: dict[str, Any], output_path: Path) 
         legend=False,
         ax=ax1,
     )
-    ax1.set_title("End-to-End Latency Distribution — p50 / p95 / p99 (ms)", fontsize=11, fontweight="bold")
-    ax1.set_xlabel("Latency (ms)")
+    is_live = payload.get("latency_scope") == "live_llm_api_inclusive"
+    ax1.set_title(
+        "Live LLM API End-to-End Latency — p50/p95/p99 (incl. OpenAI RTT)"
+        if is_live
+        else "Offline In-Memory CPU Latency — p50/p95/p99 (Pre-Indexed; excl. LLM/MCP RTT)",
+        fontsize=10.2,
+        fontweight="bold",
+    )
+    ax1.set_xlabel("Live API Wall-Clock Latency (ms)" if is_live else "Offline CPU Latency (ms, no LLM/MCP RTT)")
     ax1.set_ylabel("")
     note = "\n".join(f"{r['strategy']}: p50={r['p50']:.2f} | p95={r['p95']:.2f} | p99={r['p99']:.2f} ms" for _, r in s_df.iterrows())
-    ax1.text(0.98, 0.05, note, transform=ax1.transAxes, ha="right", va="bottom", fontsize=8,
+    ax1.text(0.98, 0.96, note, transform=ax1.transAxes, ha="right", va="top", fontsize=7.8,
              bbox={"boxstyle": "round,pad=0.35", "facecolor": "white", "edgecolor": "#CBD5E1", "alpha": 0.92})
 
     sns.barplot(data=s_df, x="strategy", y="mean_tokens", hue="strategy", palette=_STRATEGY_COLORS, legend=False, ax=ax2)
@@ -735,9 +742,16 @@ def plot_scaling_dashboard(payload: dict[str, Any], output_path: Path) -> Path:
     ax_f1.set_ylim(0, 112)
     ax_f1.legend(loc="lower left", frameon=True, fontsize=8.5)
 
-    ax_lat.set_title("4. Offline CPU p95 Query Latency (Pre-Indexed; excl. LLM/MCP RTT)", fontsize=10.2, fontweight="bold")
+    is_live = payload.get("latency_scope") == "live_llm_api_inclusive"
+    ax_lat.set_title(
+        "4. Live End-to-End p95 Latency (incl. OpenAI)"
+        if is_live
+        else "4. Offline CPU p95 Query Latency (Pre-Indexed; excl. LLM/MCP RTT)",
+        fontsize=10.2,
+        fontweight="bold",
+    )
     ax_lat.set_xlabel("Chunks per Incident (N)")
-    ax_lat.set_ylabel("Offline CPU p95 Latency (ms)")
+    ax_lat.set_ylabel("Live End-to-End p95 Latency (ms)" if is_live else "Offline CPU p95 Latency (ms)")
     ax_lat.legend(loc="upper left", frameon=True, fontsize=8.5)
 
     scales = payload["scales"]
@@ -786,8 +800,14 @@ def plot_scaling_groundedness_and_latency(payload: dict[str, Any], output_path: 
 
     ax2.set_xticks(scales)
     ax2.set_xlabel("Chunks per Incident (N)")
-    ax2.set_ylabel("Offline CPU Latency (ms, no LLM/MCP RTT)")
-    ax2.set_title("Pre-Indexed Offline Query Latency: p50 (solid) vs. p99 (dashed)", fontsize=10.5, fontweight="bold")
+    is_live = payload.get("latency_scope") == "live_llm_api_inclusive"
+    ax2.set_ylabel("Live End-to-End Latency (ms)" if is_live else "Offline CPU Latency (ms, no LLM/MCP RTT)")
+    ax2.set_title(
+        ("Live End-to-End Latency" if is_live else "Pre-Indexed Offline Query Latency")
+        + ": p50 (solid) vs. p99 (dashed)",
+        fontsize=10.5,
+        fontweight="bold",
+    )
     ax2.legend(loc="upper left", frameon=True, fontsize=7.8, ncol=2)
 
     fig.suptitle(

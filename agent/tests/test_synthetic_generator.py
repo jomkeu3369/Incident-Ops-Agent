@@ -137,3 +137,45 @@ def test_linear_scaling_4paradigm_cli_and_charts(tmp_path: Path):
     for ch in charts:
         assert ch.is_file()
         assert ch.stat().st_size > 5_000
+
+
+async def test_gpt6_models_omit_temperature_zero_for_structured_judge_and_selector():
+    """gpt-6 계열 모델은 temperature=0을 거부하므로 StructuredOutputJudge와 OpenAiDrDciSelector가 temperature를 생략해 호출한다."""
+    from types import SimpleNamespace
+    from pydantic import SecretStr
+    from common.config import Settings
+    from common.decisions import StructuredOutputJudge
+    from log_agent.agentic_dr_dci import OpenAiDrDciSelector
+
+    seen_kwargs: list[dict] = []
+
+    def fake_parse(**kwargs):
+        seen_kwargs.append(dict(kwargs))
+        if kwargs["response_format"].__name__ == "_StructuredVerdictSchema":
+            parsed = SimpleNamespace(verdict="SUPPORTED", confidence=0.95, reason="ok")
+        else:
+            parsed = SimpleNamespace(action="STOP_SUFFICIENT", chunk_id=None, reason="done")
+        return SimpleNamespace(
+            choices=[SimpleNamespace(message=SimpleNamespace(parsed=parsed, content=None, refusal=None))],
+            usage=SimpleNamespace(prompt_tokens=100, completion_tokens=20),
+        )
+
+    fake_client = SimpleNamespace(chat=SimpleNamespace(completions=SimpleNamespace(parse=fake_parse)))
+    cfg = Settings(_env_file=None, openai_api_key=SecretStr("sk-test"), openai_model="gpt-6.1-terra")
+
+    res = await StructuredOutputJudge(cfg, openai_client=fake_client).judge_plan_evidence(
+        proposed_action="rollback", runbook="rollback on 502", evidence="502 spike"
+    )
+    assert res.verdict == "SUPPORTED"
+
+    dec = await OpenAiDrDciSelector(cfg, openai_client=fake_client).select_next_action(
+        incident_code="INC-1",
+        keywords=["502"],
+        remaining_index=[],
+        collected_evidence=[],
+        step_no=1,
+        max_steps=3,
+    )
+    assert dec.action == "STOP_SUFFICIENT"
+    assert len(seen_kwargs) == 2
+    assert all("temperature" not in kw for kw in seen_kwargs)

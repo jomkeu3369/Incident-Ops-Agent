@@ -13,7 +13,8 @@ import time
 from typing import Any, Literal, Sequence
 
 from common.config import Settings
-from common.decisions import EvidenceJudge, RuleBasedJudge
+from common.decisions import DecisionsApiJudge, EvidenceJudge, RuleBasedJudge, StructuredOutputJudge
+from common.observability import build_langsmith_client, flush_langsmith_client, langsmith_tracing_scope
 from eval.dr_dci_baseline import CorpusChunkFixture, InMemoryCorpusBackend, _measure_reasoning_context_chars
 from eval.dr_dci_benchmark import (
     _assemble_judge_inputs,
@@ -25,7 +26,13 @@ from eval.dr_dci_benchmark import (
 from eval.dr_dci_corpus import DrDciBenchmarkCase
 from eval.harness import ALL_VERDICTS, EXPECTED_LABELS, _percentile
 from eval.synthetic_generator import generate_synthetic_incidents
-from log_agent.agentic_dr_dci import AdaptiveEvidenceSelector, _extract_dynamic_clues, run_agentic_dr_dci_investigation
+from log_agent.agentic_dr_dci import (
+    AdaptiveEvidenceSelector,
+    DrDciSelector,
+    OpenAiDrDciSelector,
+    _extract_dynamic_clues,
+    run_agentic_dr_dci_investigation,
+)
 from log_agent.schemas import EvidenceItem, LogInvestigationRequest, LogInvestigationResponse
 from log_agent.services import _extract_command, _summarize_chunk
 
@@ -243,10 +250,9 @@ async def _run_hybrid_rag_rrf(
 class _IndexedWindowSelector:
     """대규모 코퍼스(N=10..500)에서 색인 검색 필터링으로 후보 창(top-M 메타데이터)만 읽고 동적 피벗하는 DR-DCI 선택기."""
 
-    name = "indexed_dr_dci"
-
-    def __init__(self, *, index_window: int = 12) -> None:
-        self._inner = AdaptiveEvidenceSelector()
+    def __init__(self, *, index_window: int = 12, inner_selector: DrDciSelector | None = None) -> None:
+        self._inner: DrDciSelector = inner_selector or AdaptiveEvidenceSelector()
+        self.name = f"indexed_{self._inner.name}"
         self._index_window = index_window
         self.last_candidate_meta_chars: int = 0
 
@@ -431,10 +437,13 @@ async def run_linear_scaling_benchmark(
     max_chunk_chars: int = 4000,
     context_limit_tokens: int = 32_000,
     judge: EvidenceJudge | None = None,
+    inner_selector: DrDciSelector | None = None,
 ) -> dict[str, Any]:
     """코퍼스 크기 N이 선형 증가할 때 Native RAG vs Hybrid RAG(BM25+RRF) vs DCI vs DR-DCI의 성능을 실측한다."""
     _, base_cases = generate_synthetic_incidents(count=incidents_per_scale, seed=seed, noise_chunks_per_incident=2)
     active_judge = judge or RuleBasedJudge()
+    active_inner = inner_selector or AdaptiveEvidenceSelector()
+    is_live_llm = (not isinstance(active_judge, RuleBasedJudge)) or (active_inner.name != "adaptive_agentic")
     points: list[ScalePointMetric] = []
 
     for scale_n in scales:
@@ -454,6 +463,7 @@ async def run_linear_scaling_benchmark(
                 dr_dci_max_pull_steps=top_k,
                 dr_dci_max_chunk_chars=max_chunk_chars,
                 dr_dci_max_context_chars=6000,
+                dr_dci_timeout_seconds=45.0 if is_live_llm else 10.0,
             )
             for case in scaled_cases:
                 t0 = time.perf_counter()
@@ -466,14 +476,19 @@ async def run_linear_scaling_benchmark(
                     inv_res, _, _ = await _run_full_context(case, max_chunk_chars)
                 else:  # dr_dci
                     backend = InMemoryCorpusBackend(case.chunks)
-                    selector = _IndexedWindowSelector(index_window=12)
+                    selector = _IndexedWindowSelector(index_window=12, inner_selector=active_inner)
                     req = LogInvestigationRequest(
                         incidentCode=case.incident_code,
                         keywords=list(case.query_keywords),
                         maxPulls=top_k,
                     )
                     inv_res = await run_agentic_dr_dci_investigation(backend, settings, req, selector=selector)
-                    sel_tokens = _estimate_tokens(selector.last_candidate_meta_chars) * max(1, len(inv_res.decisionTrace))
+                    actual_sel_tok = sum(int(s.get("inputTokens") or 0) for s in inv_res.decisionTrace)
+                    sel_tokens = (
+                        actual_sel_tok
+                        if actual_sel_tok > 0
+                        else _estimate_tokens(selector.last_candidate_meta_chars) * max(1, len(inv_res.decisionTrace))
+                    )
 
                 runbook_text, evidence_text = _assemble_judge_inputs(case, inv_res)
                 verdict_res = await active_judge.judge_plan_evidence(
@@ -566,6 +581,9 @@ async def run_linear_scaling_benchmark(
         "seed": seed,
         "top_k": top_k,
         "context_limit_tokens": context_limit_tokens,
+        "judge": type(active_judge).__name__,
+        "selector": active_inner.name,
+        "latency_scope": "live_llm_api_inclusive" if is_live_llm else "offline_in_memory_preindexed_no_llm_mcp_rtt",
         "points": [asdict(p) for p in points],
     }
 
@@ -616,18 +634,53 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser.add_argument("--incidents", type=int, default=30, help="Incidents evaluated per scale point (default: 30)")
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--top-k", type=int, default=3)
+    parser.add_argument("--judge", choices=("rule_based", "structured_output", "decisions_api"), default="rule_based")
+    parser.add_argument("--selector", choices=("adaptive", "openai"), default="adaptive")
+    parser.add_argument("--env-file", default=None)
+    parser.add_argument("--openai-model", default=None)
+    parser.add_argument("--decisions-model", default=None)
     parser.add_argument("--output-json", required=True)
     parser.add_argument("--output-csv", default=None)
     parser.add_argument("--output-md", default=None)
     args = parser.parse_args(argv)
 
+    settings = Settings(_env_file=args.env_file) if args.env_file else Settings()
+    updates: dict[str, Any] = {}
+    if args.openai_model:
+        updates["openai_model"] = args.openai_model
+    if args.decisions_model:
+        updates["decisions_model"] = args.decisions_model
+    if updates:
+        settings = settings.model_copy(update=updates)
+
+    judge: EvidenceJudge
+    if args.judge == "rule_based":
+        judge = RuleBasedJudge()
+    elif args.judge == "structured_output":
+        judge = StructuredOutputJudge(settings)
+    else:
+        judge = DecisionsApiJudge(settings)
+    inner_selector: DrDciSelector = OpenAiDrDciSelector(settings) if args.selector == "openai" else AdaptiveEvidenceSelector()
+
     scales = [int(x.strip()) for x in args.scales.split(",") if x.strip()]
-    payload = asyncio.run(run_linear_scaling_benchmark(
-        scales=scales,
-        incidents_per_scale=args.incidents,
-        seed=args.seed,
-        top_k=args.top_k,
-    ))
+    ls_client = build_langsmith_client(settings)
+    try:
+        with langsmith_tracing_scope(
+            settings,
+            client=ls_client,
+            tags=["eval", "scaling-benchmark", args.judge, args.selector],
+            metadata={"scales": scales, "incidents_per_scale": args.incidents},
+        ):
+            payload = asyncio.run(run_linear_scaling_benchmark(
+                scales=scales,
+                incidents_per_scale=args.incidents,
+                seed=args.seed,
+                top_k=args.top_k,
+                judge=judge,
+                inner_selector=inner_selector,
+            ))
+    finally:
+        flush_langsmith_client(ls_client)
     md = format_scaling_markdown(payload)
     print(md)
 

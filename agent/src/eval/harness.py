@@ -586,6 +586,9 @@ def main(argv: Sequence[str] | None = None) -> int:
         help="Comma-separated judge list: rule_based,structured_output,decisions_api (default: rule_based)",
     )
     parser.add_argument("--dataset", default=None, help="Path to evaluation dataset JSON (default: bundled v1.0)")
+    parser.add_argument("--env-file", default=None, help="Optional .env file path to load Settings from")
+    parser.add_argument("--decisions-model", default=None, help="Optional override for DECISIONS_MODEL (e.g. gpt-6-luna)")
+    parser.add_argument("--openai-model", default=None, help="Optional override for OPENAI_MODEL")
     parser.add_argument("--concurrency", type=int, default=4, help="Max concurrent judge calls (default: 4)")
     parser.add_argument("--output-json", default=None, help="Optional path to save raw JSON evaluation report")
     parser.add_argument("--output-csv", default=None, help="Optional path to save per-case raw CSV report")
@@ -599,7 +602,14 @@ def main(argv: Sequence[str] | None = None) -> int:
     args = parser.parse_args(argv)
 
     dataset = load_eval_dataset(args.dataset)
-    settings = Settings()
+    settings = Settings(_env_file=args.env_file) if args.env_file else Settings()
+    updates: dict[str, Any] = {}
+    if args.decisions_model:
+        updates["decisions_model"] = args.decisions_model
+    if args.openai_model:
+        updates["openai_model"] = args.openai_model
+    if updates:
+        settings = settings.model_copy(update=updates)
     judges = _build_cli_judges(args.judges.split(","), settings)
     reports = asyncio.run(compare_judges(judges, dataset, concurrency=args.concurrency, settings=settings))
 
