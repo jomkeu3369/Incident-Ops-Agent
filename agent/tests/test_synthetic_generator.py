@@ -179,3 +179,29 @@ async def test_gpt6_models_omit_temperature_zero_for_structured_judge_and_select
     assert dec.action == "STOP_SUFFICIENT"
     assert len(seen_kwargs) == 2
     assert all("temperature" not in kw for kw in seen_kwargs)
+
+
+async def test_scaling_preserves_adversarial_decoys_and_checks_per_request_overflow():
+    """스케일 확장 시 반례 경고/미끼 청크가 보존되고, 32k overflow는 누적 합이 아니라 단일 요청 최대 토큰 기준으로 판정한다."""
+    from eval.scaling_benchmark import _expand_case_to_scale, run_linear_scaling_benchmark
+    from eval.synthetic_generator import generate_synthetic_incidents
+
+    _, base_cases = generate_synthetic_incidents(count=26, seed=42, noise_chunks_per_incident=2)
+    misleading = next(c for c in base_cases if c.archetype == "adv_misleading_ref_eval")
+    expanded = _expand_case_to_scale(misleading, target_chunks=20, seed=99)
+    expanded_ids = {c.chunk_id for c in expanded.chunks}
+    # 기준 케이스의 모든 청크(경고 로그 및 참조된 미끼 청크 포함)가 스케일 확장 후에도 보존되어야 함
+    assert {c.chunk_id for c in misleading.chunks}.issubset(expanded_ids)
+
+    # 단일 요청(selector 1스텝 및 judge)은 500 tok 미만이지만 누적 합은 500 tok 이상이 되도록 context_limit_tokens=500 테스트
+    # -> 개별 요청 최대가 한도 미만이면 DR-DCI overflow=0%여야 함
+    payload = await run_linear_scaling_benchmark(
+        scales=(10,),
+        incidents_per_scale=3,
+        seed=42,
+        top_k=3,
+        context_limit_tokens=600,
+    )
+    pts = {p["paradigm"]: p for p in payload["points"]}
+    assert pts["dci"]["overflow_32k_rate"] == 1.0
+    assert pts["dr_dci"]["overflow_32k_rate"] == 0.0

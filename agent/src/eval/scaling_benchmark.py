@@ -312,10 +312,9 @@ class _IndexedWindowSelector:
 
 
 def _expand_case_to_scale(base_case: DrDciBenchmarkCase, target_chunks: int, *, seed: int) -> DrDciBenchmarkCase:
-    """기준 장애 케이스의 핵심 청크는 보존하면서 일반 노이즈 + Hard Distractor를 추가해 정확히 target_chunks 규모로 확장한다."""
+    """기준 장애 케이스의 모든 시나리오 정의 청크(경고·미끼·필수근거·런북)를 보존하면서 노이즈+Hard Distractor를 추가해 target_chunks 규모로 확장한다."""
     rng = random.Random(seed)
-    core_ids = set(base_case.required_chunk_ids)
-    core_chunks = [c for c in base_case.chunks if c.chunk_id in core_ids or c.corpus_type == "RUNBOOK"]
+    core_chunks = list(base_case.chunks)
     existing_ids = {c.chunk_id for c in core_chunks}
     extra_needed = max(0, target_chunks - len(core_chunks))
 
@@ -469,6 +468,7 @@ async def run_linear_scaling_benchmark(
             for case in scaled_cases:
                 t0 = time.perf_counter()
                 sel_tokens = 0
+                max_single_selector_tok = 0
                 if paradigm == "native_rag":
                     inv_res = await _run_native_rag(case, top_k, max_chunk_chars, index=prebuilt_indices[case.case_id])
                 elif paradigm == "hybrid_rag_rrf":
@@ -484,12 +484,15 @@ async def run_linear_scaling_benchmark(
                         maxPulls=top_k,
                     )
                     inv_res = await run_agentic_dr_dci_investigation(backend, settings, req, selector=selector)
-                    actual_sel_tok = sum(int(s.get("inputTokens") or 0) for s in inv_res.decisionTrace)
-                    sel_tokens = (
-                        actual_sel_tok
-                        if actual_sel_tok > 0
-                        else _estimate_tokens(selector.last_candidate_meta_chars) * max(1, len(inv_res.decisionTrace))
-                    )
+                    per_step_sel_toks = [int(s.get("inputTokens") or 0) for s in inv_res.decisionTrace]
+                    actual_sel_tok = sum(per_step_sel_toks)
+                    if actual_sel_tok > 0:
+                        sel_tokens = actual_sel_tok
+                        max_single_selector_tok = max(per_step_sel_toks)
+                    else:
+                        est_step_tok = _estimate_tokens(selector.last_candidate_meta_chars)
+                        sel_tokens = est_step_tok * max(1, len(inv_res.decisionTrace))
+                        max_single_selector_tok = est_step_tok
 
                 runbook_text, evidence_text = _assemble_judge_inputs(case, inv_res)
                 verdict_res = await active_judge.judge_plan_evidence(
@@ -505,6 +508,8 @@ async def run_linear_scaling_benchmark(
                     else _estimate_tokens(len(case.proposed_action) + len(runbook_text) + len(evidence_text))
                 )
                 total_in_tok = sel_tokens + judge_in_tok
+                # 컨텍스트 윈도우 한도는 누적 비용이 아니라 단일 모델 요청 최대 입력 토큰 기준으로 판정한다
+                max_request_in_tok = max(judge_in_tok, max_single_selector_tok)
                 pulled_ids = list(inv_res.evidenceChunkIds)
                 required = set(case.required_chunk_ids)
                 recall = len(required.intersection(pulled_ids)) / len(required) if required else 1.0
@@ -526,7 +531,7 @@ async def run_linear_scaling_benchmark(
                     "recall": recall,
                     "ungrounded": ungrounded,
                     "input_tokens": total_in_tok,
-                    "overflow": total_in_tok > context_limit_tokens,
+                    "overflow": max_request_in_tok > context_limit_tokens,
                     "pulls": len(pulled_ids),
                     "latency_ms": elapsed_ms,
                 })
