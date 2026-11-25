@@ -781,5 +781,43 @@ async def test_codex_regressions_incident_isolation_redis_reconcile_inflight_ded
         chunks_b = [c async for c in svc.stream_ag_ui(run_b, props_b, "op", None, "text/event-stream")]
         events_b = _parse_ag_ui_events(chunks_b)
         snap_b = [e["snapshot"] for e in events_b if e["type"] == "STATE_SNAPSHOT"][-1]
-        assert snap_b["incidentCode"] == "INC-B"
-        assert "INC-B" in seen_incidents
+    assert snap_b["incidentCode"] == "INC-B"
+    assert "INC-B" in seen_incidents
+
+    # 5) 체크포인트는 Redis에 저장되고 후속 aput_writes만 폴백된 경우 복구 시 누락 없이 리컨사일 + 삭제 툼스톤 보존 검증
+    class _FailWritesRedis(_ToggleRedis):
+        def __init__(self) -> None:
+            super().__init__()
+            self.fail_writes = False
+            self.fail_delete = False
+
+        async def hsetnx(self, key: str, field: str, value: str) -> int:
+            if self.fail_writes:
+                raise ConnectionError("redis write down")
+            return await super().hsetnx(key, field, value)
+
+        async def delete(self, *keys: str) -> int:
+            if self.fail_delete:
+                raise ConnectionError("redis delete down")
+            return await super().delete(*keys)
+
+    fw_redis = _FailWritesRedis()
+    cp_fw = RedisCheckpointSaver(fw_redis)
+    saved_cfg = await cp_fw.aput(
+        {"configurable": {"thread_id": "t-fw", "checkpoint_ns": ""}},
+        {"id": "cp-w1", "v": 1, "ts": "2026-11-25T00:00:00Z", "channel_values": {}, "channel_versions": {}, "versions_seen": {}},
+        {},
+        {},
+    )
+    fw_redis.fail_writes = True
+    await cp_fw.aput_writes(saved_cfg, [("evidence", ["LOG-99"])], task_id="task-w1")
+    fw_redis.fail_writes = False
+    tup_fw = await cp_fw.aget_tuple({"configurable": {"thread_id": "t-fw"}})
+    assert tup_fw is not None
+    assert any(ch == "evidence" and val == ["LOG-99"] for _, ch, val in (tup_fw.pending_writes or []))
+
+    # Redis 단절 중 adelete_thread -> 툼스톤 기록 -> Redis 복구 후 aget_tuple은 None을 반환해야 함
+    fw_redis.fail_delete = True
+    await cp_fw.adelete_thread("t-fw")
+    fw_redis.fail_delete = False
+    assert await cp_fw.aget_tuple({"configurable": {"thread_id": "t-fw"}}) is None

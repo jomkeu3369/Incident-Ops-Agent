@@ -67,7 +67,9 @@ class LogAgentExecutor(AgentExecutor):
         self._app = app
         self._idempotency_cache: dict[str, dict] = {}
         self._inflight_by_key: dict[str, asyncio.Task[LogInvestigationResponse]] = {}
-        self._active_tasks: dict[str, asyncio.Task] = {}
+        self._inflight_waiters: dict[str, set[str]] = {}
+        self._task_waiters: dict[str, asyncio.Task[LogInvestigationResponse]] = {}
+        self._task_to_idem_key: dict[str, str] = {}
         self._canceled_task_ids: set[str] = set()
 
     async def execute(self, context: RequestContext, event_queue: EventQueue) -> None:
@@ -169,17 +171,25 @@ class LogAgentExecutor(AgentExecutor):
 
         container = self._app.state.container
         backend = _investigator_backend(self._app)
-        # 동일 idempotencyKey의 동시 진행 중(in-flight) 요청이 있으면 중복 DR-DCI 실행을 막고 같은 작업을 공유 대기한다
-        shared_inflight = bool(idem_key and idem_key in self._inflight_by_key)
-        if shared_inflight:
+        # 동일 idempotencyKey의 동시 진행 중(in-flight) 요청은 작업을 공유하되, 취소는 요청별 waiter로 격리한다
+        if idem_key and idem_key in self._inflight_by_key:
             work_task = self._inflight_by_key[idem_key]
         else:
             work_task = asyncio.create_task(run_dr_dci_investigation(backend, container.settings, req))
             if idem_key:
                 self._inflight_by_key[idem_key] = work_task
-        self._active_tasks[task_id] = work_task
+
+        if idem_key:
+            self._inflight_waiters.setdefault(idem_key, set()).add(task_id)
+            self._task_to_idem_key[task_id] = idem_key
+
+        async def _await_shared() -> LogInvestigationResponse:
+            return await asyncio.shield(work_task) if idem_key else await work_task
+
+        waiter_task: asyncio.Task[LogInvestigationResponse] = asyncio.create_task(_await_shared())
+        self._task_waiters[task_id] = waiter_task
         try:
-            result = await asyncio.shield(work_task) if shared_inflight else await work_task
+            result = await waiter_task
         except asyncio.CancelledError:
             self._canceled_task_ids.add(task_id)
             await event_queue.enqueue_event(
@@ -194,9 +204,20 @@ class LogAgentExecutor(AgentExecutor):
             )
             return
         finally:
-            self._active_tasks.pop(task_id, None)
-            if not shared_inflight and idem_key and self._inflight_by_key.get(idem_key) is work_task:
-                self._inflight_by_key.pop(idem_key, None)
+            self._task_waiters.pop(task_id, None)
+            self._task_to_idem_key.pop(task_id, None)
+            if idem_key:
+                waiters = self._inflight_waiters.get(idem_key)
+                if waiters is not None:
+                    waiters.discard(task_id)
+                    if not waiters:
+                        self._inflight_waiters.pop(idem_key, None)
+                        if self._inflight_by_key.get(idem_key) is work_task:
+                            self._inflight_by_key.pop(idem_key, None)
+                            if not work_task.done() and task_id in self._canceled_task_ids:
+                                work_task.cancel()
+            elif not work_task.done() and task_id in self._canceled_task_ids:
+                work_task.cancel()
 
         if task_id in self._canceled_task_ids:
             await event_queue.enqueue_event(
@@ -248,14 +269,14 @@ class LogAgentExecutor(AgentExecutor):
         )
 
     async def cancel(self, context: RequestContext, event_queue: EventQueue) -> None:
-        """진행 중인 A2A 조사 작업을 안전하게 취소한다."""
+        """진행 중인 A2A 조사 요청만 격리 취소하며, 공유 작업은 마지막 대기자가 취소될 때만 중단한다."""
         task_id = str(getattr(context, "task_id", None) or "")
         ctx_id = str(getattr(context, "context_id", None) or "")
         if task_id:
             self._canceled_task_ids.add(task_id)
-            running = self._active_tasks.get(task_id)
-            if running is not None and not running.done():
-                running.cancel()
+            waiter = self._task_waiters.get(task_id)
+            if waiter is not None and not waiter.done():
+                waiter.cancel()
         await event_queue.enqueue_event(
             TaskStatusUpdateEvent(
                 task_id=task_id or str(uuid.uuid4()),

@@ -35,33 +35,59 @@ class RedisCheckpointSaver(BaseCheckpointSaver[str]):
         self._mem_checkpoints: dict[tuple[str, str], list[tuple[str, str]]] = {}
         self._mem_writes: dict[tuple[str, str, str], dict[tuple[str, int], tuple[str, str, list[str]]]] = {}
         self._dirty_mem_keys: set[tuple[str, str]] = set()
+        self._pending_deleted_threads: set[str] = set()
+
+    async def _flush_pending_delete(self, thread_id: str) -> None:
+        """Redis 단절 중 예약된 스레드 삭제 툼스톤을 Redis 복구 시 선반영한다."""
+        if self._redis is None or thread_id not in self._pending_deleted_threads:
+            return
+        idx_key = self._index_key(thread_id, "")
+        cids = await self._redis.lrange(idx_key, 0, -1)
+        del_keys = [idx_key]
+        for cid in cids:
+            del_keys.append(self._cp_key(thread_id, "", str(cid)))
+            del_keys.append(self._writes_key(thread_id, "", str(cid)))
+        if del_keys:
+            await self._redis.delete(*del_keys)
+        self._pending_deleted_threads.discard(thread_id)
 
     async def _reconcile_mem_to_redis(self, thread_id: str, checkpoint_ns: str) -> None:
-        """일시 Redis 단절 중 로컬 폴백에 쌓인 최신 체크포인트·쓰기를 Redis 복구 직후 순서대로 반영한다."""
+        """일시 Redis 단절 중 로컬 폴백에 쌓인 삭제·체크포인트·독립 쓰기를 Redis 복구 직후 순서대로 반영한다."""
+        if self._redis is None:
+            return
+        await self._flush_pending_delete(thread_id)
         key = (thread_id, checkpoint_ns)
-        if self._redis is None or key not in self._dirty_mem_keys:
+        if key not in self._dirty_mem_keys:
             return
         bucket = self._mem_checkpoints.get(key) or []
         idx_key = self._index_key(thread_id, checkpoint_ns)
         existing_ids = set(str(x) for x in (await self._redis.lrange(idx_key, 0, -1)))
+        reconciled_write_cids: set[str] = set()
+
         for cid, serialized in bucket:
             cp_key = self._cp_key(thread_id, checkpoint_ns, cid)
             await self._redis.set(cp_key, serialized, ex=self._ttl)
             if cid not in existing_ids:
                 await self._redis.rpush(idx_key, cid)
                 existing_ids.add(cid)
-            mem_w = self._mem_writes.get((thread_id, checkpoint_ns, cid)) or {}
-            if mem_w:
-                w_key = self._writes_key(thread_id, checkpoint_ns, cid)
-                for (tid_w, write_idx), (_, channel, val_enc) in mem_w.items():
-                    field = f"{tid_w}:{write_idx}"
-                    raw_val = json.dumps({"task_id": tid_w, "channel": channel, "value": val_enc}, ensure_ascii=False)
-                    if write_idx >= 0:
-                        await self._redis.hsetnx(w_key, field, raw_val)
-                    else:
-                        await self._redis.hset(w_key, field, raw_val)
-                await self._redis.expire(w_key, self._ttl)
-        await self._redis.expire(idx_key, self._ttl)
+
+        # 체크포인트 본체는 이미 Redis에 있고 후속 aput_writes만 폴백된 경우까지 누락 없이 독립 리컨사일한다
+        for (t_id, ns, cid), mem_w in list(self._mem_writes.items()):
+            if (t_id, ns) != key or not mem_w:
+                continue
+            w_key = self._writes_key(thread_id, checkpoint_ns, cid)
+            for (tid_w, write_idx), (_, channel, val_enc) in mem_w.items():
+                field = f"{tid_w}:{write_idx}"
+                raw_val = json.dumps({"task_id": tid_w, "channel": channel, "value": val_enc}, ensure_ascii=False)
+                if write_idx >= 0:
+                    await self._redis.hsetnx(w_key, field, raw_val)
+                else:
+                    await self._redis.hset(w_key, field, raw_val)
+            await self._redis.expire(w_key, self._ttl)
+            reconciled_write_cids.add(cid)
+
+        if bucket or reconciled_write_cids:
+            await self._redis.expire(idx_key, self._ttl)
         self._dirty_mem_keys.discard(key)
 
     @staticmethod
@@ -198,6 +224,7 @@ class RedisCheckpointSaver(BaseCheckpointSaver[str]):
         stored_in_redis = False
         if self._redis is not None:
             try:
+                await self._reconcile_mem_to_redis(thread_id, checkpoint_ns)
                 w_key = self._writes_key(thread_id, checkpoint_ns, checkpoint_id)
                 for write_idx, channel, val_enc in encoded_items:
                     field = f"{task_id}:{write_idx}"
@@ -277,6 +304,7 @@ class RedisCheckpointSaver(BaseCheckpointSaver[str]):
         ids: list[str] = []
         if self._redis is not None:
             try:
+                await self._reconcile_mem_to_redis(thread_id, checkpoint_ns)
                 raw_ids = await self._redis.lrange(self._index_key(thread_id, checkpoint_ns), 0, -1)
                 ids = [str(x) for x in reversed(raw_ids)]
             except Exception:
@@ -308,18 +336,16 @@ class RedisCheckpointSaver(BaseCheckpointSaver[str]):
         for key in list(self._mem_writes.keys()):
             if key[0] == thread_id:
                 del self._mem_writes[key]
+        for key in list(self._dirty_mem_keys):
+            if key[0] == thread_id:
+                self._dirty_mem_keys.discard(key)
         if self._redis is not None:
             try:
-                idx_key = self._index_key(thread_id, "")
-                cids = await self._redis.lrange(idx_key, 0, -1)
-                del_keys = [idx_key]
-                for cid in cids:
-                    del_keys.append(self._cp_key(thread_id, "", str(cid)))
-                    del_keys.append(self._writes_key(thread_id, "", str(cid)))
-                if del_keys:
-                    await self._redis.delete(*del_keys)
+                self._pending_deleted_threads.add(thread_id)
+                await self._flush_pending_delete(thread_id)
             except Exception:
-                pass
+                # Redis 일시 단절 시 삭제 툼스톤을 유지해 복구 직후 기존 체크포인트가 부활하지 못하게 막는다
+                self._pending_deleted_threads.add(thread_id)
 
     # 동기 추상 메서드 호환 구현 (비동기 전용 호출 권장)
     def get_tuple(self, config: RunnableConfig) -> CheckpointTuple | None:
