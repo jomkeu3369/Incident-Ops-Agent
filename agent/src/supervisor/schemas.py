@@ -18,12 +18,17 @@ class ForwardedPropsInput(BaseModel):
     incidentStartedAt: str | None = None
     approvalDecision: ApprovalDecisionInput | None = None
     restore: bool = False
+    resume: bool = False
+    explicitCancel: bool = False
+    lastEventSeq: int | None = Field(default=None, ge=0)
 
     @model_validator(mode="after")
     def validate_exclusive_flags(self) -> ForwardedPropsInput:
         """restore 요청과 approvalDecision은 동시에 보낼 수 없다."""
         if self.restore and self.approvalDecision is not None:
             raise ValueError("restore와 approvalDecision은 함께 보낼 수 없습니다.")
+        if self.explicitCancel and self.approvalDecision is not None:
+            raise ValueError("explicitCancel과 approvalDecision은 함께 보낼 수 없습니다.")
         return self
 
 

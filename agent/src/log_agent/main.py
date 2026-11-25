@@ -15,7 +15,7 @@ def _build_agent_card(cfg: Settings) -> AgentCard:
         name="log-analyzer-agent",
         description="Spring MCP 코퍼스에서 DR-DCI 방식으로 장애 로그와 런북 근거를 인출하는 에이전트",
         version="0.1.0",
-        capabilities=AgentCapabilities(streaming=False),
+        capabilities=AgentCapabilities(streaming=True),
         default_input_modes=["application/json"],
         default_output_modes=["application/json"],
         skills=[AgentSkill(id="dr_dci_investigate", name="DR-DCI Log Investigation", description="장애 코드 기준으로 로그·런북 메타데이터를 검색하고 필요한 청크만 선별 인출한다.", tags=["mcp", "dr-dci", "logs"])],

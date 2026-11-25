@@ -1,5 +1,6 @@
 package com.incidentops.backend.mcp;
 
+import com.incidentops.backend.config.InternalRoleContext;
 import com.incidentops.backend.domain.CorpusChunk;
 import com.incidentops.backend.domain.Incident;
 import com.incidentops.backend.dto.CompleteIncidentRequest;
@@ -80,6 +81,9 @@ public class IncidentMcpTools {
             String timelineMarkdown,
             @ToolParam(description = "Preventive actions, required on SUCCESS", required = false) String preventionItems
     ) {
+        if (InternalRoleContext.isReadOnlyInvestigator()) {
+            throw new IllegalStateException("읽기 전용 조사 워커(investigator)는 복구 완료 쓰기 도구를 호출할 수 없습니다.");
+        }
         Assert.hasText(incidentCode, "incidentCode는 필수입니다.");
         CompleteIncidentRequest request = new CompleteIncidentRequest(
                 approvalId, actionCommand, executedBy, executionStatus, executionOutput,

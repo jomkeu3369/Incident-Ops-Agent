@@ -33,6 +33,7 @@ def get_supervisor_service(container: AppContainer = Depends(get_container), bac
         event_bus=container.event_bus,
         a2a_caller=container.a2a_caller,
         langsmith_client=container.langsmith_client,
+        checkpointer=container.checkpointer,
     )
 
 

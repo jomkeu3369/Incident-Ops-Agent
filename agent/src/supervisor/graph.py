@@ -46,6 +46,9 @@ class SupervisorState(TypedDict, total=False):
 
     session_id: str
     run_id: str
+    trace_id: str
+    a2a_task_ids: list[str]
+    last_completed_step: str
     incident_code: str
     service_name: str
     incident_title: str
@@ -62,6 +65,7 @@ class SupervisorState(TypedDict, total=False):
     runbook_summary: str
     recommended_command: str | None
     cached_tool_results: dict[str, Any]
+    cached_tool_results_timestamps: dict[str, float]
     remediation_result: dict[str, Any]
     replan_count: int
     should_replan: bool
@@ -205,8 +209,8 @@ def _resolve_time_bounds(constraints: dict[str, Any]) -> tuple[str, str, str, st
     return metrics_from, metrics_to, win_start.isoformat(), win_end.isoformat()
 
 
-def build_supervisor_graph(settings: Settings, http_client: httpx.AsyncClient, backend: BackendClient, event_bus: EventBus | None = None, a2a_caller: A2ACaller | None = None, on_ui_event: UiEventSink | None = None):
-    """요구사항 4.2 기준 5개 노드(analyze->plan->execute->evaluate->respond) LangGraph를 컴파일한다."""
+def build_supervisor_graph(settings: Settings, http_client: httpx.AsyncClient, backend: BackendClient, event_bus: EventBus | None = None, a2a_caller: A2ACaller | None = None, on_ui_event: UiEventSink | None = None, checkpointer: Any | None = None):
+    """요구사항 4.2 기준 LangGraph(analyze->plan->execute_log->execute_remediation->evaluate->respond)를 컴파일한다."""
 
     async def _emit(ui: list[dict[str, Any]], ev: dict[str, Any]) -> None:
         ui.append(ev)
@@ -268,11 +272,12 @@ def build_supervisor_graph(settings: Settings, http_client: httpx.AsyncClient, b
         steps = ["a2a:log-analyzer-agent", "a2a:remediation-agent"]
         await publish_safe(event_bus, sid, "step_finished", {"step": "plan", "steps": steps})
         await _emit(ui, {"kind": "step_finish", "step": "plan"})
-        return {"plan_steps_order": steps, "should_replan": False, "ui_events": ui}
+        return {"plan_steps_order": steps, "should_replan": False, "last_completed_step": "plan", "ui_events": ui}
 
-    async def execute_node(state: SupervisorState) -> SupervisorState:
-        """3단계: A2A로 로그 분석(DR-DCI)과 복구 계획(외부 Tool 3종+Decisions) 워커를 위임 실행한다."""
+    async def execute_log_node(state: SupervisorState) -> SupervisorState:
+        """3-1단계: A2A로 로그 분석(DR-DCI) 워커를 위임 실행하고 체크포인트에 근거를 저장한다."""
         sid = state["session_id"]
+        trace_id = state.get("trace_id") or state["run_id"]
         ui = list(state.get("ui_events") or [])
         await _emit(ui, {"kind": "step_start", "step": "execute"})
         await publish_safe(event_bus, sid, "step_started", {"step": "execute", "replanCount": state.get("replan_count", 0)})
@@ -282,15 +287,26 @@ def build_supervisor_graph(settings: Settings, http_client: httpx.AsyncClient, b
         runbook_summary = state.get("runbook_summary") or ""
         recommended_cmd = state.get("recommended_command")
         remaining_ids = list(state.get("remaining_chunk_ids") or [])
+        a2a_task_ids = list(state.get("a2a_task_ids") or [])
 
-        # 3-1) 로그 분석 A2A 호출 (이미 인출한 청크는 제외해 추가 조회만 수행)
+        # 로그 분석 A2A 호출 (이미 인출한 청크는 제외해 추가 조회만 수행; 멱등 키 및 traceId 전달)
         keywords = _extract_log_keywords(
             state.get("user_message", ""),
             state.get("incident_title", ""),
             state.get("incident_summary", ""),
         )
-        log_req = {"incidentCode": state["incident_code"], "keywords": keywords, "excludeChunkIds": pulled_ids, "maxPulls": 2 if pulled_ids else settings.dr_dci_max_pull_steps}
+        replan_count = int(state.get("replan_count", 0))
+        log_task_key = f"a2a-log-{state['run_id']}-r{replan_count}"
+        log_req = {
+            "incidentCode": state["incident_code"],
+            "keywords": keywords,
+            "excludeChunkIds": pulled_ids,
+            "maxPulls": 2 if pulled_ids else settings.dr_dci_max_pull_steps,
+            "idempotencyKey": log_task_key,
+            "traceId": trace_id,
+        }
         log_call_id = f"tc-log-{uuid.uuid4().hex[:6]}"
+        a2a_task_ids.append(log_task_key)
         t0 = time.perf_counter()
         try:
             log_res = await _call_worker(settings.log_agent_a2a_url, log_req, sid)
@@ -314,9 +330,42 @@ def build_supervisor_graph(settings: Settings, http_client: httpx.AsyncClient, b
                 recommended_cmd = str(log_res["recommendedCommand"])
             remaining_ids = list(log_res.get("remainingChunkIds") or [])
 
-        # 3-2) 복구 계획 A2A 호출 (캐시된 외부 Tool 결과 전달로 중복 호출 방지)
+        return {
+            "evidence": evidence,
+            "pulled_chunk_ids": pulled_ids,
+            "remaining_chunk_ids": remaining_ids,
+            "runbook_summary": runbook_summary,
+            "recommended_command": recommended_cmd,
+            "a2a_task_ids": a2a_task_ids,
+            "last_completed_step": "execute_log",
+            "ui_events": ui,
+        }
+
+    async def execute_remediation_node(state: SupervisorState) -> SupervisorState:
+        """3-2단계: 체크포인트에 보존된 근거와 캐시로 복구 계획(외부 Tool 3종+Decisions) 워커를 위임 실행한다."""
+        sid = state["session_id"]
+        ui = list(state.get("ui_events") or [])
+        evidence = list(state.get("evidence") or [])
+        runbook_summary = state.get("runbook_summary") or ""
+        recommended_cmd = state.get("recommended_command")
+        a2a_task_ids = list(state.get("a2a_task_ids") or [])
+
         metrics_from, metrics_to, win_start, win_end = _resolve_time_bounds(state["constraints"])
-        cached_tools = dict(state.get("cached_tool_results") or {})
+        raw_cache = dict(state.get("cached_tool_results") or {})
+        raw_timestamps = dict(state.get("cached_tool_results_timestamps") or {})
+        now_ts = time.time()
+        ttl_s = settings.tool_cache_ttl_seconds
+        # 체크포인트 재개 시에도 TTL(tool_cache_ttl_seconds)이 지난 캐시 항목은 만료 처리해 최신 변경 금지 시간 등을 재조회한다
+        cached_tools: dict[str, Any] = {}
+        fresh_timestamps: dict[str, float] = {}
+        for k, v in raw_cache.items():
+            saved_at = raw_timestamps.get(k)
+            if saved_at is None or (now_ts - float(saved_at)) <= ttl_s:
+                cached_tools[k] = v
+                if saved_at is not None:
+                    fresh_timestamps[k] = float(saved_at)
+        rem_task_key = f"a2a-rem-{state['run_id']}-r{int(state.get('replan_count', 0))}"
+        a2a_task_ids.append(rem_task_key)
         rem_req = {
             "action": "plan",
             "incidentCode": state["incident_code"],
@@ -368,14 +417,18 @@ def build_supervisor_graph(settings: Settings, http_client: httpx.AsyncClient, b
 
         await publish_safe(event_bus, sid, "step_finished", {"step": "execute"})
         await _emit(ui, {"kind": "step_finish", "step": "execute"})
+        updated_cache = rem_res.get("cachedToolResults") or cached_tools
+        end_ts = time.time()
+        updated_timestamps = {
+            k: (fresh_timestamps[k] if k in cached_tools and cached_tools[k] == v and k in fresh_timestamps else end_ts)
+            for k, v in updated_cache.items()
+        }
         return {
-            "evidence": evidence,
-            "pulled_chunk_ids": pulled_ids,
-            "remaining_chunk_ids": remaining_ids,
-            "runbook_summary": runbook_summary,
-            "recommended_command": recommended_cmd,
-            "cached_tool_results": rem_res.get("cachedToolResults") or cached_tools,
+            "cached_tool_results": updated_cache,
+            "cached_tool_results_timestamps": updated_timestamps,
             "remediation_result": rem_res,
+            "a2a_task_ids": a2a_task_ids,
+            "last_completed_step": "execute_remediation",
             "ui_events": ui,
         }
 
@@ -508,9 +561,21 @@ def build_supervisor_graph(settings: Settings, http_client: httpx.AsyncClient, b
                 parts.append(f"- 재계획 상한({settings.max_replan_attempts}회)에 도달해 중단했습니다. 조건이나 추가 로그를 확인해 주세요.")
             reply = "\n".join(parts)
 
+        # 공통 종단 트레이스 메타데이터(AG-UI runId -> A2A taskIds -> MCP chunkIds -> Spring approvalId)를 스냅샷에 연결한다
+        approval_obj = snapshot.get("approval") if isinstance(snapshot, dict) else None
+        snapshot = {
+            **snapshot,
+            "trace": {
+                "runId": state.get("run_id"),
+                "traceId": state.get("trace_id") or state.get("run_id"),
+                "a2aTaskIds": list(state.get("a2a_task_ids") or []),
+                "evidenceChunkIds": list(state.get("pulled_chunk_ids") or []),
+                "approvalId": approval_obj.get("approvalId") if isinstance(approval_obj, dict) else None,
+            },
+        }
         await publish_safe(event_bus, sid, "step_finished", {"step": "respond", "workflowStatus": snapshot.get("workflowStatus")})
         await _emit(ui, {"kind": "step_finish", "step": "respond"})
-        return {"reply_text": reply, "snapshot": snapshot, "workflow_status": snapshot.get("workflowStatus", "IDLE"), "ui_events": ui}
+        return {"reply_text": reply, "snapshot": snapshot, "workflow_status": snapshot.get("workflowStatus", "IDLE"), "last_completed_step": "respond", "ui_events": ui}
 
     def _route_after_analyze(state: SupervisorState) -> str:
         return "respond" if state.get("intent") in ("general_chat", "missing_info", "invalid_time_range") else "plan"
@@ -521,14 +586,16 @@ def build_supervisor_graph(settings: Settings, http_client: httpx.AsyncClient, b
     graph = StateGraph(SupervisorState)
     graph.add_node("analyze", analyze_node)
     graph.add_node("plan", plan_node)
-    graph.add_node("execute", execute_node)
+    graph.add_node("execute_log", execute_log_node)
+    graph.add_node("execute_remediation", execute_remediation_node)
     graph.add_node("evaluate", evaluate_node)
     graph.add_node("respond", respond_node)
 
     graph.add_edge(START, "analyze")
     graph.add_conditional_edges("analyze", _route_after_analyze, {"plan": "plan", "respond": "respond"})
-    graph.add_edge("plan", "execute")
-    graph.add_edge("execute", "evaluate")
+    graph.add_edge("plan", "execute_log")
+    graph.add_edge("execute_log", "execute_remediation")
+    graph.add_edge("execute_remediation", "evaluate")
     graph.add_conditional_edges("evaluate", _route_after_evaluate, {"plan": "plan", "respond": "respond"})
     graph.add_edge("respond", END)
-    return graph.compile()
+    return graph.compile(checkpointer=checkpointer)

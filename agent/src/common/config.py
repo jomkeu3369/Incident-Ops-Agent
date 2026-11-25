@@ -9,8 +9,9 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 _ROOT_ENV = Path(__file__).resolve().parents[3] / ".env"
 
-# 내부 서비스 간 인증 및 운영자 식별 헤더 상수
+# 내부 서비스 간 인증, 역할 권한 분리 및 운영자 식별 헤더 상수
 INTERNAL_TOKEN_HEADER = "X-Internal-Token"
+AGENT_ROLE_HEADER = "X-Agent-Role"
 OPERATOR_ID_HEADER = "X-Operator-Id"
 VALID_EVIDENCE_JUDGE_MODES = frozenset({"decisions_api", "structured_output", "rule_based", "auto"})
 VALID_DR_DCI_MODES = frozenset({"keyword", "agentic"})

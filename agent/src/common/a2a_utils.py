@@ -1,9 +1,12 @@
 from __future__ import annotations
 
+import asyncio
+from dataclasses import dataclass, field
 import hmac
 import json
+import time
 import uuid
-from typing import Any
+from typing import Any, Awaitable, Callable
 import httpx
 from fastapi import FastAPI, Request, status
 from fastapi.responses import JSONResponse
@@ -100,7 +103,7 @@ async def send_a2a_json(http_client: httpx.AsyncClient, *, base_url: str, intern
 
 
 def _extract_text_from_a2a_result(result: dict[str, Any]) -> str:
-    """A2A SendMessageResponse의 message 또는 task에서 첫 텍스트 파트를 추출한다."""
+    """A2A SendMessageResponse의 message 또는 task(artifacts 우선 -> status.message)에서 텍스트 파트를 추출한다."""
     msg = result.get("message")
     if isinstance(msg, dict):
         text = _first_part_text(msg.get("parts"))
@@ -108,16 +111,213 @@ def _extract_text_from_a2a_result(result: dict[str, Any]) -> str:
             return text
     task = result.get("task")
     if isinstance(task, dict):
+        for artifact in task.get("artifacts") or []:
+            text = _first_part_text(artifact.get("parts"))
+            if text:
+                return text
         status_msg = (task.get("status") or {}).get("message")
         if isinstance(status_msg, dict):
             text = _first_part_text(status_msg.get("parts"))
             if text:
                 return text
-        for artifact in task.get("artifacts") or []:
-            text = _first_part_text(artifact.get("parts"))
-            if text:
-                return text
     return ""
+
+
+@dataclass
+class A2AStreamResult:
+    """A2A SendStreamingMessage 호출의 최종 산출물과 진행 이벤트·지연 메타데이터."""
+
+    payload: dict[str, Any]
+    task_id: str | None = None
+    progress_events: list[dict[str, Any]] = field(default_factory=list)
+    first_progress_ms: float | None = None
+    final_artifact_ms: float | None = None
+    canceled: bool = False
+
+
+async def cancel_a2a_task(
+    http_client: httpx.AsyncClient,
+    *,
+    base_url: str,
+    internal_token: str,
+    task_id: str,
+) -> dict[str, Any]:
+    """실행 중인 원격 A2A 태스크에 CancelTask JSON-RPC 요청을 전송한다."""
+    rpc_body = {
+        "jsonrpc": "2.0",
+        "id": str(uuid.uuid4()),
+        "method": "CancelTask",
+        "params": {"id": task_id},
+    }
+    headers = {
+        "Content-Type": "application/json",
+        VERSION_HEADER: PROTOCOL_VERSION_CURRENT,
+        INTERNAL_TOKEN_HEADER: internal_token,
+        **extract_trace_headers(),
+    }
+    resp = await http_client.post(f"{base_url.rstrip('/')}/", json=rpc_body, headers=headers)
+    if resp.status_code != 200:
+        raise RuntimeError(f"A2A CancelTask 실패 (HTTP {resp.status_code})")
+    return resp.json()
+
+
+async def send_a2a_stream(
+    http_client: httpx.AsyncClient,
+    *,
+    base_url: str,
+    internal_token: str,
+    payload: dict[str, Any],
+    context_id: str | None = None,
+    idempotency_key: str | None = None,
+    trace_id: str | None = None,
+    timeout_seconds: float | None = None,
+    on_progress: Callable[[dict[str, Any]], Awaitable[None]] | None = None,
+) -> A2AStreamResult:
+    """원격 A2A v1.0 워커에 SendStreamingMessage SSE 요청을 전송하고 진행 상태·최종 산출물을 수신한다."""
+    enriched_payload = dict(payload)
+    if idempotency_key and "idempotencyKey" not in enriched_payload:
+        enriched_payload["idempotencyKey"] = idempotency_key
+    if trace_id and "traceId" not in enriched_payload:
+        enriched_payload["traceId"] = trace_id
+
+    rpc_body = {
+        "jsonrpc": "2.0",
+        "id": str(uuid.uuid4()),
+        "method": "SendStreamingMessage",
+        "params": {
+            "message": {
+                "messageId": str(uuid.uuid4()),
+                "contextId": context_id or str(uuid.uuid4()),
+                "role": "ROLE_USER",
+                "parts": [{"text": json.dumps(enriched_payload, ensure_ascii=False)}],
+            }
+        },
+    }
+
+    async def _consume() -> A2AStreamResult:
+        t0 = time.perf_counter()
+        headers = {
+            "Content-Type": "application/json",
+            "Accept": "text/event-stream",
+            VERSION_HEADER: PROTOCOL_VERSION_CURRENT,
+            INTERNAL_TOKEN_HEADER: internal_token,
+            **extract_trace_headers(),
+        }
+        progress_events: list[dict[str, Any]] = []
+        first_progress_ms: float | None = None
+        final_artifact_ms: float | None = None
+        final_text: str = ""
+        task_id: str | None = None
+        canceled = False
+
+        async with http_client.stream("POST", f"{base_url.rstrip('/')}/", json=rpc_body, headers=headers) as resp:
+            if resp.status_code != 200:
+                raise RuntimeError(f"A2A 스트리밍 호출 실패 (HTTP {resp.status_code})")
+
+            async for raw_line in resp.aiter_lines():
+                line = raw_line.strip()
+                if not line or not line.startswith("data:"):
+                    continue
+                data_str = line[5:].strip()
+                if not data_str or data_str == "[DONE]":
+                    continue
+                envelope = json.loads(data_str)
+                if "error" in envelope:
+                    err = envelope["error"]
+                    raise RuntimeError(f"A2A 스트리밍 JSON-RPC 오류: {err.get('message', err)}")
+
+                result = envelope.get("result") or {}
+                elapsed_ms = round((time.perf_counter() - t0) * 1000.0, 3)
+
+                status_update = result.get("statusUpdate") or result.get("status_update")
+                if isinstance(status_update, dict):
+                    task_id = str(status_update.get("taskId") or status_update.get("task_id") or task_id or "") or task_id
+                    status_obj = status_update.get("status") or {}
+                    state_str = str(status_obj.get("state") or "")
+                    msg_text = _first_part_text((status_obj.get("message") or {}).get("parts"))
+                    parsed_detail: Any = None
+                    if msg_text:
+                        try:
+                            parsed_detail = json.loads(msg_text)
+                        except json.JSONDecodeError:
+                            parsed_detail = msg_text
+                    ev = {
+                        "type": "statusUpdate",
+                        "taskId": task_id,
+                        "state": state_str,
+                        "detail": parsed_detail,
+                        "elapsedMs": elapsed_ms,
+                    }
+                    progress_events.append(ev)
+                    if first_progress_ms is None:
+                        first_progress_ms = elapsed_ms
+                    if "CANCELED" in state_str.upper():
+                        canceled = True
+                    if on_progress is not None:
+                        await on_progress(ev)
+                    continue
+
+                artifact_update = result.get("artifactUpdate") or result.get("artifact_update")
+                if isinstance(artifact_update, dict):
+                    task_id = str(artifact_update.get("taskId") or artifact_update.get("task_id") or task_id or "") or task_id
+                    art = artifact_update.get("artifact") or {}
+                    text = _first_part_text(art.get("parts"))
+                    if text:
+                        final_text = text
+                        final_artifact_ms = elapsed_ms
+                    continue
+
+                direct_text = _extract_text_from_a2a_result(result)
+                if direct_text:
+                    final_text = direct_text
+                    final_artifact_ms = elapsed_ms
+
+        if canceled and not final_text:
+            return A2AStreamResult(
+                payload={"ok": False, "canceled": True},
+                task_id=task_id,
+                progress_events=progress_events,
+                first_progress_ms=first_progress_ms,
+                final_artifact_ms=final_artifact_ms,
+                canceled=True,
+            )
+        if not final_text:
+            raise RuntimeError("A2A 스트리밍 응답에 최종 산출물이 없습니다.")
+
+        return A2AStreamResult(
+            payload=json.loads(final_text),
+            task_id=task_id,
+            progress_events=progress_events,
+            first_progress_ms=first_progress_ms,
+            final_artifact_ms=final_artifact_ms,
+            canceled=canceled,
+        )
+
+    async with traced_span(
+        "a2a.send_streaming_message",
+        run_type="chain",
+        inputs={"base_url": base_url, "context_id": context_id, "idempotencyKey": idempotency_key},
+        tags=["a2a", "streaming"],
+    ) as span:
+        try:
+            coro = _consume()
+            res = await (asyncio.wait_for(coro, timeout=timeout_seconds) if timeout_seconds is not None else coro)
+            end_span(
+                span,
+                outputs={
+                    "taskId": res.task_id,
+                    "progressCount": len(res.progress_events),
+                    "firstProgressMs": res.first_progress_ms,
+                    "canceled": res.canceled,
+                },
+            )
+            return res
+        except asyncio.TimeoutError as exc:
+            end_span(span, error="A2A streaming timeout")
+            raise TimeoutError(f"A2A 스트리밍 타임아웃({timeout_seconds}s)") from exc
+        except asyncio.CancelledError:
+            end_span(span, error="A2A streaming canceled")
+            raise
 
 
 def _first_part_text(parts: Any) -> str:
