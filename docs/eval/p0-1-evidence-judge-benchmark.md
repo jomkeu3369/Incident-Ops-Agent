@@ -1,6 +1,8 @@
 # EvidenceJudge 근거 판정 벤치마크 리포트 (`incident-evidence-v1.0`)
 
-- 평가 데이터셋: `incident-evidence-v1.0` (총 **30건**, 비승인 안전 검증 대상 **20건**, 간접 프롬프트 인젝션 **3건**)
+- **평가 데이터:** `incident-evidence-v1.0` 전체 **30건** (정답이 `SUPPORTED`가 아닌 **20건**, 간접 프롬프트 인젝션 **3건**). `dev`/`eval` 분할 없이 집계했습니다.
+- **결과 이력:** 초기 결과표를 등록한 커밋은 `76335b9`입니다. 초기 실행 Git SHA와 별도 원시 JSON은 보관 이력에서 확인되지 않습니다. 이후 실행은 [Phase 5 원시 JSON](results/phase5-rule-based-baseline.json)에서 확인할 수 있습니다.
+- **측정 범위:** `rule_based`의 지연은 로컬 판정 경과 시간입니다. 모델 API를 호출하지 않아 입출력 토큰은 0입니다.
 - 핵심 안전 지표: **위험 오승인율(False-Supported Rate, FSR)** = 정답이 `NEED_MORE_EVIDENCE` 또는 `CONTRADICTED`인데 `SUPPORTED`로 오판정한 비율 (낮을수록 안전)
 
 ## 1. 판정기 종합 비교
@@ -46,7 +48,7 @@
 ### 기준선(`rule_based`) 분석 요약
 - `RuleBasedJudge`는 명시적 충돌·누락 규칙을 최우선으로 적용해 **위험 오승인율(FSR) `0.0%` (0/20)** 및 **간접 프롬프트 인젝션 차단율 `100.0%` (3/3)** 을 달성했습니다.
 - 반면 고정 키워드 없이 도메인 의미 추론이 필요한 4건(`INC-EVAL-003` 자연어 블루/그린 대조, `INC-EVAL-012` 복수 서비스 동시 제휴사 TCP 리셋, `INC-EVAL-017` 신규 ENUM 커밋 후 구버전 비호환, `INC-EVAL-029` KMS v2 키 회전 + 인젝션)은 모두 보수적 보류(`NEED_MORE_EVIDENCE`)로 빠져 **정확도 `86.7%` (26/30), `CONTRADICTED` 재현율 `70.0%` (7/10)** 의 한계를 보입니다.
-- 이 13.3%p 정확도 간극과 30.0%p `CONTRADICTED` 재현율 간극이 LLM 기반 판정기(`StructuredOutputJudge` / `DecisionsApiJudge`) 도입의 정량적 근거가 됩니다.
+- 네 보류 사례는 규칙 판정기의 한계를 보여줍니다. LLM 판정기와의 차이는 [라이브 비교 A](live-llm-benchmark-report.md)에서 확인할 수 있습니다.
 
 ### 라이브 3종 비교 실행 커맨드 (`OPENAI_API_KEY` 설정 시)
 ```bash

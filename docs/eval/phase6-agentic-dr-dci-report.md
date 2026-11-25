@@ -1,27 +1,35 @@
 # Phase 6 · 에이전틱 DR-DCI 구현 및 4종 검색 전략 정량 벤치마크 리포트
 
-> **목적:** 기존 키워드 기반 DR-DCI(Phase 5 기준선)를 **1차 인출 본문의 단서로 다음 청크·조기 종료를 동적 결정하는 읽기 전용 에이전틱 DR-DCI**로 고도화하고, 6개 장애 카테고리 **60건(`dev` 24 / `eval` 36 원형 분리)**에서 4종 검색 전략(`full_context` · `vector_rag` · `keyword_dr_dci` · `agentic_dr_dci`)을 동일 입력·동일 판정기로 정량 비교한 기록입니다.
+> **목적:** 첫 인출 본문의 단서로 다음 청크와 종료 여부를 결정하는 읽기 전용 에이전틱 DR-DCI를 비교했습니다. 합성 장애 60건에서 네 전략에 동일한 사례와 규칙 판정기를 적용했습니다.
 
 - **원시 데이터:** [`results/phase6-4way-benchmark.json`](results/phase6-4way-benchmark.json) · [`results/phase6-4way-benchmark.csv`](results/phase6-4way-benchmark.csv) · [`results/phase6-4way-benchmark.md`](results/phase6-4way-benchmark.md)
-- **측정 조건:** 코퍼스 `dr-dci-corpus-v1.0` (**60건**, `dev` 30 / `eval` 30 **생성 템플릿 완전 분리**, 비승인 안전 대상 **44건**, multi-hop **18건**, 간접 프롬프트 인젝션 **6건**, 에이전틱 불리 반례 **2건**), `max_pull_steps=3`, `Judge=RuleBasedJudge`, `Selector=AdaptiveEvidenceSelector`
-- **레이턴시 측정 범위 주의:** 아래 `p50/p95/p99`는 **사전 인덱싱된(Pre-indexed) 오프라인 인메모리 CPU 검색 + 규칙 판정 시간**이며, 실제 LLM API 및 MCP 네트워크 RTT는 포함하지 않습니다. 실제 운영에서 `OpenAiDrDciSelector` + Spring MCP를 사용하면 단계별 LLM·HTTP 대기 시간이 추가되어 `agentic_dr_dci`의 종단 지연이 정적 RAG보다 길어집니다.
+- **데이터와 결과 이력:** 원시 JSON의 코퍼스 버전은 `dr-dci-corpus-v1.0`, `split_filter=all`입니다. 생성 템플릿을 분리한 `dev` 30건과 `eval` 30건을 합산했습니다. 정답이 `SUPPORTED`가 아닌 44건, multi-hop 18건, 간접 프롬프트 인젝션 6건이 포함됐습니다. 원시 결과는 `0ce6c0e`에서 갱신됐으며 실행 Git SHA는 기록되지 않았습니다.
+- **공통 조건:** `RuleBasedJudge`를 사용했습니다. 인출 예산은 `max_pull_steps=3`이며 전체 청크를 투입하는 `full_context`에는 이 제한을 적용하지 않았습니다.
+- **계측:** 토큰 수는 문자 수 기반 추정치이며 선택기가 읽은 메타데이터를 포함합니다. 지연은 로컬 검색부터 규칙 판정까지의 경과 시간입니다. 사전 TF-IDF 인덱스 구축, LLM API 및 MCP 네트워크 지연은 계측 범위에서 제외했습니다. API 포함 실측은 [라이브 보고서](live-llm-benchmark-report.md)에 따로 기록했습니다.
+
+| 비교군 | 근거 인출 방식 |
+| :--- | :--- |
+| `full_context` | 전체 청크 본문을 판정기에 한 번에 전달 |
+| `vector_rag` | 단어와 문자 3-그램 희소 TF-IDF 벡터의 코사인 유사도로 상위 3개 청크 검색 |
+| `keyword_dr_dci` | 키워드 순위로 청크를 정렬하고 예산까지 인출 |
+| `agentic_dr_dci` | `AdaptiveEvidenceSelector`가 앞서 읽은 내용으로 다음 청크 또는 종료를 선택 |
 
 ---
 
 ## 1. 4종 검색 전략 종합 비교
 
-| Strategy | Evidence Recall | Multi-Hop Recall | Groundedness | Ungrounded (↓) | Accuracy | Macro-F1 | **FSR (↓)** | Mean Input Tokens (vs Full) | Mean Chunks | Offline CPU `p50 / p95 / p99` (ms) | Violations |
+| Strategy | Evidence Recall | Multi-Hop Recall | Groundedness | Ungrounded (↓) | Accuracy | Macro-F1 | **FSR (↓)** | Mean Estimated Input Tokens (vs Full) | Mean Chunks | Offline `p50 / p95 / p99` (ms) | 인출 초과 / 쓰기 고정값 |
 | :--- | :---: | :---: | :---: | :---: | :---: | :---: | :---: | :---: | :---: | :---: | :---: |
 | `full_context` | 100.0% | 100.0% | 100.0% | 0.0% | 91.7% (55/60) | 0.901 | **0.0%** (0/44) | 2,456.2 (baseline) | 10.27 | 2.10 / 3.66 / 3.89 | 0 / 0 |
 | `vector_rag` *(pre-indexed)* | 85.3% | 72.0% | 83.3% | 16.7% | 78.3% (47/60) | 0.784 | **0.0%** (0/44) | 230.0 (-90.6%) | 3.00 | **0.46 / 0.64 / 0.71** | 0 / 0 |
 | `keyword_dr_dci` | 85.0% | 66.7% | 93.3% | 6.7% | 65.0% (39/60) | 0.650 | **0.0%** (0/44) | 182.2 (-92.6%) | 2.98 | 0.20 / 0.37 / 0.39 | 0 / 0 |
 | **`agentic_dr_dci`** | **100.0%** | **100.0%** | **100.0%** | **0.0%** | **91.7% (55/60)** | **0.901** | **0.0%** (0/44) | **658.3 (-73.2%)** | **2.45** | 0.42 / 0.86 / 1.00 | **0 / 0** |
 
-### 채택 게이트 검증 결과 (`PASS`)
-- 전체 컨텍스트 대비 입력 토큰 절감 **73.2%** (목표 `≥ 30%` 통과 — 선택기 메타데이터 읽기 토큰 포함)
+### 오프라인 게이트 결과 (`PASS`)
+- 전체 컨텍스트 대비 추정 입력 토큰 **73.2% 감소** (목표 `≥ 30%` 통과)
 - Macro-F1 하락 **0.0%p** (`0.901` vs. `full_context` `0.901`, 목표 `≤ 5%p` 통과)
 - 위험 오승인율(FSR) **0.0% (0/44)** (목표 `≤ 5%` 통과), 간접 프롬프트 인젝션 차단 **100% (6/6)**
-- 예산 초과 및 비인가 쓰기 **0건 / 0건** (서버 강제 화이트리스트·중복 차단·스텝/문자/시간 예산 가드)
+- 인출 예산 초과 **0건**. `unauthorized_writes`는 읽기 전용 러너가 0으로 기록하는 고정값입니다.
 
 ---
 
@@ -33,7 +41,7 @@
 ### 2.2 근거 충실도(Groundedness) 및 안전 위험 지표(Ungrounded Rate · FSR)
 ![Groundedness 및 안전 지표 비교](charts/phase6-groundedness-and-safety.png)
 
-### 2.3 종단 레이턴시 분포(`p50/p95/p99`) 및 평균 인출 스텝·토큰 프로파일
+### 2.3 오프라인 지연 분포(`p50/p95/p99`) 및 평균 인출 스텝·추정 토큰
 ![레이턴시 분포 및 토큰 예산 프로파일](charts/phase6-latency-and-steps.png)
 
 ### 2.4 장애 카테고리 × 전략별 Evidence Recall 히트맵
@@ -44,16 +52,16 @@
 ## 3. 핵심 인사이트 및 에이전틱 DR-DCI 불리 반례 (투명 공개)
 
 ### 왜 4종 비교가 필요한가?
-1. **임베딩 미사용 효과 vs. 에이전틱 피벗 효과 분리:** `keyword_dr_dci`(-92.6% 토큰)와 `vector_rag`(-90.6% 토큰)는 쿼리 1회 정적 검색으로 토큰을 극단적으로 줄이지만, **1차 증상 로그를 읽어야 다음 원인 청크 단서가 드러나는 multi-hop 장애(18건)**에서 회수율이 `66.7%` / `72.0%`로 하락하며 Macro-F1이 `0.650` / `0.784`로 떨어집니다.
-2. **에이전틱 DR-DCI의 강점:** `agentic_dr_dci`는 첫 인출 본문의 단서로 다음 청크를 선택하고 필수 근거가 모이면 조기 종료(`STOP_SUFFICIENT`, 평균 2.45개 청크 인출)함으로써 **Full Context와 동일한 Macro-F1(`0.901`)과 100% Groundedness를 유지하면서도 입력 토큰을 73.2% 절감**했습니다. 생성 템플릿을 완전히 분리한 `eval`(30건)에서도 `agentic_dr_dci` Macro-F1 `0.842` vs `vector_rag` `0.621` / `keyword` `0.339`로 격차가 유지되었고, 반대로 사전 인덱싱된 `vector_rag`는 `p95/p99` 지연(`0.64/0.71ms`)이 `agentic_dr_dci`(`0.86/1.00ms`)보다 빠른 명확한 **지연 vs. Multi-Hop 품질 트레이드오프**를 보입니다.
+1. `keyword_dr_dci`와 `vector_rag`는 전체 컨텍스트 대비 추정 입력 토큰이 각각 92.6%, 90.6% 줄었습니다. multi-hop 18건의 근거 회수율은 각각 66.7%, 72.0%였습니다.
+2. `agentic_dr_dci`는 평균 2.45개 청크를 인출했고 전체 컨텍스트와 동일한 Macro-F1 0.901, Groundedness 100%를 기록했습니다. 추정 입력 토큰은 73.2% 줄었습니다. 생성 템플릿을 분리한 `eval` 30건의 Macro-F1은 `agentic_dr_dci` 0.842, `vector_rag` 0.621, `keyword_dr_dci` 0.339였습니다. 전체 오프라인 표본의 p95 지연은 사전 인덱싱된 `vector_rag`가 0.64ms, `agentic_dr_dci`가 0.86ms였습니다.
 
 ### 에이전틱 DR-DCI가 불리했던 반례 2건
-| Case ID | Archetype | Keyword Recall / Tokens | Agentic Recall / Tokens | 원인 분석 |
+| Case ID | Archetype | Keyword Recall / Estimated Tokens | Agentic Recall / Estimated Tokens | 원인 분석 |
 | :--- | :--- | :---: | :---: | :--- |
 | `DRDCI-ADV-04` | `adv_short_corpus_keyword_optimal` | 100% / 97 tok | 100% / 190 tok | 청크가 3개뿐인 소규모 코퍼스에서는 키워드 1회 랭킹만으로 100% 회수되므로, 에이전틱 선택기의 반복 메타데이터 읽기 오버헤드(+93 tok)가 순손실 |
 | `DRDCI-ADV-09` | `adv_misleading_ref_counterexample` | 100% / 95 tok | 100% / 457 tok | 1차 로그 본문에 무관한 노이즈 청크 참조(`LOG-02`, `LOG-03`)가 포함돼 선택기가 추가 스텝과 토큰(+362 tok)을 소모함 |
 
-> **설계 시사점:** 코퍼스가 매우 작거나(`≤ 3 chunks`) 단순 키워드로 즉시 판별되는 장애에서는 `keyword_dr_dci`가 비용·지연 면에서 유리하며, 코퍼스 규모가 크고 다중 청크 인과 추적이 필요한 복합 장애에서 `agentic_dr_dci`가 진가를 발휘합니다.
+> 위 두 사례에서는 키워드 방식으로 같은 근거를 더 적은 추정 토큰으로 회수했습니다. 규모에 따른 API 토큰 사용량과 지연 변화는 라이브 실험 B·C에서 별도로 확인했습니다.
 
 ---
 
@@ -74,7 +82,7 @@ python -m eval.plot `
   --output-dir ..\docs\eval\charts `
   --prefix phase6
 
-# 3) (선택) OPENAI_API_KEY 설정 시 라이브 LLM 선택기·판정기 비교
+# 3) (선택) 현재 eval 30건으로 라이브 LLM 선택기·판정기 비교
 python -m eval.dr_dci_benchmark --split eval --max-pull-steps 3 `
   --judge structured_output --selector openai `
   --output-json ..\docs\eval\results\phase6-live-eval.json `

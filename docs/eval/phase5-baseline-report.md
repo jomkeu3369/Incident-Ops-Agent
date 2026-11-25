@@ -7,10 +7,11 @@
 ## 1. EvidenceJudge 기준선 (`incident-evidence-v1.0`, `rule_based`)
 
 - **원시 데이터:** [`results/phase5-rule-based-baseline.json`](results/phase5-rule-based-baseline.json) · [`results/phase5-rule-based-baseline.csv`](results/phase5-rule-based-baseline.csv) · [`results/phase5-rule-based-baseline.md`](results/phase5-rule-based-baseline.md)
-- **측정 범위:** 합성 장애 30건 (비승인 안전 검증 대상 20건, 간접 프롬프트 인젝션 3건)
+- **데이터와 결과 이력:** 원시 JSON의 코퍼스 버전은 `incident-evidence-v1.0`입니다. `dev`/`eval` 분할 없이 전체 30건(정답이 `SUPPORTED`가 아닌 20건, 간접 프롬프트 인젝션 3건)을 평가했습니다. 원시 결과를 등록한 커밋은 `de3970d`이며 실행 Git SHA는 기록되지 않았습니다.
+- **비교 기준과 계측:** `RuleBasedJudge`(`deterministic-v1`) 단독으로 로컬 판정 경과 시간을 측정했습니다. 모델 API를 호출하지 않아 입출력 토큰은 0입니다.
 - **요약 수치:** Accuracy **86.7% (26/30)** · Macro-F1 **0.868** · **FSR 0.0% (0/20)** · Injection Resist **100.0% (3/3)** · Latency **p50 0.08ms / p95 0.16ms / p99 0.27ms** · Token **0 / 0** (`$0.00000`)
 
-> 라이브 LLM 판정기(`structured_output`, `decisions_api`)는 외부 API 키 의존으로 본 오프라인 기준선에는 미포함(미측정)이며, Phase 6에서 동일 파이프라인으로 추가 비교합니다.
+> `structured_output`과 `decisions_api`의 토큰 사용량과 API 포함 지연은 [별도 라이브 비교 A](live-llm-benchmark-report.md)에 기록했습니다.
 
 ### 1.1 혼동 행렬
 ![EvidenceJudge 혼동 행렬](charts/phase5-confusion-matrix.png)
@@ -26,7 +27,8 @@
 ## 2. 키워드 DR-DCI 기준선 (`log_agent.services.run_dr_dci_investigation`)
 
 - **원시 데이터:** [`results/phase5-dr-dci-baseline.json`](results/phase5-dr-dci-baseline.json) · [`results/phase5-dr-dci-baseline.csv`](results/phase5-dr-dci-baseline.csv)
-- **측정 범위:** `db/demo/data.sql`(`INC-2026-001`) 포함 대표 장애 5종 × `DR_DCI_MAX_PULL_STEPS` 1–5 (케이스당 10회 반복 계측, 총 25개 조건)
+- **데이터와 결과 이력:** `dr-dci-baseline-v1`은 원시 JSON의 결과 스키마입니다. 별도 코퍼스 버전, `dev`/`eval` 분할 및 실행 Git SHA는 기록되지 않았습니다. 원시 결과는 `df24a98`에서 갱신됐습니다.
+- **비교 기준과 계측:** `db/demo/data.sql`(`INC-2026-001`)을 포함한 대표 장애 5종에서 인출 예산 1–5를 각각 10회 반복했습니다. 지연은 로컬 인출의 경과 시간입니다. 컨텍스트 크기는 문자 수로 집계했으며 표의 절감률은 장애별 전체 컨텍스트 대비 절감률을 평균한 값입니다.
 
 | `DR_DCI_MAX_PULL_STEPS` | Mean Evidence Recall | Citation Validity | Mean Context Chars (Full 676.6) | Context 절감률 | Mean Pull Calls | `p50 / p95 / p99` (ms) |
 | :---: | :---: | :---: | :---: | :---: | :---: | :---: |
@@ -38,7 +40,7 @@
 
 ![키워드 DR-DCI 예산 곡선](charts/phase5-dr-dci-budget-curve.png)
 
-- **관찰:** `remediation_agent`의 실제 추론 컨텍스트 조립(`runbookSummary` + 비중복 런북/로그 요약)과 예산별 풀링 지연 백분위 기준으로, `budget=3`에서 평균 필수 근거 회수율 **90.0%**와 원문 대비 **27.8% 컨텍스트 절감**을 달성했고, `budget=4`에서 **100.0% 회수율**에 도달한 뒤 `budget=5`부터는 회수율 증가 없이 컨텍스트 크기만 증가(수확 체감)했습니다. 이 수치가 Phase 6의 4종 검색 전략(`full_context` / `vector_rag` / `keyword_dr_dci` / `agentic_dr_dci`) 비교 기준선이 됩니다.
+- **관찰:** `runbookSummary`와 중복을 제거한 런북·로그 요약을 모은 컨텍스트에서 `budget=3`은 필수 근거 회수율 **90.0%**, 전체 컨텍스트 대비 평균 문자 수 **27.8% 감소**를 기록했습니다. `budget=4`에서 회수율이 **100.0%**에 도달했고, `budget=5`에서는 회수율이 그대로인 상태에서 문자 수가 늘었습니다.
 
 ---
 
