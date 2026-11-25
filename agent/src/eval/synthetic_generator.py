@@ -500,6 +500,7 @@ def generate_synthetic_incidents(
             service_name=svc,
             category=category,
             archetype=arch,
+            template_id=f"{category}:{arch}",
             expected_verdict=verdict,
             proposed_action=f"Rollback {svc} from {cur_v} to {prev_v} (kubectl rollout undo deployment/{svc})",
             query_keywords=q_kws,

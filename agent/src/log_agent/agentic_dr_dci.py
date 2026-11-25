@@ -31,10 +31,27 @@ _FOLLOWUP_CLUE_RULES: tuple[tuple[re.Pattern[str], tuple[str, ...]], ...] = (
     (re.compile(r"certificate\s*expired|tls|ssl|인증서\s*만료|ddos|rate\s*limit", re.I), ("tls", "cert", "certificate", "ddos", "waf", "runbook")),
 )
 
-# 본문 내부에 다른 청크 ID나 trace/deploy 참조가 직접 언급된 경우 추출 (예: see LOG-08, ref=RB-02, txId=TX9001, v3.4.2)
+# 본문 내부에 다른 청크 ID나 trace/deploy 참조가 직접 언급된 경우 추출 (예: LOG-08, L-0001-R2, RB-02)
 _CHUNK_REF_RE = re.compile(r"\b([A-Z]{1,8}-(?:[A-Z]{1,4}-)?\d{2,4}(?:-[A-Z0-9]{1,4})?)\b")
 _ENTITY_HINT_RE = re.compile(r"\b(?:txId|traceId|release|image|migration|job|worker|module|service)=([A-Za-z0-9._:/-]+)", re.I)
 _VERSION_HINT_RE = re.compile(r"\b(v\d+\.\d+(?:\.\d+)?)\b", re.I)
+
+_PRE_NEGATION_RE = re.compile(r"(?:no|not|without|never|neither|ruled\s+out|없음|아님|무관)\s*$", re.I)
+_POST_NEGATION_RE = re.compile(r"^\s*(?:없음|없다|없으며|없고|아님|아니며|배제|ruled\s+out|not\s+detected|not\s+found|cleared|resolved)", re.I)
+
+
+def _has_unnegated_signal(pattern: re.Pattern[str], text: str) -> bool:
+    """부정·배제 문맥('external PG outage ruled out', '외부 PG사 장애 없음' 등)이 아닌 긍정 매치만 인정한다."""
+    for match in pattern.finditer(text):
+        prefix = text[max(0, match.start() - 32) : match.start()]
+        suffix = text[match.end() : min(len(text), match.end() + 36)]
+        # 문장/줄 경계로 자른다
+        prefix_seg = re.split(r"[\n.;,]", prefix)[-1]
+        suffix_seg = re.split(r"[\n.;,]", suffix)[0]
+        if _PRE_NEGATION_RE.search(prefix_seg) or _POST_NEGATION_RE.search(suffix_seg):
+            continue
+        return True
+    return False
 
 # 본문에서 명백한 충돌/누락 또는 인젝션 시도를 식별하는 패턴
 _CONTRADICTION_SIGNAL_RE = re.compile(
@@ -163,10 +180,10 @@ def _has_sufficient_evidence(collected: Sequence[EvidenceItem], remaining_index:
     if not runbooks and has_runbook_available:
         return False, ""
 
-    has_symptom = bool(_SYMPTOM_SIGNAL_RE.search(log_text))
-    has_root_or_deploy = bool(_ROOT_OR_DEPLOY_SIGNAL_RE.search(log_text))
-    has_contradiction = bool(_CONTRADICTION_SIGNAL_RE.search(log_text))
-    has_missing = bool(_MISSING_TELEMETRY_SIGNAL_RE.search(log_text))
+    has_symptom = _has_unnegated_signal(_SYMPTOM_SIGNAL_RE, log_text)
+    has_root_or_deploy = _has_unnegated_signal(_ROOT_OR_DEPLOY_SIGNAL_RE, log_text)
+    has_contradiction = _has_unnegated_signal(_CONTRADICTION_SIGNAL_RE, log_text)
+    has_missing = _has_unnegated_signal(_MISSING_TELEMETRY_SIGNAL_RE, log_text)
 
     # 이미 인출한 본문에 아직 읽지 않은 청크 ID 직접 참조가 있으면 한 번 더 추적한다
     direct_refs, _ = _extract_dynamic_clues(collected)
@@ -459,13 +476,33 @@ async def run_agentic_dr_dci_investigation(
         excluded = set(req.excludeChunkIds)
         tool_trace: list[dict[str, Any]] = []
         decision_trace: list[dict[str, Any]] = []
+        deadline = time.perf_counter() + timeout_s
+
+        def _remaining_timeout() -> float:
+            return deadline - time.perf_counter()
 
         # 1단계: 현재 장애·서비스 범위의 전체 메타데이터 색인 조회 (서버가 허용 화이트리스트 고정)
         try:
-            log_index = await crud.search_index(req.incidentCode, "LOG", None)
+            rem = _remaining_timeout()
+            if rem <= 0:
+                raise asyncio.TimeoutError()
+            log_index = await asyncio.wait_for(crud.search_index(req.incidentCode, "LOG", None), timeout=rem)
             tool_trace.append({"tool": "searchCorpusIndex", "args": {"incidentCode": req.incidentCode, "corpusType": "LOG", "keyword": None}, "count": len(log_index)})
-            runbook_index = await crud.search_index(req.incidentCode, "RUNBOOK", None)
+            rem = _remaining_timeout()
+            if rem <= 0:
+                raise asyncio.TimeoutError()
+            runbook_index = await asyncio.wait_for(crud.search_index(req.incidentCode, "RUNBOOK", None), timeout=rem)
             tool_trace.append({"tool": "searchCorpusIndex", "args": {"incidentCode": req.incidentCode, "corpusType": "RUNBOOK", "keyword": None}, "count": len(runbook_index)})
+        except asyncio.TimeoutError:
+            decision_trace.append({"step": 0, "action": "STOP_TIMEOUT", "chunkId": None, "reason": "색인 조회 단계에서 시간 예산 초과로 안전 종료"})
+            end_span(span, outputs={"ok": True, "pulledCount": 0, "stopReason": "TIMEOUT_BUDGET_REACHED"})
+            return LogInvestigationResponse(
+                ok=True,
+                incidentCode=req.incidentCode,
+                toolTrace=tool_trace,
+                decisionTrace=decision_trace,
+                stopReason="TIMEOUT_BUDGET_REACHED",
+            )
         except BackendApiError as exc:
             end_span(span, error=exc.message)
             return LogInvestigationResponse(
@@ -484,15 +521,16 @@ async def run_agentic_dr_dci_investigation(
 
         evidence: list[EvidenceItem] = []
         pulled_ids: set[str] = set()
+        failed_ids: set[str] = set()
         runbook_summaries: list[str] = []
         recommended_command: str | None = None
         accumulated_context_chars = 0
         stop_reason = "BUDGET_EXHAUSTED"
-        started_monotonic = time.perf_counter()
 
         # 2단계: 에이전틱 선택 루프 (서버 강제 화이트리스트 · 중복 차단 · 스텝/문자/시간 예산 가드)
         for step_no in range(1, budget + 1):
-            if (time.perf_counter() - started_monotonic) >= timeout_s:
+            rem = _remaining_timeout()
+            if rem <= 0:
                 stop_reason = "TIMEOUT_BUDGET_REACHED"
                 decision_trace.append({"step": step_no, "action": "STOP_TIMEOUT", "chunkId": None, "reason": "시간 예산 초과로 안전 종료"})
                 break
@@ -501,19 +539,28 @@ async def run_agentic_dr_dci_investigation(
                 decision_trace.append({"step": step_no, "action": "STOP_CONTEXT_BUDGET", "chunkId": None, "reason": "컨텍스트 문자 예산 도달로 안전 종료"})
                 break
 
-            remaining_meta = [meta for cid, meta in all_meta.items() if cid not in pulled_ids]
+            remaining_meta = [meta for cid, meta in all_meta.items() if cid not in pulled_ids and cid not in failed_ids]
             if not remaining_meta:
                 stop_reason = "CORPUS_EXHAUSTED"
                 break
 
-            decision = await active_selector.select_next_action(
-                incident_code=req.incidentCode,
-                keywords=req.keywords,
-                remaining_index=remaining_meta,
-                collected_evidence=evidence,
-                step_no=step_no,
-                max_steps=budget,
-            )
+            try:
+                decision = await asyncio.wait_for(
+                    active_selector.select_next_action(
+                        incident_code=req.incidentCode,
+                        keywords=req.keywords,
+                        remaining_index=remaining_meta,
+                        collected_evidence=evidence,
+                        step_no=step_no,
+                        max_steps=budget,
+                    ),
+                    timeout=rem,
+                )
+            except asyncio.TimeoutError:
+                stop_reason = "TIMEOUT_BUDGET_REACHED"
+                decision_trace.append({"step": step_no, "action": "STOP_TIMEOUT", "chunkId": None, "reason": "선택기 대기 중 시간 예산 초과로 안전 종료"})
+                break
+
             step_record: dict[str, Any] = {
                 "step": step_no,
                 "action": decision.action,
@@ -532,8 +579,8 @@ async def run_agentic_dr_dci_investigation(
                 break
 
             target_id = (decision.chunk_id or "").strip()
-            # 서버 강제 화이트리스트 & 중복 인출 차단 가드
-            if not target_id or target_id not in all_meta or target_id in pulled_ids:
+            # 서버 강제 화이트리스트 & 중복/실패 청크 차단 가드
+            if not target_id or target_id not in all_meta or target_id in pulled_ids or target_id in failed_ids:
                 step_record["guardRejected"] = True
                 step_record["guardReason"] = "INVALID_OR_DUPLICATE_CHUNK_ID"
                 decision_trace.append(step_record)
@@ -541,30 +588,56 @@ async def run_agentic_dr_dci_investigation(
                 break
 
             decision_trace.append(step_record)
+            rem = _remaining_timeout()
+            if rem <= 0:
+                stop_reason = "TIMEOUT_BUDGET_REACHED"
+                decision_trace.append({"step": step_no, "action": "STOP_TIMEOUT", "chunkId": None, "reason": "청크 인출 직전 시간 예산 초과로 안전 종료"})
+                break
+
             try:
-                chunk = await crud.pull_chunk(req.incidentCode, target_id)
+                chunk = await asyncio.wait_for(crud.pull_chunk(req.incidentCode, target_id), timeout=rem)
+            except asyncio.TimeoutError:
+                stop_reason = "TIMEOUT_BUDGET_REACHED"
+                decision_trace.append({"step": step_no, "action": "STOP_TIMEOUT", "chunkId": target_id, "reason": "청크 인출 중 시간 예산 초과로 안전 종료"})
+                break
             except BackendApiError as exc:
                 tool_trace.append({"tool": "pullCorpusChunk", "args": {"incidentCode": req.incidentCode, "chunkId": target_id}, "ok": False, "error": exc.message})
-                # 실패한 청크는 재시도 가능하도록 pulled_ids에 넣지 않되 무한 루프 방지를 위해 다음 스텝으로 진행
-                all_meta.pop(target_id, None)
+                # 현재 호출 내 재선택만 제외하고 remainingChunkIds에는 유지해 후속 재계획에서 재시도 가능하게 보존한다
+                failed_ids.add(target_id)
                 continue
 
             raw_content = str(chunk.get("content") or "")
             meta = all_meta[target_id]
             corpus_type = str(chunk.get("corpusType") or meta.get("corpusType") or "LOG").upper()
-            summary = _summarize_chunk(raw_content, min(max_chunk_chars, 400), preserve_newlines=(corpus_type == "RUNBOOK"))
-            tool_trace.append({"tool": "pullCorpusChunk", "args": {"incidentCode": req.incidentCode, "chunkId": target_id}, "ok": True, "chars": len(raw_content)})
-
-            evidence.append(EvidenceItem(chunkId=target_id, corpusType=corpus_type, title=str(chunk.get("title") or meta.get("title") or target_id), summary=summary))
-            pulled_ids.add(target_id)
-            accumulated_context_chars += len(summary)
+            remaining_chars = max_context_chars - accumulated_context_chars
+            if remaining_chars <= 0:
+                stop_reason = "CONTEXT_CHAR_BUDGET_REACHED"
+                break
 
             if corpus_type == "RUNBOOK":
-                rb_summary = _summarize_chunk(raw_content, max_chunk_chars, preserve_newlines=True)
+                rb_cap = min(max_chunk_chars, remaining_chars)
+                rb_summary = _summarize_chunk(raw_content, rb_cap, preserve_newlines=True)
+                # EvidenceItem.summary와 runbookSummary를 동일 문자열로 유지해 remediation_agent 중복 합산 및 예산 초과를 원천 차단한다
+                summary = rb_summary
                 runbook_summaries.append(rb_summary)
-                accumulated_context_chars += max(0, len(rb_summary) - len(summary))
+                accumulated_context_chars += len(rb_summary)
                 if recommended_command is None:
                     recommended_command = _extract_command(raw_content)
+            else:
+                summary_cap = min(max_chunk_chars, 400, remaining_chars)
+                summary = _summarize_chunk(raw_content, summary_cap, preserve_newlines=False)
+                accumulated_context_chars += len(summary)
+
+            tool_trace.append({"tool": "pullCorpusChunk", "args": {"incidentCode": req.incidentCode, "chunkId": target_id}, "ok": True, "chars": len(raw_content)})
+            evidence.append(EvidenceItem(chunkId=target_id, corpusType=corpus_type, title=str(chunk.get("title") or meta.get("title") or target_id), summary=summary))
+            pulled_ids.add(target_id)
+
+            if accumulated_context_chars >= max_context_chars and len(pulled_ids) < len(all_meta):
+                stop_reason = "CONTEXT_CHAR_BUDGET_REACHED"
+                break
+        else:
+            if _remaining_timeout() <= 0:
+                stop_reason = "TIMEOUT_BUDGET_REACHED"
 
         remaining_ids = [cid for cid in all_meta if cid not in pulled_ids]
         resp = LogInvestigationResponse(

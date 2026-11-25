@@ -100,23 +100,42 @@ async def _run_full_context(case: DrDciBenchmarkCase, max_chunk_chars: int) -> t
     return res, 0, 0
 
 
-async def _run_vector_rag(case: DrDciBenchmarkCase, top_k: int, max_chunk_chars: int) -> tuple[LogInvestigationResponse, int, int]:
-    """전략 2: 쿼리 + 제안 액션 유사도만으로 Top-K 청크를 1회 정적 검색하는 오프라인 벡터 RAG."""
-    query_text = f"{case.service_name} {case.proposed_action} {' '.join(case.query_keywords)}"
-    doc_texts = [f"{c.title} {c.keywords} {c.content}" for c in case.chunks]
-    doc_vecs = [_vectorize_text(t) for t in doc_texts]
-    query_vec = _vectorize_text(query_text)
+@dataclass(frozen=True)
+class _PrebuiltVectorIndex:
+    """쿼리 타이머 바깥에서 사전 구축한 오프라인 문서 벡터 및 IDF 인덱스."""
 
+    doc_vecs: tuple[Counter[str], ...]
+    idf: dict[str, float]
+    build_ms: float
+
+
+def _build_vector_index(case: DrDciBenchmarkCase) -> _PrebuiltVectorIndex:
+    t0 = time.perf_counter()
+    doc_vecs = tuple(_vectorize_text(f"{c.title} {c.keywords} {c.content}") for c in case.chunks)
     n_docs = len(doc_vecs)
     df: Counter[str] = Counter()
     for vec in doc_vecs:
         for term in vec:
             df[term] += 1
     idf = {term: math.log((n_docs + 1.0) / (freq + 1.0)) + 1.0 for term, freq in df.items()}
+    return _PrebuiltVectorIndex(doc_vecs=doc_vecs, idf=idf, build_ms=round((time.perf_counter() - t0) * 1000.0, 3))
+
+
+async def _run_vector_rag(
+    case: DrDciBenchmarkCase,
+    top_k: int,
+    max_chunk_chars: int,
+    *,
+    prebuilt_index: _PrebuiltVectorIndex | None = None,
+) -> tuple[LogInvestigationResponse, int, int]:
+    """전략 2: 사전 구축된 문서 벡터 인덱스에 대해 쿼리 1회만 벡터화해 Top-K를 검색하는 오프라인 벡터 RAG."""
+    index = prebuilt_index or _build_vector_index(case)
+    query_text = f"{case.service_name} {case.proposed_action} {' '.join(case.query_keywords)}"
+    query_vec = _vectorize_text(query_text)
 
     scored = [
-        (_cosine_similarity(query_vec, vec, idf), -c.sequence_order, c)
-        for c, vec in zip(case.chunks, doc_vecs)
+        (_cosine_similarity(query_vec, vec, index.idf), -c.sequence_order, c)
+        for c, vec in zip(case.chunks, index.doc_vecs)
     ]
     scored.sort(key=lambda item: (item[0], item[1]), reverse=True)
     selected = [item[2] for item in scored[:top_k]]
@@ -213,6 +232,8 @@ class StrategySummary:
     strategy: StrategyName
     split_filter: str
     total_cases: int
+    decided_cases: int
+    undecidable_count: int
     correct_cases: int
     accuracy: float
     macro_f1: float
@@ -253,6 +274,8 @@ def _summarize_strategy(
     full_context_input_tokens: int,
 ) -> StrategySummary:
     total = len(results)
+    undecidable = sum(1 for r in results if r.predicted == "UNDECIDABLE")
+    decided = total - undecidable
     correct = sum(1 for r in results if r.correct)
     non_sup = sum(1 for r in results if r.expected != "SUPPORTED")
     fs = sum(1 for r in results if r.false_supported)
@@ -314,6 +337,8 @@ def _summarize_strategy(
         strategy=strategy,
         split_filter=split_filter,
         total_cases=total,
+        decided_cases=decided,
+        undecidable_count=undecidable,
         correct_cases=correct,
         accuracy=round(correct / total, 4) if total else 0.0,
         macro_f1=macro_f1,
@@ -354,18 +379,32 @@ def evaluate_adoption_gate(
     min_token_reduction: float = 0.30,
     max_f1_drop: float = 0.05,
     max_fsr: float = 0.05,
+    min_decided_rate: float = 0.80,
 ) -> dict[str, Any]:
-    """Phase 6 기본 전략 채택 게이트를 정량 검증한다."""
+    """Phase 6 기본 전략 채택 게이트를 정량 검증한다 (판정기 전면 실패/UNDECIDABLE 시 자동 HOLD)."""
+    ag_decided_rate = (agentic.decided_cases / agentic.total_cases) if agentic.total_cases > 0 else 0.0
+    fc_decided_rate = (full_context.decided_cases / full_context.total_cases) if full_context.total_cases > 0 else 0.0
+    judge_valid = (
+        ag_decided_rate >= min_decided_rate
+        and fc_decided_rate >= min_decided_rate
+        and full_context.macro_f1 > 0.0
+    )
     token_ok = agentic.token_reduction_vs_full >= min_token_reduction
     f1_drop = round(full_context.macro_f1 - agentic.macro_f1, 4)
     f1_ok = f1_drop <= max_f1_drop
     fsr_ok = agentic.false_supported_rate <= max_fsr
     safety_ok = agentic.budget_violations == 0 and agentic.unauthorized_writes == 0
-    passed = token_ok and f1_ok and fsr_ok and safety_ok
+    passed = judge_valid and token_ok and f1_ok and fsr_ok and safety_ok
     return {
         "passed": passed,
         "recommended_default": "agentic" if passed else "keyword",
         "checks": {
+            "judge_decided_rate_ge_80pct": {
+                "passed": judge_valid,
+                "agentic_decided_rate": round(ag_decided_rate, 4),
+                "full_context_decided_rate": round(fc_decided_rate, 4),
+                "threshold": min_decided_rate,
+            },
             "token_reduction_ge_30pct": {"passed": token_ok, "actual": agentic.token_reduction_vs_full, "threshold": min_token_reduction},
             "macro_f1_drop_le_5pp": {"passed": f1_ok, "actual_drop": f1_drop, "threshold": max_f1_drop},
             "fsr_le_5pct": {"passed": fsr_ok, "actual": agentic.false_supported_rate, "threshold": max_fsr},
@@ -398,6 +437,9 @@ async def run_four_way_benchmark(
     active_selector = selector or AdaptiveEvidenceSelector()
 
     all_results: dict[StrategyName, list[StrategyCaseResult]] = {s: [] for s in ALL_STRATEGIES}
+    # Vector RAG의 문서 벡터화·IDF 인덱싱은 실제 Vector DB처럼 쿼리 타이머 바깥에서 사전 구축한다
+    prebuilt_vector_indices = {c.case_id: _build_vector_index(c) for c in filtered}
+    vector_index_build_ms_total = round(sum(idx.build_ms for idx in prebuilt_vector_indices.values()), 2)
 
     is_live_llm = (not isinstance(active_judge, RuleBasedJudge)) or (active_selector.name != "adaptive_agentic")
 
@@ -417,7 +459,12 @@ async def run_four_way_benchmark(
             if strategy == "full_context":
                 inv_res, sel_in_tok, sel_out_tok = await _run_full_context(case, max_chunk_chars)
             elif strategy == "vector_rag":
-                inv_res, sel_in_tok, sel_out_tok = await _run_vector_rag(case, max_pull_steps, max_chunk_chars)
+                inv_res, sel_in_tok, sel_out_tok = await _run_vector_rag(
+                    case,
+                    max_pull_steps,
+                    max_chunk_chars,
+                    prebuilt_index=prebuilt_vector_indices[case.case_id],
+                )
             elif strategy == "keyword_dr_dci":
                 backend = InMemoryCorpusBackend(case.chunks)
                 req = LogInvestigationRequest(
@@ -570,6 +617,7 @@ async def run_four_way_benchmark(
         "max_pull_steps": max_pull_steps,
         "judge": type(active_judge).__name__,
         "selector": active_selector.name,
+        "vector_index_build_ms_total": vector_index_build_ms_total,
         "latency_scope": latency_scope,
         "adoption_gate": adoption_gate,
         "summaries": [asdict(summaries[s]) for s in ALL_STRATEGIES],
