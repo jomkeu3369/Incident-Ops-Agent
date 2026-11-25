@@ -443,8 +443,8 @@ def plot_four_way_pareto(payload: dict[str, Any], output_path: Path) -> Path:
         )
         label_offsets = {
             "Full Context": ((0, -28), "center"),
-            "Agentic DR-DCI": ((14, -24), "left"),
-            "Vector RAG": ((16, 8), "left"),
+            "Agentic DR-DCI": ((0, 14), "center"),
+            "Vector RAG": ((16, 4), "left"),
             "Keyword DR-DCI": ((16, -24), "left"),
         }
         for _, r in df.iterrows():

@@ -32,7 +32,7 @@ _FOLLOWUP_CLUE_RULES: tuple[tuple[re.Pattern[str], tuple[str, ...]], ...] = (
 )
 
 # 본문 내부에 다른 청크 ID나 trace/deploy 참조가 직접 언급된 경우 추출 (예: see LOG-08, ref=RB-02, txId=TX9001, v3.4.2)
-_CHUNK_REF_RE = re.compile(r"\b([A-Z]{2,8}-(?:RB-)?\d{2,4})\b")
+_CHUNK_REF_RE = re.compile(r"\b([A-Z]{1,8}-(?:[A-Z]{1,4}-)?\d{2,4}(?:-[A-Z0-9]{1,4})?)\b")
 _ENTITY_HINT_RE = re.compile(r"\b(?:txId|traceId|release|image|migration|job|worker|module|service)=([A-Za-z0-9._:/-]+)", re.I)
 _VERSION_HINT_RE = re.compile(r"\b(v\d+\.\d+(?:\.\d+)?)\b", re.I)
 
