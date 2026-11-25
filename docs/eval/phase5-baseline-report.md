@@ -1,0 +1,83 @@
+# Phase 5 · 기준선 고정 및 평가·시각화 파이프라인 리포트
+
+> **목적:** Phase 6(에이전틱 DR-DCI 4종 비교)과 Phase 8(k6 부하 테스트)의 출발점이 되는 **현재 구현 기준선(Baseline)**을 오프라인 재현 가능한 원시 데이터(JSON/CSV)와 `matplotlib` · `seaborn` 차트로 고정한 기록입니다.
+
+---
+
+## 1. EvidenceJudge 기준선 (`incident-evidence-v1.0`, `rule_based`)
+
+- **원시 데이터:** [`results/phase5-rule-based-baseline.json`](results/phase5-rule-based-baseline.json) · [`results/phase5-rule-based-baseline.csv`](results/phase5-rule-based-baseline.csv) · [`results/phase5-rule-based-baseline.md`](results/phase5-rule-based-baseline.md)
+- **측정 범위:** 합성 장애 30건 (비승인 안전 검증 대상 20건, 간접 프롬프트 인젝션 3건)
+- **요약 수치:** Accuracy **86.7% (26/30)** · Macro-F1 **0.868** · **FSR 0.0% (0/20)** · Injection Resist **100.0% (3/3)** · Latency **p50 0.08ms / p95 0.16ms / p99 0.27ms** · Token **0 / 0** (`$0.00000`)
+
+> 라이브 LLM 판정기(`structured_output`, `decisions_api`)는 외부 API 키 의존으로 본 오프라인 기준선에는 미포함(미측정)이며, Phase 6에서 동일 파이프라인으로 추가 비교합니다.
+
+### 1.1 혼동 행렬
+![EvidenceJudge 혼동 행렬](charts/phase5-confusion-matrix.png)
+
+### 1.2 장애 카테고리별 정확도 및 안전 게이트 (FSR 5.0%)
+![장애 카테고리별 정확도 및 FSR](charts/phase5-category-metrics.png)
+
+### 1.3 판정 레이턴시 분포 (`p50 / p95 / p99`)
+![판정 레이턴시 분포](charts/phase5-latency-distribution.png)
+
+---
+
+## 2. 키워드 DR-DCI 기준선 (`log_agent.services.run_dr_dci_investigation`)
+
+- **원시 데이터:** [`results/phase5-dr-dci-baseline.json`](results/phase5-dr-dci-baseline.json) · [`results/phase5-dr-dci-baseline.csv`](results/phase5-dr-dci-baseline.csv)
+- **측정 범위:** `db/demo/data.sql`(`INC-2026-001`) 포함 대표 장애 5종 × `DR_DCI_MAX_PULL_STEPS` 1–5 (케이스당 10회 반복 계측, 총 25개 조건)
+
+| `DR_DCI_MAX_PULL_STEPS` | Mean Evidence Recall | Citation Validity | Mean Context Chars (Full 676.6) | Context 절감률 | Mean Pull Calls | `p50 / p95 / p99` (ms) |
+| :---: | :---: | :---: | :---: | :---: | :---: | :---: |
+| `1` | 43.3% | 100.0% | 127.4 | -77.9% | 1.0 | 0.04 / 0.10 / 0.13 |
+| `2` | 76.7% | 100.0% | 295.4 | -48.9% | 2.0 | 0.05 / 0.10 / 0.12 |
+| `3` | 90.0% | 100.0% | 406.0 | -32.3% | 2.8 | 0.04 / 0.10 / 0.12 |
+| `4` | 100.0% | 100.0% | 465.4 | -24.3% | 3.2 | 0.05 / 0.12 / 0.16 |
+| `5` | 100.0% | 100.0% | 491.6 | -22.9% | 3.4 | 0.04 / 0.10 / 0.11 |
+
+![키워드 DR-DCI 예산 곡선](charts/phase5-dr-dci-budget-curve.png)
+
+- **관찰:** `budget=3`에서 평균 필수 근거 회수율 **90.0%**와 원문 대비 **32.3% 컨텍스트 절감**을 동시에 달성했고, `budget=4`에서 **100.0% 회수율**에 도달한 뒤 `budget=5`부터는 회수율 증가 없이 컨텍스트 크기만 증가(수확 체감)했습니다. 이 수치가 Phase 6의 4종 검색 전략(`full_context` / `vector_rag` / `keyword_dr_dci` / `agentic_dr_dci`) 비교 기준선이 됩니다.
+
+---
+
+## 3. 테스트 픽스처 분리 및 스모크 검증
+
+- **프런트엔드 통합 테스트 분리 (`frontend/package.json`):**
+  - `npm run test:mock-e2e`: Next `/bff/mock-ag-ui` 3건(`ag-ui-phase2.test.ts`, `admin-phase4.test.ts`) — `TEST_AG_UI_BASE_URL` 지정 시 실행
+  - `npm run test:ssr-bff`: 실제 Spring BFF 대상(`backend-phase3.test.ts`) — `TEST_AG_UI_BASE_URL`, `TEST_SECRET_TOKEN` 지정 시 실행. 기본 기대 제목을 `db/demo/data.sql` 시드와 일치시켰으며, 완료 픽스처의 포스트모템 검증은 `TEST_EXPECTED_POSTMORTEM_ROOT_CAUSE`로 선택 활성화 가능
+- **오프라인 Compose 스모크 테스트 (`scripts/smoke-test.ps1`):**
+  - 외부 API 키 없이 ① Spring `401` fail-closed ② `INC-2026-001` 시드 ③ AG-UI `/api/ag-ui/status` ④ 격리된 임시 장애(`INC-SMOKE-*`)의 미승인 완료 `409 Conflict` 차단 → 승인 → `RESOLVED` 전이 ⑤ Next BFF 시크릿 미유출을 일괄 검증
+
+---
+
+## 4. 재현 커맨드 (PowerShell 5.1 호환)
+
+```powershell
+# 1) Agent 디렉터리에서 평가·시각화 의존성 설치
+cd agent
+python -m pip install -e ".[dev,eval]"
+
+# 2) EvidenceJudge 기준선 실행 (JSON / CSV / Markdown)
+python -m eval --judges rule_based --max-fsr 0.05 `
+  --output-json ..\docs\eval\results\phase5-rule-based-baseline.json `
+  --output-csv ..\docs\eval\results\phase5-rule-based-baseline.csv `
+  --output-md ..\docs\eval\results\phase5-rule-based-baseline.md
+
+# 3) 키워드 DR-DCI 기준선 실행 (JSON / CSV)
+python -m eval.dr_dci_baseline --budgets 1,2,3,4,5 --repeats 10 `
+  --output-json ..\docs\eval\results\phase5-dr-dci-baseline.json `
+  --output-csv ..\docs\eval\results\phase5-dr-dci-baseline.csv
+
+# 4) matplotlib / seaborn 차트 4종 일괄 재생성
+python -m eval.plot `
+  --judge-json ..\docs\eval\results\phase5-rule-based-baseline.json `
+  --dr-dci-json ..\docs\eval\results\phase5-dr-dci-baseline.json `
+  --output-dir ..\docs\eval\charts `
+  --prefix phase5
+
+# 5) 실행 중인 Docker Compose 스택 스모크 테스트 (저장소 루트)
+cd ..
+.\scripts\smoke-test.ps1 -BaseUrl http://localhost
+```
