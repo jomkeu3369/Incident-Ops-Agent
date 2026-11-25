@@ -108,7 +108,7 @@ async def test_agentic_dr_dci_server_guards_reject_hallucinated_or_duplicate_chu
         async def select_next_action(self, *, remaining_index: Sequence[dict[str, Any]], **kwargs: Any) -> SelectorDecision:
             return SelectorDecision(action="PULL_CHUNK", chunk_id=str(remaining_index[0]["chunkId"]), reason="next")
 
-    # 컨텍스트 문자 예산 400자: 첫 350자 인출 후 두 번째 350자 인출 시 누적 700자 >= 400자 -> 3번째 스텝 전 안전 종료
+    # 컨텍스트 문자 예산 400자: 첫 350자 인출 후 두 번째 청크는 남은 50자 이내로 캡핑되고 누적 400자 도달로 안전 종료
     res_budget = await run_agentic_dr_dci_investigation(
         InMemoryCorpusBackend(chunks),
         Settings(_env_file=None, dr_dci_max_pull_steps=5, dr_dci_max_context_chars=400),
@@ -117,6 +117,78 @@ async def test_agentic_dr_dci_server_guards_reject_hallucinated_or_duplicate_chu
     )
     assert res_budget.pulledCount == 2
     assert res_budget.stopReason == "CONTEXT_CHAR_BUDGET_REACHED"
+    assert sum(len(e.summary) for e in res_budget.evidence) <= 400
+
+    # 1-pull에서도 400자 예산보다 긴 1000자 런북이 예산을 초과하지 않도록 캡핑되어야 함
+    long_rb_chunks = (
+        CorpusChunkFixture("RB-LONG", "RUNBOOK", None, "svc", "긴 런북", "rollback", "X" * 1000, 1),
+        CorpusChunkFixture("LOG-01", "LOG", "INC-G", "svc", "로그", "502", "502 error", 1),
+    )
+
+    class _PickRunbookSelector:
+        name = "pick_rb"
+
+        async def select_next_action(self, **kwargs: Any) -> SelectorDecision:
+            return SelectorDecision(action="PULL_CHUNK", chunk_id="RB-LONG", reason="pick long runbook")
+
+    res_rb_cap = await run_agentic_dr_dci_investigation(
+        InMemoryCorpusBackend(long_rb_chunks),
+        Settings(_env_file=None, dr_dci_max_pull_steps=1, dr_dci_max_context_chars=400),
+        LogInvestigationRequest(incidentCode="INC-G", keywords=["rollback"], maxPulls=1),
+        selector=_PickRunbookSelector(),
+    )
+    assert len(res_rb_cap.runbookSummary) == 400
+    assert res_rb_cap.stopReason == "CONTEXT_CHAR_BUDGET_REACHED"
+
+
+async def test_agentic_dr_dci_enforces_timeout_around_awaited_ops_and_preserves_failed_chunks():
+    """느린 선택기/MCP 호출은 dr_dci_timeout_seconds 데드라인으로 중단되고, 일시 실패 청크는 remainingChunkIds에 보존된다."""
+    import asyncio
+    from common.backend_client import BackendApiError
+
+    chunks = (
+        CorpusChunkFixture("LOG-01", "LOG", "INC-T", "svc", "502 오류", "502", "502 error", 1),
+        CorpusChunkFixture("RB-01", "RUNBOOK", None, "svc", "런북", "rollback", "rollback", 1),
+    )
+
+    class _SlowSelector:
+        name = "slow"
+
+        async def select_next_action(self, **kwargs: Any) -> SelectorDecision:
+            await asyncio.sleep(2.0)
+            return SelectorDecision(action="PULL_CHUNK", chunk_id="LOG-01", reason="slow")
+
+    res_timeout = await run_agentic_dr_dci_investigation(
+        InMemoryCorpusBackend(chunks),
+        Settings(_env_file=None, dr_dci_max_pull_steps=3, dr_dci_timeout_seconds=0.5),
+        LogInvestigationRequest(incidentCode="INC-T", keywords=["502"], maxPulls=3),
+        selector=_SlowSelector(),
+    )
+    assert res_timeout.ok is True
+    assert res_timeout.stopReason == "TIMEOUT_BUDGET_REACHED"
+    assert res_timeout.pulledCount == 0
+
+    class _FailingPullBackend(InMemoryCorpusBackend):
+        async def pull_corpus_chunk(self, incident_code: str, chunk_id: str) -> dict[str, Any]:
+            if chunk_id == "LOG-01":
+                raise BackendApiError(502, "transient backend error")
+            return await super().pull_corpus_chunk(incident_code, chunk_id)
+
+    class _PickFirstSelector:
+        name = "pick_first"
+
+        async def select_next_action(self, *, remaining_index: Sequence[dict[str, Any]], **kwargs: Any) -> SelectorDecision:
+            return SelectorDecision(action="PULL_CHUNK", chunk_id=str(remaining_index[0]["chunkId"]), reason="pick")
+
+    res_fail = await run_agentic_dr_dci_investigation(
+        _FailingPullBackend(chunks),
+        Settings(_env_file=None, dr_dci_max_pull_steps=3),
+        LogInvestigationRequest(incidentCode="INC-T", keywords=["502"], maxPulls=3),
+        selector=_PickFirstSelector(),
+    )
+    assert res_fail.ok is True
+    assert "RB-01" in res_fail.evidenceChunkIds
+    assert "LOG-01" in res_fail.remainingChunkIds
 
 
 async def test_openai_dr_dci_selector_tracks_tokens_and_fails_closed():
