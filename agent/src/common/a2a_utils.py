@@ -16,10 +16,17 @@ from a2a.utils.constants import AGENT_CARD_WELL_KNOWN_PATH, PROTOCOL_VERSION_CUR
 
 from common.app_factory import SECURITY_HEADERS
 from common.config import INTERNAL_TOKEN_HEADER
+from common.observability import (
+    end_span,
+    extract_incoming_trace_headers,
+    extract_trace_headers,
+    langsmith_tracing_scope,
+    traced_span,
+)
 
 
 def mount_a2a_agent(app: FastAPI, *, agent_card: AgentCard, executor: AgentExecutor) -> None:
-    """FastAPI 앱에 A2A v1.0 AgentCard·JSON-RPC 라우트와 내부 토큰 검증 미들웨어를 마운트한다."""
+    """FastAPI 앱에 A2A v1.0 AgentCard·JSON-RPC 라우트와 내부 토큰 검증·분산 트레이싱 미들웨어를 마운트한다."""
 
     @app.middleware("http")
     async def verify_a2a_rpc_token(request: Request, call_next):
@@ -27,11 +34,21 @@ def mount_a2a_agent(app: FastAPI, *, agent_card: AgentCard, executor: AgentExecu
         # 공개 헬스체크·에이전트 카드와 자체 Depends를 쓰는 /internal 경로는 통과시킨다
         if path in ("/health", AGENT_CARD_WELL_KNOWN_PATH) or path.startswith("/internal/"):
             return await call_next(request)
-        expected = request.app.state.container.settings.internal_service_token.get_secret_value()
+        container = request.app.state.container
+        expected = container.settings.internal_service_token.get_secret_value()
         provided = request.headers.get(INTERNAL_TOKEN_HEADER)
         if not expected or not provided or not hmac.compare_digest(expected, provided):
             return JSONResponse(status_code=status.HTTP_401_UNAUTHORIZED, content={"status": 401, "error": "Unauthorized", "message": "유효하지 않은 내부 서비스 토큰입니다."}, headers=SECURITY_HEADERS)
-        return await call_next(request)
+
+        parent_headers = extract_incoming_trace_headers(request.headers)
+        with langsmith_tracing_scope(
+            container.settings,
+            client=container.langsmith_client,
+            parent_headers=parent_headers,
+            tags=["a2a", agent_card.name],
+            metadata={"service": agent_card.name, "path": path},
+        ):
+            return await call_next(request)
 
     handler = DefaultRequestHandler(agent_executor=executor, task_store=InMemoryTaskStore(), agent_card=agent_card)
     add_a2a_routes_to_fastapi(app, agent_card_routes=create_agent_card_routes(agent_card), jsonrpc_routes=create_jsonrpc_routes(handler, rpc_url="/", enable_v0_3_compat=True))
@@ -50,20 +67,36 @@ async def send_a2a_json(http_client: httpx.AsyncClient, *, base_url: str, intern
         "method": "SendMessage",
         "params": {"message": {"messageId": str(uuid.uuid4()), "contextId": context_id or str(uuid.uuid4()), "role": "ROLE_USER", "parts": [{"text": json.dumps(payload, ensure_ascii=False)}]}},
     }
-    headers = {"Content-Type": "application/json", VERSION_HEADER: PROTOCOL_VERSION_CURRENT, INTERNAL_TOKEN_HEADER: internal_token}
-    resp = await http_client.post(f"{base_url.rstrip('/')}/", json=rpc_body, headers=headers)
-    if resp.status_code != 200:
-        raise RuntimeError(f"A2A 호출 실패 (HTTP {resp.status_code})")
+    async with traced_span(
+        "a2a.send_message",
+        run_type="chain",
+        inputs={"base_url": base_url, "context_id": context_id, "payload": payload},
+        tags=["a2a"],
+    ) as span:
+        headers = {
+            "Content-Type": "application/json",
+            VERSION_HEADER: PROTOCOL_VERSION_CURRENT,
+            INTERNAL_TOKEN_HEADER: internal_token,
+            **extract_trace_headers(),
+        }
+        resp = await http_client.post(f"{base_url.rstrip('/')}/", json=rpc_body, headers=headers)
+        if resp.status_code != 200:
+            end_span(span, error=f"A2A HTTP {resp.status_code}")
+            raise RuntimeError(f"A2A 호출 실패 (HTTP {resp.status_code})")
 
-    body = resp.json()
-    if "error" in body:
-        err = body["error"]
-        raise RuntimeError(f"A2A JSON-RPC 오류: {err.get('message', err)}")
+        body = resp.json()
+        if "error" in body:
+            err = body["error"]
+            end_span(span, error=str(err.get("message", err)))
+            raise RuntimeError(f"A2A JSON-RPC 오류: {err.get('message', err)}")
 
-    text = _extract_text_from_a2a_result(body.get("result", {}))
-    if not text:
-        raise RuntimeError("A2A 응답에 텍스트 결과가 없습니다.")
-    return json.loads(text)
+        text = _extract_text_from_a2a_result(body.get("result", {}))
+        if not text:
+            end_span(span, error="empty A2A response text")
+            raise RuntimeError("A2A 응답에 텍스트 결과가 없습니다.")
+        parsed = json.loads(text)
+        end_span(span, outputs={"ok": parsed.get("ok") if isinstance(parsed, dict) else True})
+        return parsed
 
 
 def _extract_text_from_a2a_result(result: dict[str, Any]) -> str:

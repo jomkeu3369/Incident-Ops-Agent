@@ -7,6 +7,7 @@ from mcp import ClientSession
 from mcp.client.sse import sse_client
 
 from common.config import INTERNAL_TOKEN_HEADER, Settings
+from common.observability import end_span, traced_span
 
 McpCaller = Callable[[str, dict[str, Any]], Awaitable[Any]]
 
@@ -37,36 +38,51 @@ class BackendClient:
 
     async def call_mcp_tool(self, tool_name: str, arguments: dict[str, Any]) -> Any:
         """Spring AI MCP 서버의 도구를 SSE 세션으로 호출하고 JSON 텍스트를 파싱한다."""
-        if self._mcp_caller is not None:
-            return await self._mcp_caller(tool_name, arguments)
-
-        headers = self._auth_headers()
         clean_args = {k: v for k, v in arguments.items() if v is not None}
-        try:
-            async with (
-                sse_client(self._settings.spring_mcp_sse_url, headers=headers) as (read, write),
-                ClientSession(read, write) as session,
-            ):
-                await session.initialize()
-                result = await session.call_tool(tool_name, clean_args)
-        except BackendApiError:
-            raise
-        except Exception as exc:
-            raise BackendApiError(502, f"Spring MCP 호출에 실패했습니다: {tool_name}") from exc
+        async with traced_span(
+            f"mcp.{tool_name}",
+            run_type="tool",
+            inputs={"tool": tool_name, "arguments": clean_args},
+            tags=["mcp"],
+        ) as span:
+            if self._mcp_caller is not None:
+                res = await self._mcp_caller(tool_name, arguments)
+                end_span(span, outputs={"ok": True, "result_type": type(res).__name__})
+                return res
 
-        text_parts = [getattr(item, "text", "") for item in (getattr(result, "content", None) or []) if getattr(item, "text", None)]
-        raw_text = "\n".join(text_parts).strip()
+            headers = self._auth_headers()
+            try:
+                async with (
+                    sse_client(self._settings.spring_mcp_sse_url, headers=headers) as (read, write),
+                    ClientSession(read, write) as session,
+                ):
+                    await session.initialize()
+                    result = await session.call_tool(tool_name, clean_args)
+            except BackendApiError as exc:
+                end_span(span, error=f"HTTP {exc.status_code}: {exc.message}")
+                raise
+            except Exception as exc:
+                end_span(span, error=f"Spring MCP call failed: {tool_name}")
+                raise BackendApiError(502, f"Spring MCP 호출에 실패했습니다: {tool_name}") from exc
 
-        # 입력 검증 또는 상태 검사 실패 시 Spring MCP는 is_error(구 isError)=True를 반환한다
-        if getattr(result, "is_error", False) or getattr(result, "isError", False):
-            raise BackendApiError(409, raw_text or f"MCP 도구 실행이 거절되었습니다: {tool_name}")
+            text_parts = [getattr(item, "text", "") for item in (getattr(result, "content", None) or []) if getattr(item, "text", None)]
+            raw_text = "\n".join(text_parts).strip()
 
-        if not raw_text:
-            return {}
-        try:
-            return json.loads(raw_text)
-        except json.JSONDecodeError:
-            return raw_text
+            # 입력 검증 또는 상태 검사 실패 시 Spring MCP는 is_error(구 isError)=True를 반환한다
+            if getattr(result, "is_error", False) or getattr(result, "isError", False):
+                end_span(span, error=raw_text or f"MCP rejected: {tool_name}")
+                raise BackendApiError(409, raw_text or f"MCP 도구 실행이 거절되었습니다: {tool_name}")
+
+            if not raw_text:
+                end_span(span, outputs={"ok": True})
+                return {}
+            try:
+                parsed = json.loads(raw_text)
+                end_span(span, outputs={"ok": True, "result_type": type(parsed).__name__})
+                return parsed
+            except json.JSONDecodeError:
+                end_span(span, outputs={"ok": True, "result_chars": len(raw_text)})
+                return raw_text
 
     # --- Spring MCP 도구 4종 ---
 

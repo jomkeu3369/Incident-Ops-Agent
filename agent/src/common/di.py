@@ -9,6 +9,7 @@ from common.backend_client import BackendClient
 from common.config import Settings
 from common.decisions import EvidenceJudge, build_evidence_judge
 from common.event_log import EventBus, LoggingSubAgent
+from common.observability import build_langsmith_client, flush_langsmith_client
 from common.tools import ExternalToolsClient
 
 
@@ -26,9 +27,11 @@ class AppContainer:
     logging_sub_agent: LoggingSubAgent | None = None
     supervisor_store: Any = None
     a2a_caller: Any = None
+    langsmith_client: Any = None
 
     async def aclose(self) -> None:
-        """컨테이너 종료 시 HTTP·Redis 커넥션을 정리한다."""
+        """컨테이너 종료 시 HTTP·Redis·LangSmith 리소스를 정리한다."""
+        flush_langsmith_client(self.langsmith_client)
         await self.http_client.aclose()
         if self.redis_client is not None:
             close = getattr(self.redis_client, "aclose", None) or getattr(self.redis_client, "close", None)
@@ -54,6 +57,7 @@ def build_container(settings: Settings | None = None, *, enable_redis: bool = Fa
         backend_client=BackendClient(cfg, http_client),
         external_tools=ExternalToolsClient(cfg, http_client),
         decisions_client=build_evidence_judge(cfg),
+        langsmith_client=build_langsmith_client(cfg),
     )
 
 
