@@ -280,4 +280,40 @@ async def test_a2a_middleware_links_worker_spans_to_incoming_parent_trace_id():
     worker_names = [item.get("name") for item in worker_recorder.created]
     assert "log_agent.dr_dci_investigate" in worker_names
     assert "mcp.searchCorpusIndex" in worker_names
+    assert worker_trace_ids
     assert root_trace_id in worker_trace_ids
+
+
+async def test_traced_span_sanitizes_raised_exception_secrets_and_preserves_token_usage_counts():
+    """예외 메시지의 시크릿은 마스킹되어 LangSmith로 전송되고, 숫자형 input_tokens/output_tokens는 보존된다."""
+    recorder = _RecordingLangSmithClient()
+    cfg = _settings(langsmith_tracing=True, langsmith_api_key=SecretStr("lsv2_pt_valid_key_1234567890"))
+
+    # 1) 숫자형 토큰 사용량 카운터 보존 + 문자열/인증 토큰 마스킹 검증
+    sanitized = redact_sensitive_dict({
+        "input_tokens": 412,
+        "output_tokens": 88,
+        "total_tokens": 500,
+        "access_token": "secret-access-token",
+        "internal_service_token": "secret-internal-token",
+    })
+    assert sanitized["input_tokens"] == 412
+    assert sanitized["output_tokens"] == 88
+    assert sanitized["total_tokens"] == 500
+    assert sanitized["access_token"] == REDACTED_VALUE
+    assert sanitized["internal_service_token"] == REDACTED_VALUE
+
+    # 2) 스팬 내부에서 시크릿을 포함한 예외가 발생해도 LangSmith error에는 원문이 노출되지 않아야 함
+    import pytest
+
+    with langsmith_tracing_scope(cfg, client=recorder, tags=["security"]):
+        with pytest.raises(RuntimeError, match="sk-proj-secret1234567890"):
+            async with traced_span("mcp.secret_error", run_type="tool"):
+                raise RuntimeError("upstream failed with sk-proj-secret1234567890 and Bearer abcdef1234567890")
+
+    recorded_errors = [str(u.get("error") or "") for u in recorder.updated if u.get("error")]
+    assert recorded_errors, "expected sanitized error to be recorded on update_run"
+    for err in recorded_errors:
+        assert "sk-proj-secret1234567890" not in err
+        assert "abcdef1234567890" not in err
+        assert REDACTED_VALUE in err

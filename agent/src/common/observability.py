@@ -40,8 +40,26 @@ _SENSITIVE_VALUE_PATTERNS: tuple[re.Pattern[str], ...] = (
 )
 
 
-def _is_sensitive_key(key: str) -> bool:
+_TOKEN_COUNT_KEYS = frozenset({
+    "input_tokens",
+    "output_tokens",
+    "total_tokens",
+    "prompt_tokens",
+    "completion_tokens",
+    "cached_tokens",
+    "reasoning_tokens",
+})
+
+
+def _is_sensitive_key(key: str, value: Any = None) -> bool:
     normalized = key.strip().lower().replace("-", "_")
+    # 숫자형 LLM 토큰 사용량 카운터(input_tokens/output_tokens 등)는 인증 토큰이 아니므로 보존한다
+    if (
+        (normalized in _TOKEN_COUNT_KEYS or normalized.endswith("_tokens"))
+        and isinstance(value, (int, float))
+        and not isinstance(value, bool)
+    ):
+        return False
     return any(tok in normalized for tok in _SENSITIVE_KEY_TOKENS)
 
 
@@ -62,7 +80,7 @@ def redact_sensitive_value(value: Any) -> Any:
         sanitized: dict[str, Any] = {}
         for k, v in value.items():
             key_str = str(k)
-            if _is_sensitive_key(key_str):
+            if _is_sensitive_key(key_str, v):
                 sanitized[key_str] = REDACTED_VALUE
             else:
                 sanitized[key_str] = redact_sensitive_value(v)
@@ -236,15 +254,23 @@ async def traced_span(
         yield None
         return
 
-    exc_info: tuple[Any, Any, Any] = (None, None, None)
+    caught_exc: BaseException | None = None
     try:
         yield run
     except BaseException as exc:
-        exc_info = (type(exc), exc, exc.__traceback__)
+        caught_exc = exc
         raise
     finally:
         try:
-            await span_cm.__aexit__(*exc_info)
+            if caught_exc is not None and run is not None:
+                # 원본 예외/트레이스백에 시크릿이 포함될 수 있으므로 마스킹된 오류 문자열만 기록하고
+                # __aexit__에는 예외를 넘기지 않아 SDK가 원본 예외로 덮어쓰지 못하게 차단한다
+                existing_error = getattr(run, "error", None)
+                if not existing_error:
+                    end_span(run, error=f"{type(caught_exc).__name__}: {caught_exc}")
+                else:
+                    run.error = _redact_string(str(existing_error))
+            await span_cm.__aexit__(None, None, None)
         except Exception as exit_exc:
             logger.warning("LangSmith span close failed (fail-safe): %s", type(exit_exc).__name__)
 
