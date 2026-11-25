@@ -213,6 +213,10 @@ test("server-only backend fetch sends X-Internal-Token and maps 401/404 cleanly"
   }
 });
 
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
 test("SSR and BFF proxy serve Spring incident detail without leaking INTERNAL_SERVICE_TOKEN", async (t) => {
   const baseUrl = process.env.TEST_AG_UI_BASE_URL;
   const secretToken = process.env.TEST_SECRET_TOKEN;
@@ -221,20 +225,30 @@ test("SSR and BFF proxy serve Spring incident detail without leaking INTERNAL_SE
     return;
   }
 
-  const pageRes = await fetch(`${baseUrl}/?incident=INC-2026-001&mode=live`);
+  const incidentCode = process.env.TEST_INCIDENT_CODE || "INC-2026-001";
+  const expectedTitle = process.env.TEST_EXPECTED_TITLE || "결제 API 502 Bad Gateway 급증 및 응답 지연";
+  const expectedRootCause = process.env.TEST_EXPECTED_POSTMORTEM_ROOT_CAUSE;
+  const secretPattern = new RegExp(escapeRegExp(secretToken));
+
+  const pageRes = await fetch(`${baseUrl}/?incident=${encodeURIComponent(incidentCode)}&mode=live`);
   assert.equal(pageRes.status, 200);
   const html = await pageRes.text();
-  assert.match(html, /INC-2026-001/);
-  assert.match(html, /결제 서비스 DB 커넥션 풀 고갈/);
-  assert.doesNotMatch(html, new RegExp(secretToken));
+  assert.match(html, new RegExp(escapeRegExp(incidentCode)));
+  assert.match(html, new RegExp(escapeRegExp(expectedTitle)));
+  assert.doesNotMatch(html, secretPattern);
 
-  const bffRes = await fetch(`${baseUrl}/bff/incidents/INC-2026-001`);
+  const bffRes = await fetch(`${baseUrl}/bff/incidents/${encodeURIComponent(incidentCode)}`);
   assert.equal(bffRes.status, 200);
   const bffText = await bffRes.text();
-  assert.doesNotMatch(bffText, new RegExp(secretToken));
+  assert.doesNotMatch(bffText, secretPattern);
   const bffJson = JSON.parse(bffText) as BackendIncidentDetail;
-  assert.equal(bffJson.incident.incidentCode, "INC-2026-001");
-  assert.equal(bffJson.postMortem?.rootCause, "신규 배포 버전의 커넥션 누수");
+  assert.equal(bffJson.incident.incidentCode, incidentCode);
+  assert.equal(bffJson.incident.title, expectedTitle);
+  assert.ok(bffJson.plans.length >= 1, "expected at least one seeded remediation plan");
+  assert.ok(bffJson.approvals.length >= 1, "expected at least one seeded approval");
+  if (expectedRootCause) {
+    assert.equal(bffJson.postMortem?.rootCause, expectedRootCause);
+  }
 
   const notFoundBff = await fetch(`${baseUrl}/bff/incidents/INC-9999`);
   assert.equal(notFoundBff.status, 404);

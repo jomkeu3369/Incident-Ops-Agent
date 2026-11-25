@@ -1,0 +1,834 @@
+{
+  "schema_version": "dr-dci-baseline-v1",
+  "strategy": "keyword_dr_dci",
+  "scenario_count": 5,
+  "budgets": [
+    1,
+    2,
+    3,
+    4,
+    5
+  ],
+  "repeats_per_case": 10,
+  "summary_by_budget": [
+    {
+      "strategy": "keyword_dr_dci",
+      "max_pull_steps": 1,
+      "scenarios": 5,
+      "mean_evidence_recall": 0.4333,
+      "mean_citation_validity": 1.0,
+      "mean_context_chars": 127.4,
+      "mean_total_corpus_chars": 676.6,
+      "mean_char_reduction_ratio": 0.7786,
+      "mean_pull_calls": 1.0,
+      "latency_p50_ms": 0.03,
+      "latency_p95_ms": 0.05,
+      "latency_p99_ms": 0.09
+    },
+    {
+      "strategy": "keyword_dr_dci",
+      "max_pull_steps": 2,
+      "scenarios": 5,
+      "mean_evidence_recall": 0.7667,
+      "mean_citation_validity": 1.0,
+      "mean_context_chars": 305.4,
+      "mean_total_corpus_chars": 676.6,
+      "mean_char_reduction_ratio": 0.4645,
+      "mean_pull_calls": 2.0,
+      "latency_p50_ms": 0.04,
+      "latency_p95_ms": 0.06,
+      "latency_p99_ms": 0.07
+    },
+    {
+      "strategy": "keyword_dr_dci",
+      "max_pull_steps": 3,
+      "scenarios": 5,
+      "mean_evidence_recall": 0.9,
+      "mean_citation_validity": 1.0,
+      "mean_context_chars": 424.8,
+      "mean_total_corpus_chars": 676.6,
+      "mean_char_reduction_ratio": 0.2784,
+      "mean_pull_calls": 2.8,
+      "latency_p50_ms": 0.04,
+      "latency_p95_ms": 0.06,
+      "latency_p99_ms": 0.07
+    },
+    {
+      "strategy": "keyword_dr_dci",
+      "max_pull_steps": 4,
+      "scenarios": 5,
+      "mean_evidence_recall": 1.0,
+      "mean_citation_validity": 1.0,
+      "mean_context_chars": 488.6,
+      "mean_total_corpus_chars": 676.6,
+      "mean_char_reduction_ratio": 0.1887,
+      "mean_pull_calls": 3.2,
+      "latency_p50_ms": 0.04,
+      "latency_p95_ms": 0.06,
+      "latency_p99_ms": 0.07
+    },
+    {
+      "strategy": "keyword_dr_dci",
+      "max_pull_steps": 5,
+      "scenarios": 5,
+      "mean_evidence_recall": 1.0,
+      "mean_citation_validity": 1.0,
+      "mean_context_chars": 601.8,
+      "mean_total_corpus_chars": 676.6,
+      "mean_char_reduction_ratio": 0.1288,
+      "mean_pull_calls": 3.4,
+      "latency_p50_ms": 0.04,
+      "latency_p95_ms": 0.07,
+      "latency_p99_ms": 0.07
+    }
+  ],
+  "runs": [
+    {
+      "strategy": "keyword_dr_dci",
+      "scenario_id": "DRDCI-BASE-01",
+      "incident_code": "INC-2026-001",
+      "category": "db_connection_pool",
+      "max_pull_steps": 1,
+      "total_corpus_chunks": 8,
+      "total_corpus_chars": 1890,
+      "pulled_chunk_ids": [
+        "RUNBOOK-01"
+      ],
+      "pulled_count": 1,
+      "pulled_raw_chars": 301,
+      "context_summary_chars": 301,
+      "char_reduction_ratio": 0.8407,
+      "required_chunk_ids": [
+        "LOG-104",
+        "LOG-105",
+        "RUNBOOK-01"
+      ],
+      "evidence_recall": 0.3333,
+      "citation_validity": 1.0,
+      "search_calls": 4,
+      "pull_calls": 1,
+      "recommended_command": "kubectl rollout undo deployment/payment-service",
+      "latency_p50_ms": 0.05,
+      "latency_p95_ms": 0.1,
+      "latency_p99_ms": 0.11
+    },
+    {
+      "strategy": "keyword_dr_dci",
+      "scenario_id": "DRDCI-BASE-02",
+      "incident_code": "INC-2026-002",
+      "category": "memory_oom",
+      "max_pull_steps": 1,
+      "total_corpus_chunks": 6,
+      "total_corpus_chars": 522,
+      "pulled_chunk_ids": [
+        "OOM-RB-01"
+      ],
+      "pulled_count": 1,
+      "pulled_raw_chars": 103,
+      "context_summary_chars": 103,
+      "char_reduction_ratio": 0.8027,
+      "required_chunk_ids": [
+        "OOM-104",
+        "OOM-RB-01"
+      ],
+      "evidence_recall": 0.5,
+      "citation_validity": 1.0,
+      "search_calls": 4,
+      "pull_calls": 1,
+      "recommended_command": "kubectl rollout undo deployment/checkout-worker",
+      "latency_p50_ms": 0.03,
+      "latency_p95_ms": 0.04,
+      "latency_p99_ms": 0.05
+    },
+    {
+      "strategy": "keyword_dr_dci",
+      "scenario_id": "DRDCI-BASE-03",
+      "incident_code": "INC-2026-003",
+      "category": "external_dependency",
+      "max_pull_steps": 1,
+      "total_corpus_chunks": 5,
+      "total_corpus_chars": 406,
+      "pulled_chunk_ids": [
+        "EXT-RB-01"
+      ],
+      "pulled_count": 1,
+      "pulled_raw_chars": 70,
+      "context_summary_chars": 70,
+      "char_reduction_ratio": 0.8276,
+      "required_chunk_ids": [
+        "EXT-103",
+        "EXT-RB-01"
+      ],
+      "evidence_recall": 0.5,
+      "citation_validity": 1.0,
+      "search_calls": 5,
+      "pull_calls": 1,
+      "recommended_command": null,
+      "latency_p50_ms": 0.03,
+      "latency_p95_ms": 0.04,
+      "latency_p99_ms": 0.04
+    },
+    {
+      "strategy": "keyword_dr_dci",
+      "scenario_id": "DRDCI-BASE-04",
+      "incident_code": "INC-2026-004",
+      "category": "schema_migration",
+      "max_pull_steps": 1,
+      "total_corpus_chunks": 4,
+      "total_corpus_chars": 293,
+      "pulled_chunk_ids": [
+        "SCH-RB-01"
+      ],
+      "pulled_count": 1,
+      "pulled_raw_chars": 81,
+      "context_summary_chars": 81,
+      "char_reduction_ratio": 0.7235,
+      "required_chunk_ids": [
+        "SCH-101",
+        "SCH-102",
+        "SCH-RB-01"
+      ],
+      "evidence_recall": 0.3333,
+      "citation_validity": 1.0,
+      "search_calls": 4,
+      "pull_calls": 1,
+      "recommended_command": null,
+      "latency_p50_ms": 0.03,
+      "latency_p95_ms": 0.04,
+      "latency_p99_ms": 0.04
+    },
+    {
+      "strategy": "keyword_dr_dci",
+      "scenario_id": "DRDCI-BASE-05",
+      "incident_code": "INC-2026-005",
+      "category": "telemetry_gap",
+      "max_pull_steps": 1,
+      "total_corpus_chunks": 4,
+      "total_corpus_chars": 272,
+      "pulled_chunk_ids": [
+        "TEL-RB-01"
+      ],
+      "pulled_count": 1,
+      "pulled_raw_chars": 82,
+      "context_summary_chars": 82,
+      "char_reduction_ratio": 0.6985,
+      "required_chunk_ids": [
+        "TEL-102",
+        "TEL-RB-01"
+      ],
+      "evidence_recall": 0.5,
+      "citation_validity": 1.0,
+      "search_calls": 3,
+      "pull_calls": 1,
+      "recommended_command": "kubectl rollout undo deployment/search-api",
+      "latency_p50_ms": 0.03,
+      "latency_p95_ms": 0.03,
+      "latency_p99_ms": 0.03
+    },
+    {
+      "strategy": "keyword_dr_dci",
+      "scenario_id": "DRDCI-BASE-01",
+      "incident_code": "INC-2026-001",
+      "category": "db_connection_pool",
+      "max_pull_steps": 2,
+      "total_corpus_chunks": 8,
+      "total_corpus_chars": 1890,
+      "pulled_chunk_ids": [
+        "LOG-104",
+        "RUNBOOK-01"
+      ],
+      "pulled_count": 2,
+      "pulled_raw_chars": 657,
+      "context_summary_chars": 667,
+      "char_reduction_ratio": 0.6471,
+      "required_chunk_ids": [
+        "LOG-104",
+        "LOG-105",
+        "RUNBOOK-01"
+      ],
+      "evidence_recall": 0.6667,
+      "citation_validity": 1.0,
+      "search_calls": 5,
+      "pull_calls": 2,
+      "recommended_command": "kubectl rollout undo deployment/payment-service",
+      "latency_p50_ms": 0.06,
+      "latency_p95_ms": 0.07,
+      "latency_p99_ms": 0.08
+    },
+    {
+      "strategy": "keyword_dr_dci",
+      "scenario_id": "DRDCI-BASE-02",
+      "incident_code": "INC-2026-002",
+      "category": "memory_oom",
+      "max_pull_steps": 2,
+      "total_corpus_chunks": 6,
+      "total_corpus_chars": 522,
+      "pulled_chunk_ids": [
+        "OOM-104",
+        "OOM-RB-01"
+      ],
+      "pulled_count": 2,
+      "pulled_raw_chars": 264,
+      "context_summary_chars": 274,
+      "char_reduction_ratio": 0.4751,
+      "required_chunk_ids": [
+        "OOM-104",
+        "OOM-RB-01"
+      ],
+      "evidence_recall": 1.0,
+      "citation_validity": 1.0,
+      "search_calls": 4,
+      "pull_calls": 2,
+      "recommended_command": "kubectl rollout undo deployment/checkout-worker",
+      "latency_p50_ms": 0.04,
+      "latency_p95_ms": 0.05,
+      "latency_p99_ms": 0.05
+    },
+    {
+      "strategy": "keyword_dr_dci",
+      "scenario_id": "DRDCI-BASE-03",
+      "incident_code": "INC-2026-003",
+      "category": "external_dependency",
+      "max_pull_steps": 2,
+      "total_corpus_chunks": 5,
+      "total_corpus_chars": 406,
+      "pulled_chunk_ids": [
+        "EXT-103",
+        "EXT-RB-01"
+      ],
+      "pulled_count": 2,
+      "pulled_raw_chars": 243,
+      "context_summary_chars": 253,
+      "char_reduction_ratio": 0.3768,
+      "required_chunk_ids": [
+        "EXT-103",
+        "EXT-RB-01"
+      ],
+      "evidence_recall": 1.0,
+      "citation_validity": 1.0,
+      "search_calls": 5,
+      "pull_calls": 2,
+      "recommended_command": null,
+      "latency_p50_ms": 0.04,
+      "latency_p95_ms": 0.04,
+      "latency_p99_ms": 0.04
+    },
+    {
+      "strategy": "keyword_dr_dci",
+      "scenario_id": "DRDCI-BASE-04",
+      "incident_code": "INC-2026-004",
+      "category": "schema_migration",
+      "max_pull_steps": 2,
+      "total_corpus_chunks": 4,
+      "total_corpus_chars": 293,
+      "pulled_chunk_ids": [
+        "SCH-101",
+        "SCH-RB-01"
+      ],
+      "pulled_count": 2,
+      "pulled_raw_chars": 172,
+      "context_summary_chars": 182,
+      "char_reduction_ratio": 0.3788,
+      "required_chunk_ids": [
+        "SCH-101",
+        "SCH-102",
+        "SCH-RB-01"
+      ],
+      "evidence_recall": 0.6667,
+      "citation_validity": 1.0,
+      "search_calls": 4,
+      "pull_calls": 2,
+      "recommended_command": null,
+      "latency_p50_ms": 0.03,
+      "latency_p95_ms": 0.04,
+      "latency_p99_ms": 0.05
+    },
+    {
+      "strategy": "keyword_dr_dci",
+      "scenario_id": "DRDCI-BASE-05",
+      "incident_code": "INC-2026-005",
+      "category": "telemetry_gap",
+      "max_pull_steps": 2,
+      "total_corpus_chunks": 4,
+      "total_corpus_chars": 272,
+      "pulled_chunk_ids": [
+        "TEL-101",
+        "TEL-RB-01"
+      ],
+      "pulled_count": 2,
+      "pulled_raw_chars": 141,
+      "context_summary_chars": 151,
+      "char_reduction_ratio": 0.4449,
+      "required_chunk_ids": [
+        "TEL-102",
+        "TEL-RB-01"
+      ],
+      "evidence_recall": 0.5,
+      "citation_validity": 1.0,
+      "search_calls": 4,
+      "pull_calls": 2,
+      "recommended_command": "kubectl rollout undo deployment/search-api",
+      "latency_p50_ms": 0.04,
+      "latency_p95_ms": 0.04,
+      "latency_p99_ms": 0.04
+    },
+    {
+      "strategy": "keyword_dr_dci",
+      "scenario_id": "DRDCI-BASE-01",
+      "incident_code": "INC-2026-001",
+      "category": "db_connection_pool",
+      "max_pull_steps": 3,
+      "total_corpus_chunks": 8,
+      "total_corpus_chars": 1890,
+      "pulled_chunk_ids": [
+        "LOG-104",
+        "LOG-105",
+        "RUNBOOK-01"
+      ],
+      "pulled_count": 3,
+      "pulled_raw_chars": 990,
+      "context_summary_chars": 1010,
+      "char_reduction_ratio": 0.4656,
+      "required_chunk_ids": [
+        "LOG-104",
+        "LOG-105",
+        "RUNBOOK-01"
+      ],
+      "evidence_recall": 1.0,
+      "citation_validity": 1.0,
+      "search_calls": 5,
+      "pull_calls": 3,
+      "recommended_command": "kubectl rollout undo deployment/payment-service",
+      "latency_p50_ms": 0.06,
+      "latency_p95_ms": 0.07,
+      "latency_p99_ms": 0.08
+    },
+    {
+      "strategy": "keyword_dr_dci",
+      "scenario_id": "DRDCI-BASE-02",
+      "incident_code": "INC-2026-002",
+      "category": "memory_oom",
+      "max_pull_steps": 3,
+      "total_corpus_chunks": 6,
+      "total_corpus_chars": 522,
+      "pulled_chunk_ids": [
+        "OOM-104",
+        "OOM-105",
+        "OOM-RB-01"
+      ],
+      "pulled_count": 3,
+      "pulled_raw_chars": 343,
+      "context_summary_chars": 364,
+      "char_reduction_ratio": 0.3027,
+      "required_chunk_ids": [
+        "OOM-104",
+        "OOM-RB-01"
+      ],
+      "evidence_recall": 1.0,
+      "citation_validity": 1.0,
+      "search_calls": 4,
+      "pull_calls": 3,
+      "recommended_command": "kubectl rollout undo deployment/checkout-worker",
+      "latency_p50_ms": 0.04,
+      "latency_p95_ms": 0.04,
+      "latency_p99_ms": 0.05
+    },
+    {
+      "strategy": "keyword_dr_dci",
+      "scenario_id": "DRDCI-BASE-03",
+      "incident_code": "INC-2026-003",
+      "category": "external_dependency",
+      "max_pull_steps": 3,
+      "total_corpus_chunks": 5,
+      "total_corpus_chars": 406,
+      "pulled_chunk_ids": [
+        "EXT-103",
+        "EXT-RB-01"
+      ],
+      "pulled_count": 2,
+      "pulled_raw_chars": 243,
+      "context_summary_chars": 253,
+      "char_reduction_ratio": 0.3768,
+      "required_chunk_ids": [
+        "EXT-103",
+        "EXT-RB-01"
+      ],
+      "evidence_recall": 1.0,
+      "citation_validity": 1.0,
+      "search_calls": 5,
+      "pull_calls": 2,
+      "recommended_command": null,
+      "latency_p50_ms": 0.04,
+      "latency_p95_ms": 0.04,
+      "latency_p99_ms": 0.04
+    },
+    {
+      "strategy": "keyword_dr_dci",
+      "scenario_id": "DRDCI-BASE-04",
+      "incident_code": "INC-2026-004",
+      "category": "schema_migration",
+      "max_pull_steps": 3,
+      "total_corpus_chunks": 4,
+      "total_corpus_chars": 293,
+      "pulled_chunk_ids": [
+        "SCH-101",
+        "SCH-102",
+        "SCH-RB-01"
+      ],
+      "pulled_count": 3,
+      "pulled_raw_chars": 261,
+      "context_summary_chars": 282,
+      "char_reduction_ratio": 0.0375,
+      "required_chunk_ids": [
+        "SCH-101",
+        "SCH-102",
+        "SCH-RB-01"
+      ],
+      "evidence_recall": 1.0,
+      "citation_validity": 1.0,
+      "search_calls": 4,
+      "pull_calls": 3,
+      "recommended_command": null,
+      "latency_p50_ms": 0.03,
+      "latency_p95_ms": 0.04,
+      "latency_p99_ms": 0.04
+    },
+    {
+      "strategy": "keyword_dr_dci",
+      "scenario_id": "DRDCI-BASE-05",
+      "incident_code": "INC-2026-005",
+      "category": "telemetry_gap",
+      "max_pull_steps": 3,
+      "total_corpus_chunks": 4,
+      "total_corpus_chars": 272,
+      "pulled_chunk_ids": [
+        "TEL-101",
+        "TEL-103",
+        "TEL-RB-01"
+      ],
+      "pulled_count": 3,
+      "pulled_raw_chars": 194,
+      "context_summary_chars": 215,
+      "char_reduction_ratio": 0.2096,
+      "required_chunk_ids": [
+        "TEL-102",
+        "TEL-RB-01"
+      ],
+      "evidence_recall": 0.5,
+      "citation_validity": 1.0,
+      "search_calls": 4,
+      "pull_calls": 3,
+      "recommended_command": "kubectl rollout undo deployment/search-api",
+      "latency_p50_ms": 0.04,
+      "latency_p95_ms": 0.04,
+      "latency_p99_ms": 0.04
+    },
+    {
+      "strategy": "keyword_dr_dci",
+      "scenario_id": "DRDCI-BASE-01",
+      "incident_code": "INC-2026-001",
+      "category": "db_connection_pool",
+      "max_pull_steps": 4,
+      "total_corpus_chunks": 8,
+      "total_corpus_chars": 1890,
+      "pulled_chunk_ids": [
+        "LOG-104",
+        "LOG-105",
+        "LOG-106",
+        "RUNBOOK-01"
+      ],
+      "pulled_count": 4,
+      "pulled_raw_chars": 1209,
+      "context_summary_chars": 1240,
+      "char_reduction_ratio": 0.3439,
+      "required_chunk_ids": [
+        "LOG-104",
+        "LOG-105",
+        "RUNBOOK-01"
+      ],
+      "evidence_recall": 1.0,
+      "citation_validity": 1.0,
+      "search_calls": 5,
+      "pull_calls": 4,
+      "recommended_command": "kubectl rollout undo deployment/payment-service",
+      "latency_p50_ms": 0.06,
+      "latency_p95_ms": 0.07,
+      "latency_p99_ms": 0.08
+    },
+    {
+      "strategy": "keyword_dr_dci",
+      "scenario_id": "DRDCI-BASE-02",
+      "incident_code": "INC-2026-002",
+      "category": "memory_oom",
+      "max_pull_steps": 4,
+      "total_corpus_chunks": 6,
+      "total_corpus_chars": 522,
+      "pulled_chunk_ids": [
+        "OOM-104",
+        "OOM-105",
+        "OOM-RB-01"
+      ],
+      "pulled_count": 3,
+      "pulled_raw_chars": 343,
+      "context_summary_chars": 364,
+      "char_reduction_ratio": 0.3027,
+      "required_chunk_ids": [
+        "OOM-104",
+        "OOM-RB-01"
+      ],
+      "evidence_recall": 1.0,
+      "citation_validity": 1.0,
+      "search_calls": 4,
+      "pull_calls": 3,
+      "recommended_command": "kubectl rollout undo deployment/checkout-worker",
+      "latency_p50_ms": 0.04,
+      "latency_p95_ms": 0.05,
+      "latency_p99_ms": 0.05
+    },
+    {
+      "strategy": "keyword_dr_dci",
+      "scenario_id": "DRDCI-BASE-03",
+      "incident_code": "INC-2026-003",
+      "category": "external_dependency",
+      "max_pull_steps": 4,
+      "total_corpus_chunks": 5,
+      "total_corpus_chars": 406,
+      "pulled_chunk_ids": [
+        "EXT-103",
+        "EXT-RB-01"
+      ],
+      "pulled_count": 2,
+      "pulled_raw_chars": 243,
+      "context_summary_chars": 253,
+      "char_reduction_ratio": 0.3768,
+      "required_chunk_ids": [
+        "EXT-103",
+        "EXT-RB-01"
+      ],
+      "evidence_recall": 1.0,
+      "citation_validity": 1.0,
+      "search_calls": 5,
+      "pull_calls": 2,
+      "recommended_command": null,
+      "latency_p50_ms": 0.04,
+      "latency_p95_ms": 0.04,
+      "latency_p99_ms": 0.04
+    },
+    {
+      "strategy": "keyword_dr_dci",
+      "scenario_id": "DRDCI-BASE-04",
+      "incident_code": "INC-2026-004",
+      "category": "schema_migration",
+      "max_pull_steps": 4,
+      "total_corpus_chunks": 4,
+      "total_corpus_chars": 293,
+      "pulled_chunk_ids": [
+        "SCH-101",
+        "SCH-102",
+        "SCH-RB-01"
+      ],
+      "pulled_count": 3,
+      "pulled_raw_chars": 261,
+      "context_summary_chars": 282,
+      "char_reduction_ratio": 0.0375,
+      "required_chunk_ids": [
+        "SCH-101",
+        "SCH-102",
+        "SCH-RB-01"
+      ],
+      "evidence_recall": 1.0,
+      "citation_validity": 1.0,
+      "search_calls": 4,
+      "pull_calls": 3,
+      "recommended_command": null,
+      "latency_p50_ms": 0.03,
+      "latency_p95_ms": 0.04,
+      "latency_p99_ms": 0.04
+    },
+    {
+      "strategy": "keyword_dr_dci",
+      "scenario_id": "DRDCI-BASE-05",
+      "incident_code": "INC-2026-005",
+      "category": "telemetry_gap",
+      "max_pull_steps": 4,
+      "total_corpus_chunks": 4,
+      "total_corpus_chars": 272,
+      "pulled_chunk_ids": [
+        "TEL-101",
+        "TEL-103",
+        "TEL-102",
+        "TEL-RB-01"
+      ],
+      "pulled_count": 4,
+      "pulled_raw_chars": 272,
+      "context_summary_chars": 304,
+      "char_reduction_ratio": -0.1176,
+      "required_chunk_ids": [
+        "TEL-102",
+        "TEL-RB-01"
+      ],
+      "evidence_recall": 1.0,
+      "citation_validity": 1.0,
+      "search_calls": 4,
+      "pull_calls": 4,
+      "recommended_command": "kubectl rollout undo deployment/search-api",
+      "latency_p50_ms": 0.04,
+      "latency_p95_ms": 0.04,
+      "latency_p99_ms": 0.04
+    },
+    {
+      "strategy": "keyword_dr_dci",
+      "scenario_id": "DRDCI-BASE-01",
+      "incident_code": "INC-2026-001",
+      "category": "db_connection_pool",
+      "max_pull_steps": 5,
+      "total_corpus_chunks": 8,
+      "total_corpus_chars": 1890,
+      "pulled_chunk_ids": [
+        "LOG-104",
+        "LOG-105",
+        "LOG-106",
+        "RUNBOOK-01",
+        "RUNBOOK-02"
+      ],
+      "pulled_count": 5,
+      "pulled_raw_chars": 1340,
+      "context_summary_chars": 1806,
+      "char_reduction_ratio": 0.0444,
+      "required_chunk_ids": [
+        "LOG-104",
+        "LOG-105",
+        "RUNBOOK-01"
+      ],
+      "evidence_recall": 1.0,
+      "citation_validity": 1.0,
+      "search_calls": 5,
+      "pull_calls": 5,
+      "recommended_command": "kubectl rollout undo deployment/payment-service",
+      "latency_p50_ms": 0.07,
+      "latency_p95_ms": 0.07,
+      "latency_p99_ms": 0.08
+    },
+    {
+      "strategy": "keyword_dr_dci",
+      "scenario_id": "DRDCI-BASE-02",
+      "incident_code": "INC-2026-002",
+      "category": "memory_oom",
+      "max_pull_steps": 5,
+      "total_corpus_chunks": 6,
+      "total_corpus_chars": 522,
+      "pulled_chunk_ids": [
+        "OOM-104",
+        "OOM-105",
+        "OOM-RB-01"
+      ],
+      "pulled_count": 3,
+      "pulled_raw_chars": 343,
+      "context_summary_chars": 364,
+      "char_reduction_ratio": 0.3027,
+      "required_chunk_ids": [
+        "OOM-104",
+        "OOM-RB-01"
+      ],
+      "evidence_recall": 1.0,
+      "citation_validity": 1.0,
+      "search_calls": 4,
+      "pull_calls": 3,
+      "recommended_command": "kubectl rollout undo deployment/checkout-worker",
+      "latency_p50_ms": 0.04,
+      "latency_p95_ms": 0.04,
+      "latency_p99_ms": 0.05
+    },
+    {
+      "strategy": "keyword_dr_dci",
+      "scenario_id": "DRDCI-BASE-03",
+      "incident_code": "INC-2026-003",
+      "category": "external_dependency",
+      "max_pull_steps": 5,
+      "total_corpus_chunks": 5,
+      "total_corpus_chars": 406,
+      "pulled_chunk_ids": [
+        "EXT-103",
+        "EXT-RB-01"
+      ],
+      "pulled_count": 2,
+      "pulled_raw_chars": 243,
+      "context_summary_chars": 253,
+      "char_reduction_ratio": 0.3768,
+      "required_chunk_ids": [
+        "EXT-103",
+        "EXT-RB-01"
+      ],
+      "evidence_recall": 1.0,
+      "citation_validity": 1.0,
+      "search_calls": 5,
+      "pull_calls": 2,
+      "recommended_command": null,
+      "latency_p50_ms": 0.04,
+      "latency_p95_ms": 0.04,
+      "latency_p99_ms": 0.04
+    },
+    {
+      "strategy": "keyword_dr_dci",
+      "scenario_id": "DRDCI-BASE-04",
+      "incident_code": "INC-2026-004",
+      "category": "schema_migration",
+      "max_pull_steps": 5,
+      "total_corpus_chunks": 4,
+      "total_corpus_chars": 293,
+      "pulled_chunk_ids": [
+        "SCH-101",
+        "SCH-102",
+        "SCH-RB-01"
+      ],
+      "pulled_count": 3,
+      "pulled_raw_chars": 261,
+      "context_summary_chars": 282,
+      "char_reduction_ratio": 0.0375,
+      "required_chunk_ids": [
+        "SCH-101",
+        "SCH-102",
+        "SCH-RB-01"
+      ],
+      "evidence_recall": 1.0,
+      "citation_validity": 1.0,
+      "search_calls": 4,
+      "pull_calls": 3,
+      "recommended_command": null,
+      "latency_p50_ms": 0.03,
+      "latency_p95_ms": 0.04,
+      "latency_p99_ms": 0.04
+    },
+    {
+      "strategy": "keyword_dr_dci",
+      "scenario_id": "DRDCI-BASE-05",
+      "incident_code": "INC-2026-005",
+      "category": "telemetry_gap",
+      "max_pull_steps": 5,
+      "total_corpus_chunks": 4,
+      "total_corpus_chars": 272,
+      "pulled_chunk_ids": [
+        "TEL-101",
+        "TEL-103",
+        "TEL-102",
+        "TEL-RB-01"
+      ],
+      "pulled_count": 4,
+      "pulled_raw_chars": 272,
+      "context_summary_chars": 304,
+      "char_reduction_ratio": -0.1176,
+      "required_chunk_ids": [
+        "TEL-102",
+        "TEL-RB-01"
+      ],
+      "evidence_recall": 1.0,
+      "citation_validity": 1.0,
+      "search_calls": 4,
+      "pull_calls": 4,
+      "recommended_command": "kubectl rollout undo deployment/search-api",
+      "latency_p50_ms": 0.04,
+      "latency_p95_ms": 0.04,
+      "latency_p99_ms": 0.04
+    }
+  ]
+}

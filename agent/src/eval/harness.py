@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import csv
 from dataclasses import asdict, dataclass
 import json
 import math
@@ -115,6 +116,7 @@ class EvaluationReport:
     per_category: dict[str, CategoryMetrics]
     confusion_matrix: dict[str, dict[str, int]]
     cases: list[CaseEvaluation]
+    latency_p99_ms: float = 0.0
 
     def to_dict(self) -> dict[str, Any]:
         """JSON 직렬화가 가능한 딕셔너리로 변환한다."""
@@ -248,6 +250,7 @@ def _compute_report(
         latency_mean_ms=round(sum(latencies) / total, 2) if total > 0 else 0.0,
         latency_p50_ms=_percentile(latencies, 50.0),
         latency_p95_ms=_percentile(latencies, 95.0),
+        latency_p99_ms=_percentile(latencies, 99.0),
         total_input_tokens=total_in,
         total_output_tokens=total_out,
         estimated_cost_usd=round(total_cost_usd, 6) if total_cost_usd is not None else _estimate_cost_usd(model, total_in, total_out),
@@ -361,7 +364,7 @@ def format_markdown_report(reports: Sequence[EvaluationReport]) -> str:
         "",
         "## 1. 판정기 종합 비교",
         "",
-        "| Judge | Provider / Model | Accuracy | Macro-F1 | **FSR (↓)** | Contradicted→Supported | Safe-Block (↑) | Injection Resist | Undecidable | p50 / p95 (ms) | Tokens (in/out) | Est. Cost (USD) |",
+        "| Judge | Provider / Model | Accuracy | Macro-F1 | **FSR (↓)** | Contradicted→Supported | Safe-Block (↑) | Injection Resist | Undecidable | p50 / p95 / p99 (ms) | Tokens (in/out) | Est. Cost (USD) |",
         "| :--- | :--- | :---: | :---: | :---: | :---: | :---: | :---: | :---: | :---: | :---: | :---: |",
     ]
     for r in reports:
@@ -375,7 +378,7 @@ def format_markdown_report(reports: Sequence[EvaluationReport]) -> str:
             f"{r.safe_block_rate * 100:.1f}% | "
             f"{inj_str} | "
             f"{r.undecidable_rate * 100:.1f}% | "
-            f"{r.latency_p50_ms:.2f} / {r.latency_p95_ms:.2f} | "
+            f"{r.latency_p50_ms:.2f} / {r.latency_p95_ms:.2f} / {r.latency_p99_ms:.2f} | "
             f"{r.total_input_tokens:,} / {r.total_output_tokens:,} | "
             f"${r.estimated_cost_usd:.5f} |"
         )
@@ -453,6 +456,58 @@ def _exceeds_max_fsr(report: EvaluationReport, max_fsr: float) -> bool:
     return exact_fsr > max_fsr
 
 
+def write_cases_csv(reports: Sequence[EvaluationReport], output_path: str | Path) -> Path:
+    """판정기별 케이스 단위 원시 평가 결과를 CSV로 저장한다."""
+    path = Path(output_path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fieldnames = [
+        "judge_name",
+        "provider",
+        "model",
+        "dataset_version",
+        "case_id",
+        "category",
+        "service_name",
+        "expected",
+        "predicted",
+        "correct",
+        "false_supported",
+        "catastrophic_false_supported",
+        "prompt_injection",
+        "confidence",
+        "latency_ms",
+        "input_tokens",
+        "output_tokens",
+        "reason",
+    ]
+    with path.open("w", encoding="utf-8", newline="") as fp:
+        writer = csv.DictWriter(fp, fieldnames=fieldnames)
+        writer.writeheader()
+        for report in reports:
+            for case in report.cases:
+                writer.writerow({
+                    "judge_name": report.judge_name,
+                    "provider": report.provider,
+                    "model": report.model,
+                    "dataset_version": report.dataset_version,
+                    "case_id": case.case_id,
+                    "category": case.category,
+                    "service_name": case.service_name,
+                    "expected": case.expected,
+                    "predicted": case.predicted,
+                    "correct": case.correct,
+                    "false_supported": case.false_supported,
+                    "catastrophic_false_supported": case.catastrophic_false_supported,
+                    "prompt_injection": case.prompt_injection,
+                    "confidence": "" if case.confidence is None else case.confidence,
+                    "latency_ms": case.latency_ms,
+                    "input_tokens": case.input_tokens,
+                    "output_tokens": case.output_tokens,
+                    "reason": case.reason or "",
+                })
+    return path
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     """근거 판정 평가 하네스 CLI 진입점."""
     parser = argparse.ArgumentParser(description="Run EvidenceJudge benchmark evaluation harness.")
@@ -464,6 +519,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser.add_argument("--dataset", default=None, help="Path to evaluation dataset JSON (default: bundled v1.0)")
     parser.add_argument("--concurrency", type=int, default=4, help="Max concurrent judge calls (default: 4)")
     parser.add_argument("--output-json", default=None, help="Optional path to save raw JSON evaluation report")
+    parser.add_argument("--output-csv", default=None, help="Optional path to save per-case raw CSV report")
     parser.add_argument("--output-md", default=None, help="Optional path to save Markdown comparison report")
     parser.add_argument(
         "--max-fsr",
@@ -488,6 +544,9 @@ def main(argv: Sequence[str] | None = None) -> int:
             json.dumps([r.to_dict() for r in reports], ensure_ascii=False, indent=2),
             encoding="utf-8",
         )
+
+    if args.output_csv:
+        write_cases_csv(reports, args.output_csv)
 
     if args.output_md:
         out_md = Path(args.output_md)

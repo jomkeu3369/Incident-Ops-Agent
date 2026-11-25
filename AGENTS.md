@@ -1,0 +1,49 @@
+# AGENTS.md
+
+Incident-Ops-Agent — Korean-language multi-agent incident response workspace.
+
+## Layout & Entrypoints
+
+- `backend/` — Java 21, Spring Boot domain REST/MCP, MySQL with Flyway migrations (`db/migration/`) and MyBatis (`mapper/`).
+- `agent/` — Python 3.12+, three FastAPI apps sharing `agent/src/common/`:
+  - `supervisor.main:app` — AG-UI SSE, LangGraph orchestration, Redis memory/logs/plans.
+  - `log_agent.main:app` — A2A worker for DR-DCI corpus retrieval via Spring MCP.
+  - `remediation_agent.main:app` — A2A worker for external tools and evidence judgment.
+- `frontend/` — Node.js 20.9+, Next.js UI and server-side BFF.
+- `infra/Caddyfile` — single-origin gateway. `docs/` — architecture, API specs (`02-*`, `09-*`), verification (`10-verification.md`).
+
+## Commands
+
+Run each command from the listed directory. These examples work in Windows PowerShell 5.1.
+
+- **`backend/`** — Install JDK 21 and Maven before running Spring or tests locally (no `mvnw`). Unit tests run without a DB:
+  - All: `mvn test`
+  - Single: `mvn '-Dtest=IncidentWorkflowTest#approvalCopiesTheActionFromTheStoredPlanStep' test`
+- **`agent/`** — First run `python -m pip install -e ".[dev,eval]"`. Tests run offline:
+  - All: `python -m pytest`
+  - Single: `python -m pytest tests/test_p0_1_evidence_judge_and_eval.py -k 'test_rule_based_judge_fail_closed_behavior'`
+  - Offline eval: `python -m eval --judges rule_based`
+- **`frontend/`** — After `npm ci`, run `npm run typecheck`, `npm run build`, then `npm test`. To run one test file, run `npx tsc -p tsconfig.test.json`, then `node --test .test-dist/tests/ag-ui-phase2.test.js`.
+
+See [README.md §4](README.md#4-실행-방법) for startup details. Run Compose from the repository root; start infra first because it creates `incident-ops-net`. To seed `db/demo/data.sql`, set `SPRING_PROFILES_ACTIVE=docker,demo` in the root `.env` or run `$env:SPRING_PROFILES_ACTIVE = 'docker,demo'` in PowerShell before starting the app stack.
+
+## Environment & Authentication
+
+- **Compose:** Copy `.env.example` to the repository root `.env` and fill in a non-empty `INTERNAL_SERVICE_TOKEN`; the app stack cannot start with the template's blank value. The template's MySQL, Redis, backend and A2A hostnames are Docker DNS names.
+- **Host processes:** Agent auto-loads the root `.env` (`agent/src/common/config.py`, `parents[3]`). Override `REDIS_URL`, `SPRING_MCP_SSE_URL`, the A2A URLs, and `BACKEND_BASE_URL` if set, with `localhost` and reachable ports. `docker-compose-infra.yaml` does not publish Redis; a host supervisor needs a reachable Redis instance. Spring and Next do not auto-load the root `.env`; inject settings into their process environments. For host Spring, point `SPRING_DATASOURCE_URL` at the published MySQL port rather than relying on the Spring default. For standalone live Next, set `SUPERVISOR_URL` (enables `/api/ag-ui*` rewrites), `BACKEND_INTERNAL_URL`, and `INTERNAL_SERVICE_TOKEN`.
+- **Internal token boundary:** Fail-closed `X-Internal-Token` validation (`401` for missing/invalid tokens or an unset shared token) applies only to protected Spring routes (`/api/*`, `/sse`, `/mcp/message`; `/actuator/health*`, `/swagger-ui*`, `/v3/api-docs*` are exempt) and FastAPI A2A worker endpoints (RPC and `/internal/*`). Browser-facing supervisor routes (`/api/ag-ui` and its log/plan management routes) do not check the internal token. Caddy is a router, not an authentication boundary. There is no user authentication, so use this setup only locally or in a trusted environment. Keep internal tokens server-side; never put secrets in browser code/requests, responses, or execution logs.
+
+## Frontend Integration Tests
+
+- `TEST_AG_UI_BASE_URL` is the base URL of a running Next.js or Caddy instance. Without it, four integration tests skip. Three (AG-UI SSE, plan CRUD, session logs) use Next's `/bff/mock-ag-ui` routes and do not require a real supervisor.
+- The SSR/BFF test (`npm run test:ssr-bff`) also needs a real Spring backend behind the Next BFF. Set `TEST_SECRET_TOKEN` to the secret value that must not appear in response bodies; the test does not send it for authentication. By default it matches `db/demo/data.sql` (`INC-2026-001` / `결제 API 502 Bad Gateway 급증 및 응답 지연` with seeded plans and approvals); set `TEST_EXPECTED_POSTMORTEM_ROOT_CAUSE` (and optionally `TEST_EXPECTED_TITLE`) to assert a completed postmortem fixture.
+- When adding a test file, update only `scripts.test` in `frontend/package.json`: `tsconfig.test.json` already includes `tests/**/*.ts` and compiles app modules imported by tests.
+
+## Non-Obvious Architecture & Invariants
+
+- **Caddy routing:** `/api/ag-ui*` goes to the supervisor; remaining `/api/*` goes to Spring. Keep Next.js Route Handlers under `frontend/app/bff/`, not `app/api/`. `frontend/app/backend-api.ts` attaches the internal token server-side.
+- **DR-DCI:** `log_agent` searches Spring MCP (`searchCorpusIndex`) and pulls selected chunks one at a time (`pullCorpusChunk`, up to `DR_DCI_MAX_PULL_STEPS`). Only summaries, not raw chunks, enter the reasoning context. `DR_DCI_MAX_CHUNK_CHARS` caps summary length after retrieval, not MCP payload size.
+- **Planner vs. evidence judge:** Rollback selection and scheduling are deterministic (`agent/src/common/planner_math.py`). Evidence judgment (`agent/src/common/decisions.py`) defaults to `decisions_api` and fails closed with `UNDECIDABLE` on API failure. `EVIDENCE_JUDGE_MODE=auto` retries with Structured Outputs only when the primary Decisions API returns `UNDECIDABLE`.
+- **Simulated execution & approval:** Real cluster commands are never run. `IncidentRecoveryService` requires an `APPROVED` approval linked to a stored plan for a new execution record. A retry can return an existing legacy result without recording a new execution when incident, command and execution status match. Conflicts return HTTP `409` via REST; `agent/src/common/backend_client.py` normalizes MCP tool errors to `409`.
+- **FastAPI errors and headers:** `agent/src/common/app_factory.py` maps request validation errors to `400` (not `422`) and hides internal exception messages on `500`. Middleware defaults are `X-Content-Type-Options: nosniff` and `Cache-Control: no-store`; SSE retains `Cache-Control: no-cache`, and unhandled `500` responses may lack both default headers.
+- **Audit:** Redis execution logs (`EventBus` → `LoggingSubAgent`, no LLM calls) are append/read/delete-only. Anomaly analysis runs rules first and calls no LLM when `NORMAL`.
