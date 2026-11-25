@@ -6,10 +6,13 @@ import httpx
 from mcp import ClientSession
 from mcp.client.sse import sse_client
 
-from common.config import INTERNAL_TOKEN_HEADER, Settings
+from common.config import AGENT_ROLE_HEADER, INTERNAL_TOKEN_HEADER, Settings
 from common.observability import end_span, traced_span
 
 McpCaller = Callable[[str, dict[str, Any]], Awaitable[Any]]
+McpResourceReader = Callable[[str | None], Awaitable[Any]]
+READ_ONLY_AGENT_ROLES = frozenset({"investigator"})
+EVIDENCE_SUMMARY_RESOURCE_URI = "incident://evidence-summary/v1"
 
 
 class BackendApiError(Exception):
@@ -22,19 +25,34 @@ class BackendApiError(Exception):
 
 
 class BackendClient:
-    """X-Internal-Token 인증으로 Spring MCP(HTTP+SSE)와 도메인 REST API를 호출한다."""
+    """X-Internal-Token 인증 및 X-Agent-Role 권한 분리로 Spring MCP(HTTP+SSE)와 도메인 REST API를 호출한다."""
 
-    def __init__(self, settings: Settings, http_client: httpx.AsyncClient, *, mcp_caller: McpCaller | None = None) -> None:
+    def __init__(
+        self,
+        settings: Settings,
+        http_client: httpx.AsyncClient,
+        *,
+        mcp_caller: McpCaller | None = None,
+        mcp_resource_reader: McpResourceReader | None = None,
+        agent_role: str = "supervisor",
+    ) -> None:
         self._settings = settings
         self._http = http_client
         self._mcp_caller = mcp_caller
+        self._mcp_resource_reader = mcp_resource_reader
+        self.agent_role = (agent_role or "supervisor").strip().lower()
 
     def _auth_headers(self) -> dict[str, str]:
-        """백엔드 내부 토큰 헤더를 구성한다 (미설정 시 fail-closed)."""
+        """백엔드 내부 토큰 및 에이전트 역할 헤더를 구성한다 (토큰 미설정 시 fail-closed)."""
         token = self._settings.internal_service_token.get_secret_value().strip()
         if not token:
             raise BackendApiError(401, "INTERNAL_SERVICE_TOKEN이 설정되지 않았습니다.")
-        return {INTERNAL_TOKEN_HEADER: token}
+        return {INTERNAL_TOKEN_HEADER: token, AGENT_ROLE_HEADER: self.agent_role}
+
+    def _require_write_permission(self, action: str) -> None:
+        """읽기 전용 조사 워커(investigator)가 쓰기·완료 경로를 호출하지 못하도록 이중 차단한다."""
+        if self.agent_role in READ_ONLY_AGENT_ROLES:
+            raise BackendApiError(403, f"읽기 전용 조사 워커({self.agent_role})는 쓰기/완료 작업을 호출할 수 없습니다: {action}")
 
     async def call_mcp_tool(self, tool_name: str, arguments: dict[str, Any]) -> Any:
         """Spring AI MCP 서버의 도구를 SSE 세션으로 호출하고 JSON 텍스트를 파싱한다."""
@@ -103,6 +121,7 @@ class BackendClient:
 
     async def complete_incident_with_postmortem(self, *, approval_id: str, incident_code: str, action_command: str, executed_by: str, execution_status: Literal["SUCCESS", "FAILED"], execution_output: str | None = None, verification_summary: str | None = None, root_cause: str | None = None, timeline_markdown: str | None = None, prevention_items: str | None = None) -> dict[str, Any]:
         """승인된 복구 실행 결과와 포스트모템을 Spring MCP로 원자 반영한다."""
+        self._require_write_permission("completeIncidentWithPostMortem")
         res = await self.call_mcp_tool(
             "completeIncidentWithPostMortem",
             {
@@ -120,6 +139,77 @@ class BackendClient:
         )
         return res if isinstance(res, dict) else {}
 
+    # --- Spring MCP 읽기 전용 리소스 탐색·조회 ---
+
+    async def list_mcp_resources(self) -> list[dict[str, Any]]:
+        """Spring MCP 서버가 노출하는 읽기 전용 리소스 목록을 조회한다."""
+        async with traced_span("mcp.list_resources", run_type="tool", inputs={"role": self.agent_role}, tags=["mcp", "resource"]) as span:
+            if self._mcp_resource_reader is not None:
+                res = await self._mcp_resource_reader(None)
+                items = res if isinstance(res, list) else []
+                end_span(span, outputs={"count": len(items)})
+                return items
+            headers = self._auth_headers()
+            try:
+                async with (
+                    sse_client(self._settings.spring_mcp_sse_url, headers=headers) as (read, write),
+                    ClientSession(read, write) as session,
+                ):
+                    await session.initialize()
+                    listed = await session.list_resources()
+            except BackendApiError:
+                raise
+            except Exception as exc:
+                end_span(span, error="Spring MCP list_resources failed")
+                raise BackendApiError(502, "Spring MCP 리소스 목록 조회에 실패했습니다.") from exc
+
+            out = [
+                {
+                    "uri": str(getattr(r, "uri", "")),
+                    "name": str(getattr(r, "name", "")),
+                    "description": str(getattr(r, "description", "") or ""),
+                    "mimeType": str(getattr(r, "mimeType", "") or ""),
+                }
+                for r in (getattr(listed, "resources", None) or [])
+            ]
+            end_span(span, outputs={"count": len(out)})
+            return out
+
+    async def read_mcp_resource(self, uri: str = EVIDENCE_SUMMARY_RESOURCE_URI) -> dict[str, Any]:
+        """버전 있는 읽기 전용 근거 요약 리소스를 MCP 표준 프로토콜로 조회한다."""
+        async with traced_span("mcp.read_resource", run_type="tool", inputs={"uri": uri, "role": self.agent_role}, tags=["mcp", "resource"]) as span:
+            if self._mcp_resource_reader is not None:
+                res = await self._mcp_resource_reader(uri)
+                parsed = res if isinstance(res, dict) else {"uri": uri, "content": res}
+                end_span(span, outputs={"ok": True, "uri": uri})
+                return parsed
+            headers = self._auth_headers()
+            try:
+                async with (
+                    sse_client(self._settings.spring_mcp_sse_url, headers=headers) as (read, write),
+                    ClientSession(read, write) as session,
+                ):
+                    await session.initialize()
+                    result = await session.read_resource(uri)
+            except BackendApiError:
+                raise
+            except Exception as exc:
+                end_span(span, error=f"Spring MCP read_resource failed: {uri}")
+                raise BackendApiError(502, f"Spring MCP 리소스 조회에 실패했습니다: {uri}") from exc
+
+            contents = getattr(result, "contents", None) or []
+            raw_text = "\n".join(str(getattr(c, "text", "") or "") for c in contents).strip()
+            if not raw_text:
+                end_span(span, outputs={"ok": True, "empty": True})
+                return {}
+            try:
+                parsed = json.loads(raw_text)
+                end_span(span, outputs={"ok": True, "uri": uri})
+                return parsed if isinstance(parsed, dict) else {"uri": uri, "data": parsed}
+            except json.JSONDecodeError:
+                end_span(span, outputs={"ok": True, "uri": uri})
+                return {"uri": uri, "text": raw_text}
+
     # --- Spring 도메인 REST API (MCP 미노출 경로) ---
 
     async def get_incident_detail(self, incident_code: str) -> dict[str, Any]:
@@ -128,14 +218,17 @@ class BackendClient:
 
     async def create_plan(self, incident_code: str, payload: dict[str, Any]) -> dict[str, Any]:
         """복구 계획을 백엔드에 등록한다."""
+        self._require_write_permission("create_plan")
         return await self._rest("POST", f"/api/incidents/{incident_code}/plans", json=payload)
 
     async def create_approval(self, incident_code: str, payload: dict[str, Any]) -> dict[str, Any]:
         """승인 대기 요청(HITL)을 백엔드에 생성한다."""
+        self._require_write_permission("create_approval")
         return await self._rest("POST", f"/api/incidents/{incident_code}/approvals", json=payload)
 
     async def decide_approval(self, incident_code: str, approval_id: str, *, approved_by: str, decision: Literal["APPROVED", "REJECTED"]) -> dict[str, Any]:
         """운영자의 승인 또는 거절 결정을 백엔드 원장에 기록한다."""
+        self._require_write_permission("decide_approval")
         return await self._rest("PATCH", f"/api/incidents/{incident_code}/approvals/{approval_id}", json={"approvedBy": approved_by, "decision": decision})
 
     async def _rest(self, method: str, path: str, *, json: dict[str, Any] | None = None) -> dict[str, Any]:

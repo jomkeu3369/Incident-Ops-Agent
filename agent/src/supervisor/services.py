@@ -89,7 +89,7 @@ def _isolate_incident_memory(memory: dict[str, Any], thread_id: str, incident_co
 class SupervisorService:
     """AG-UI 스트리밍·HITL 승인·LangGraph 5단계 오케스트레이션을 총괄하는 서비스."""
 
-    def __init__(self, settings: Settings, http_client: httpx.AsyncClient, backend: BackendClient, store: SupervisorRedisStore, event_bus: EventBus | None = None, a2a_caller: A2ACaller | None = None, langsmith_client: Any | None = None) -> None:
+    def __init__(self, settings: Settings, http_client: httpx.AsyncClient, backend: BackendClient, store: SupervisorRedisStore, event_bus: EventBus | None = None, a2a_caller: A2ACaller | None = None, langsmith_client: Any | None = None, checkpointer: Any | None = None) -> None:
         self._settings = settings
         self._http = http_client
         self._backend = backend
@@ -97,6 +97,7 @@ class SupervisorService:
         self._bus = event_bus
         self._a2a_caller = a2a_caller
         self._langsmith_client = langsmith_client
+        self._checkpointer = checkpointer
 
     def parse_forwarded_props(self, run_input: RunAgentInput) -> ForwardedPropsInput:
         """스트림을 열기 전에 forwardedProps 계약을 검증한다(위반 시 HTTP 400)."""
@@ -170,11 +171,38 @@ class SupervisorService:
                 snap = memory.get("snapshot") or {"incidentCode": props.incidentCode, "workflowStatus": "IDLE", "plan": None, "approval": None, "replanHistory": memory.get("replanHistory") or []}
                 yield encoder.encode(StateSnapshotEvent(snapshot=snap))
                 yield encoder.encode(MessagesSnapshotEvent(messages=memory.get("messages") or []))
+                yield encoder.encode(
+                    CustomEvent(
+                        name="checkpoint_sync",
+                        value={
+                            "eventSeq": int(memory.get("lastEventSeq") or 0),
+                            "lastCompletedStep": memory.get("lastCompletedStep"),
+                            "workflowStatus": snap.get("workflowStatus"),
+                        },
+                    )
+                )
                 yield encoder.encode(RunFinishedEvent(thread_id=tid, run_id=rid))
                 return
 
             async with self._store.thread_lock(tid):
                 memory = _isolate_incident_memory(await self._store.get_thread_memory(tid), tid, props.incidentCode)
+
+                # 1-b) 명시적 취소 흐름 (단순 연결 단절과 분리: 체크포인트를 정리하고 CANCELLED 상태 기록)
+                if props.explicitCancel:
+                    if self._checkpointer is not None and hasattr(self._checkpointer, "adelete_thread"):
+                        await self._checkpointer.adelete_thread(tid)
+                    prev_snap = dict(memory.get("snapshot") or {"incidentCode": props.incidentCode, "plan": None, "approval": None, "replanHistory": []})
+                    cancel_snap = {**prev_snap, "workflowStatus": "CANCELLED"}
+                    next_seq = int(memory.get("lastEventSeq") or 0) + 1
+                    memory["snapshot"] = cancel_snap
+                    memory["lastEventSeq"] = next_seq
+                    memory["lastCompletedStep"] = "cancelled"
+                    await self._store.save_thread_memory(tid, memory)
+                    await publish_safe(self._bus, tid, "run_cancelled", {"incidentCode": props.incidentCode, "operatorId": operator_id})
+                    yield encoder.encode(StateSnapshotEvent(snapshot=cancel_snap))
+                    yield encoder.encode(CustomEvent(name="checkpoint_sync", value={"eventSeq": next_seq, "lastCompletedStep": "cancelled", "workflowStatus": "CANCELLED"}))
+                    yield encoder.encode(RunFinishedEvent(thread_id=tid, run_id=rid))
+                    return
 
                 # 2) 운영자 승인/반려 처리 흐름
                 if props.approvalDecision is not None and decided_approval is not None:
@@ -182,18 +210,21 @@ class SupervisorService:
                         yield chunk
                     return
 
-                # 3) 일반 계획 요청 / 대화 흐름 (LangGraph 5단계 실시간 스트리밍 실행)
+                # 3) 일반 계획 요청 / 체크포인트 재개 흐름 (LangGraph 실시간 스트리밍 실행)
                 user_text = _extract_last_user_text(run_input)
                 history_msgs = list(memory.get("messages") or [])
-                if user_text:
+                if user_text and not props.resume:
                     history_msgs.append({"id": f"msg-u-{uuid.uuid4().hex[:6]}", "role": "user", "content": user_text})
 
                 loaded_cache, loaded_timestamps = _load_fresh_tool_cache(
                     memory, self._settings.tool_cache_ttl_seconds, time.time()
                 )
+                trace_id = str(memory.get("traceId") or f"tr-{rid}")
                 init_state = {
                     "session_id": tid,
                     "run_id": rid,
+                    "trace_id": trace_id,
+                    "a2a_task_ids": list(memory.get("a2aTaskIds") or []),
                     "incident_code": props.incidentCode,
                     "service_name": self._settings.default_service_name,
                     "user_message": user_text,
@@ -212,28 +243,48 @@ class SupervisorService:
                     "ui_events": [],
                 }
                 ui_queue: asyncio.Queue[dict[str, Any] | None] = asyncio.Queue()
-                live_graph = build_supervisor_graph(self._settings, self._http, self._backend, event_bus=self._bus, a2a_caller=self._a2a_caller, on_ui_event=ui_queue.put)
+                live_graph = build_supervisor_graph(
+                    self._settings,
+                    self._http,
+                    self._backend,
+                    event_bus=self._bus,
+                    a2a_caller=self._a2a_caller,
+                    on_ui_event=ui_queue.put,
+                    checkpointer=self._checkpointer,
+                )
+                graph_config = {"configurable": {"thread_id": tid}} if self._checkpointer is not None else None
 
                 async def _run_graph() -> dict[str, Any]:
                     try:
                         with langsmith_tracing_scope(
                             self._settings,
                             client=self._langsmith_client,
-                            tags=["ag-ui", "supervisor"],
+                            tags=["ag-ui", "supervisor", "resume" if props.resume else "run"],
                             metadata={
                                 "incident_code": props.incidentCode,
                                 "thread_id": tid,
                                 "run_id": rid,
+                                "trace_id": trace_id,
                                 "operator_id": operator_id,
+                                "resume": props.resume,
                             },
                         ):
                             async with traced_span(
                                 "supervisor.ag_ui_run",
                                 run_type="chain",
-                                inputs={"incidentCode": props.incidentCode, "userMessage": user_text},
+                                inputs={"incidentCode": props.incidentCode, "userMessage": user_text, "resume": props.resume},
                                 tags=["ag-ui", "supervisor"],
                             ) as span:
-                                result = await live_graph.ainvoke(init_state)
+                                # resume=True이고 영속 체크포인트에 미완료 다음 노드가 있으면 완료 노드를 스킵하고 중단 지점부터 재개한다
+                                graph_input: dict[str, Any] | None = init_state
+                                if props.resume and graph_config is not None:
+                                    saved_state = await live_graph.aget_state(graph_config)
+                                    if saved_state is not None and getattr(saved_state, "next", None):
+                                        graph_input = None
+                                if graph_config is not None:
+                                    result = await live_graph.ainvoke(graph_input, config=graph_config)
+                                else:
+                                    result = await live_graph.ainvoke(init_state)
                                 end_span(
                                     span,
                                     outputs={
@@ -241,6 +292,7 @@ class SupervisorService:
                                         "workflowStatus": result.get("workflow_status"),
                                         "replanCount": result.get("replan_count"),
                                         "pulledChunkIds": result.get("pulled_chunk_ids"),
+                                        "resumed": graph_input is None,
                                     },
                                 )
                                 return result
@@ -280,11 +332,17 @@ class SupervisorService:
                     )
                     for key, val in new_cache.items()
                 }
+                next_seq = int(memory.get("lastEventSeq") or 0) + 1
+                last_step = str(final_state.get("last_completed_step") or "respond")
                 await self._store.save_thread_memory(
                     tid,
                     {
                         "threadId": tid,
                         "incidentCode": props.incidentCode,
+                        "traceId": trace_id,
+                        "a2aTaskIds": final_state.get("a2a_task_ids") or [],
+                        "lastEventSeq": next_seq,
+                        "lastCompletedStep": last_step,
                         "messages": history_msgs[-20:],
                         "constraints": final_state.get("constraints") or {},
                         "evidence": final_state.get("evidence") or [],
@@ -297,6 +355,17 @@ class SupervisorService:
                         "snapshot": snapshot,
                         "replanHistory": final_state.get("replan_history") or [],
                     },
+                )
+                yield encoder.encode(
+                    CustomEvent(
+                        name="checkpoint_sync",
+                        value={
+                            "eventSeq": next_seq,
+                            "traceId": trace_id,
+                            "lastCompletedStep": last_step,
+                            "workflowStatus": snapshot.get("workflowStatus"),
+                        },
+                    )
                 )
                 yield encoder.encode(RunFinishedEvent(thread_id=tid, run_id=rid))
         except Exception:

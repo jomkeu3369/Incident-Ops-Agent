@@ -50,7 +50,25 @@ public class InternalTokenFilter extends OncePerRequestFilter {
             return;
         }
 
-        filterChain.doFilter(request, response);
+        InternalRoleContext.setRole(request.getHeader(InternalRoleContext.ROLE_HEADER));
+        try {
+            String path = request.getServletPath();
+            String method = request.getMethod();
+            if (InternalRoleContext.isReadOnlyInvestigator()
+                    && path.startsWith("/api/")
+                    && !("GET".equalsIgnoreCase(method) || "HEAD".equalsIgnoreCase(method) || "OPTIONS".equalsIgnoreCase(method))) {
+                response.setStatus(HttpServletResponse.SC_FORBIDDEN);
+                response.setContentType(MediaType.APPLICATION_JSON_VALUE);
+                response.setCharacterEncoding("UTF-8");
+                response.setHeader("X-Content-Type-Options", "nosniff");
+                response.setHeader("Cache-Control", "no-store");
+                response.getWriter().write("{\"status\":403,\"error\":\"Forbidden\",\"message\":\"읽기 전용 조사 워커(investigator)는 쓰기 API를 호출할 수 없습니다.\"}");
+                return;
+            }
+            filterChain.doFilter(request, response);
+        } finally {
+            InternalRoleContext.clear();
+        }
     }
 
     static boolean constantTimeEquals(String expected, String provided) {

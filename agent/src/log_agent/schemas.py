@@ -11,6 +11,8 @@ class LogInvestigationRequest(BaseModel):
     keywords: list[str] = Field(default_factory=list)
     excludeChunkIds: list[str] = Field(default_factory=list)
     maxPulls: int | None = Field(default=None, ge=1)
+    idempotencyKey: str | None = Field(default=None, max_length=128)
+    traceId: str | None = Field(default=None, max_length=128)
 
 
 class EvidenceItem(BaseModel):

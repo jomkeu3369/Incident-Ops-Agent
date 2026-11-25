@@ -26,6 +26,7 @@ class AppContainer:
     event_bus: EventBus | None = None
     logging_sub_agent: LoggingSubAgent | None = None
     supervisor_store: Any = None
+    checkpointer: Any = None
     a2a_caller: Any = None
     langsmith_client: Any = None
 

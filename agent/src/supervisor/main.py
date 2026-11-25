@@ -6,12 +6,13 @@ from fastapi import FastAPI
 from common.app_factory import create_app
 from common.config import Settings
 from common.event_log import EventBus, LoggingSubAgent, attach_logging_sub_agent
+from supervisor.checkpointer import RedisCheckpointSaver
 from supervisor.cruds import SupervisorRedisStore
 from supervisor.routers import router
 
 
 def create_supervisor_app(settings: Settings | None = None, *, attach_logger: bool = True) -> FastAPI:
-    """총괄 에이전트 FastAPI 앱을 생성하고 EventBus·로깅 서브 에이전트·AG-UI 라우터를 조립한다."""
+    """총괄 에이전트 FastAPI 앱을 생성하고 EventBus·로깅 서브 에이전트·영속 체크포인터·AG-UI 라우터를 조립한다."""
     app = create_app("supervisor-agent", settings=settings, enable_redis=True)
     base_lifespan = app.router.lifespan_context
 
@@ -20,11 +21,13 @@ def create_supervisor_app(settings: Settings | None = None, *, attach_logger: bo
         async with base_lifespan(target):
             container = target.state.container
             store = SupervisorRedisStore(container.redis_client)
+            checkpointer = RedisCheckpointSaver(container.redis_client)
             bus = EventBus()
             sub_agent = LoggingSubAgent(store.append_session_log)
             if attach_logger:
                 attach_logging_sub_agent(bus, sub_agent)
             container.supervisor_store = store
+            container.checkpointer = checkpointer
             container.event_bus = bus
             container.logging_sub_agent = sub_agent
             yield

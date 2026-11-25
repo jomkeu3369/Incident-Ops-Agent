@@ -13,7 +13,7 @@ spring:
         sse-endpoint: /sse
         sse-message-endpoint: /mcp/message
         capabilities:
-          resource: false
+          resource: true
           prompt: false
           completion: false
 
