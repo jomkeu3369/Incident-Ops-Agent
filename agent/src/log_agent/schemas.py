@@ -34,4 +34,6 @@ class LogInvestigationResponse(BaseModel):
     remainingChunkIds: list[str] = Field(default_factory=list)
     pulledCount: int = 0
     toolTrace: list[dict[str, Any]] = Field(default_factory=list)
+    decisionTrace: list[dict[str, Any]] = Field(default_factory=list)
+    stopReason: str | None = None
     error: dict[str, Any] | None = None
