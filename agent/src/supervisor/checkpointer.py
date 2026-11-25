@@ -191,9 +191,10 @@ class RedisCheckpointSaver(BaseCheckpointSaver[str]):
             except Exception:
                 stored_in_redis = False
 
+        # 성공적인 Redis 저장 시에도 로컬 폴백 미러를 최신 상태로 유지해 2차 Redis 재단절 시 구 스냅샷 부활을 막는다
+        bucket = self._mem_checkpoints.setdefault((thread_id, checkpoint_ns), [])
+        bucket.append((checkpoint_id, serialized))
         if not stored_in_redis:
-            bucket = self._mem_checkpoints.setdefault((thread_id, checkpoint_ns), [])
-            bucket.append((checkpoint_id, serialized))
             self._dirty_mem_keys.add((thread_id, checkpoint_ns))
 
         return {
@@ -238,13 +239,13 @@ class RedisCheckpointSaver(BaseCheckpointSaver[str]):
             except Exception:
                 stored_in_redis = False
 
+        mem_w = self._mem_writes.setdefault((thread_id, checkpoint_ns, checkpoint_id), {})
+        for write_idx, channel, val_enc in encoded_items:
+            key = (task_id, write_idx)
+            if write_idx >= 0 and key in mem_w:
+                continue
+            mem_w[key] = (task_id, channel, val_enc)
         if not stored_in_redis:
-            mem_w = self._mem_writes.setdefault((thread_id, checkpoint_ns, checkpoint_id), {})
-            for write_idx, channel, val_enc in encoded_items:
-                key = (task_id, write_idx)
-                if write_idx >= 0 and key in mem_w:
-                    continue
-                mem_w[key] = (task_id, channel, val_enc)
             self._dirty_mem_keys.add((thread_id, checkpoint_ns))
 
     async def aget_tuple(self, config: RunnableConfig) -> CheckpointTuple | None:
