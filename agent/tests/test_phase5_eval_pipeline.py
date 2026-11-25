@@ -4,9 +4,16 @@ import csv
 import json
 from pathlib import Path
 
-from eval.dr_dci_baseline import benchmark_keyword_dr_dci, main as dr_dci_cli_main
+from eval.dr_dci_baseline import (
+    CorpusChunkFixture,
+    DrDciScenario,
+    _measure_reasoning_context_chars,
+    benchmark_keyword_dr_dci,
+    main as dr_dci_cli_main,
+)
 from eval.harness import main as harness_cli_main
 from eval.plot import generate_judge_charts, main as plot_cli_main
+from log_agent.schemas import EvidenceItem, LogInvestigationResponse
 
 
 def test_harness_cli_outputs_p99_json_and_csv(tmp_path: Path):
@@ -95,3 +102,69 @@ def test_plot_cli_generates_png_charts_for_single_and_multi_judge_and_dr_dci(tmp
 
     generated = generate_judge_charts(multi_json, tmp_path / "multi_charts", prefix="cmp")
     assert any(p.name == "cmp-judge-comparison.png" and p.stat().st_size > 5_000 for p in generated)
+
+
+async def test_dr_dci_baseline_counts_long_runbook_summary_and_deduplicates():
+    """400자 초과 긴 런북의 runbookSummary와 중복/비중복 요약이 추론 컨텍스트 문자 수에 정확히 반영된다."""
+    long_runbook = "1. 증상 확인 및 롤백 절차: " + ("A" * 650)
+    scenario = DrDciScenario(
+        scenario_id="LONG-RB-01",
+        incident_code="INC-LONG-1",
+        service_name="payment-service",
+        category="db_connection_pool",
+        query_keywords=("rollback",),
+        required_chunk_ids=("RB-LONG",),
+        chunks=(
+            CorpusChunkFixture("RB-LONG", "RUNBOOK", None, "payment-service", "긴 런북", "rollback", long_runbook, 1),
+        ),
+    )
+    payload = await benchmark_keyword_dr_dci([scenario], budgets=(1,), repeats=1, max_chunk_chars=4000)
+    run = payload["runs"][0]
+    # runbookSummary(전체 ~666자) + 축약된 evidence summary(400자, 내용이 다르므로 append) 모두 반영되어야 함
+    assert run["context_summary_chars"] > len(long_runbook)
+
+    # 동일 요약인 경우 중복 추가되지 않아야 함
+    same_res = LogInvestigationResponse(
+        ok=True,
+        incidentCode="INC-SAME",
+        evidence=[
+            EvidenceItem(chunkId="LOG-1", corpusType="LOG", title="t", summary="error 502"),
+            EvidenceItem(chunkId="RB-1", corpusType="RUNBOOK", title="rb", summary="short runbook"),
+        ],
+        evidenceChunkIds=["LOG-1", "RB-1"],
+        runbookSummary="short runbook",
+    )
+    assert _measure_reasoning_context_chars(same_res) == len("short runbook") + len("[LOG-1] error 502")
+
+
+async def test_dr_dci_baseline_pools_raw_latency_samples_across_scenarios(monkeypatch):
+    """예산별 지연 백분위는 시나리오별 백분위의 백분위가 아니라 전체 원시 샘플을 풀링해 계산한다."""
+    import eval.dr_dci_baseline as mod
+
+    scenarios = [
+        DrDciScenario(
+            scenario_id=f"S-{i}",
+            incident_code=f"INC-{i}",
+            service_name="svc",
+            category="db_connection_pool",
+            query_keywords=("err",),
+            required_chunk_ids=(f"L-{i}",),
+            chunks=(CorpusChunkFixture(f"L-{i}", "LOG", f"INC-{i}", "svc", "err", "err", "err", 1),),
+        )
+        for i in range(5)
+    ]
+
+    # 4개 시나리오는 1ms, 마지막 1개 시나리오는 100ms가 걸리도록 perf_counter를 모킹 (repeats=4 -> 총 20개 샘플 중 4개가 100ms)
+    ticks = iter(
+        val
+        for dur in ([0.001] * 16 + [0.100] * 4)
+        for val in (0.0, dur)
+    )
+    monkeypatch.setattr(mod.time, "perf_counter", lambda: next(ticks))
+
+    payload = await benchmark_keyword_dr_dci(scenarios, budgets=(1,), repeats=4)
+    summary = payload["summary_by_budget"][0]
+    # 풀링된 20개 샘플: 1.0 * 16개, 100.0 * 4개 -> p95(rank=18.05)와 p99(rank=18.81)는 모두 100.0ms여야 함
+    assert summary["latency_p50_ms"] == 1.0
+    assert summary["latency_p95_ms"] == 100.0
+    assert summary["latency_p99_ms"] == 100.0

@@ -117,14 +117,15 @@ $planBody = @{
 $planRes = Invoke-Api -Method "POST" -Url "$BaseUrl/api/incidents/$smokeIncident/plans" -Headers $authHeaders -Body $planBody
 Assert-Status -Name "Register remediation plan ($planId)" -Actual $planRes.Status -Expected 201
 
+$approvalId = "APR-SMOKE-$stamp"
 $approvalBody = @{
+    approvalId = $approvalId
     planId     = $planId
     stepNo     = 1
     proposedBy = "smoke-tester"
 } | ConvertTo-Json -Compress
 $aprRes = Invoke-Api -Method "POST" -Url "$BaseUrl/api/incidents/$smokeIncident/approvals" -Headers $authHeaders -Body $approvalBody
-Assert-Status -Name "Create PENDING approval" -Actual $aprRes.Status -Expected 201
-$approvalId = ($aprRes.Content | ConvertFrom-Json).approvalId
+Assert-Status -Name "Create PENDING approval ($approvalId)" -Actual $aprRes.Status -Expected 201
 
 $completeBody = @{
     approvalId          = $approvalId

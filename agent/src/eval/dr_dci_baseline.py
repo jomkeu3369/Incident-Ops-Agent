@@ -342,6 +342,20 @@ def build_default_baseline_scenarios() -> list[DrDciScenario]:
     ]
 
 
+def _measure_reasoning_context_chars(res: Any) -> int:
+    """remediation_agent.build_remediation_plan과 동일한 조립·중복제거 규칙으로 추론 컨텍스트 문자 수를 측정한다."""
+    runbook_parts = [res.runbookSummary.strip()] if res.runbookSummary and res.runbookSummary.strip() else []
+    evidence_lines: list[str] = []
+    for item in res.evidence:
+        if (item.corpusType or "").strip().upper() == "RUNBOOK":
+            summary = item.summary.strip()
+            if summary and summary not in runbook_parts:
+                runbook_parts.append(summary)
+        else:
+            evidence_lines.append(f"[{item.chunkId}] {item.summary}")
+    return len("\n".join(runbook_parts)) + len("\n".join(evidence_lines))
+
+
 async def benchmark_keyword_dr_dci(
     scenarios: Sequence[DrDciScenario] | None = None,
     *,
@@ -357,7 +371,9 @@ async def benchmark_keyword_dr_dci(
         raise ValueError("repeats must be >= 1")
 
     runs: list[DrDciRunMetric] = []
+    pooled_latencies_by_budget: dict[int, list[float]] = {}
     for budget in budgets:
+        pooled_latencies: list[float] = []
         settings = Settings(
             _env_file=None,
             dr_dci_max_pull_steps=budget,
@@ -380,6 +396,7 @@ async def benchmark_keyword_dr_dci(
                 latencies.append(round((time.perf_counter() - t0) * 1000.0, 3))
 
             assert last_res is not None and last_res.ok
+            pooled_latencies.extend(latencies)
             latencies.sort()
 
             total_chars = sum(len(c.content) for c in sc.chunks)
@@ -390,7 +407,7 @@ async def benchmark_keyword_dr_dci(
                 for entry in last_res.toolTrace
                 if entry.get("tool") == "pullCorpusChunk" and entry.get("ok")
             )
-            context_summary_chars = sum(len(ev.summary) for ev in last_res.evidence)
+            context_summary_chars = _measure_reasoning_context_chars(last_res)
             reduction = round(1.0 - (context_summary_chars / total_chars), 4) if total_chars > 0 else 0.0
 
             required = set(sc.required_chunk_ids)
@@ -427,11 +444,14 @@ async def benchmark_keyword_dr_dci(
                 latency_p95_ms=_percentile(latencies, 95.0),
                 latency_p99_ms=_percentile(latencies, 99.0),
             ))
+        pooled_latencies.sort()
+        pooled_latencies_by_budget[budget] = pooled_latencies
 
     by_budget: list[dict[str, Any]] = []
     for budget in budgets:
         subset = [r for r in runs if r.max_pull_steps == budget]
         n = len(subset)
+        pooled = pooled_latencies_by_budget[budget]
         by_budget.append({
             "strategy": "keyword_dr_dci",
             "max_pull_steps": budget,
@@ -442,9 +462,9 @@ async def benchmark_keyword_dr_dci(
             "mean_total_corpus_chars": round(sum(r.total_corpus_chars for r in subset) / n, 1),
             "mean_char_reduction_ratio": round(sum(r.char_reduction_ratio for r in subset) / n, 4),
             "mean_pull_calls": round(sum(r.pull_calls for r in subset) / n, 2),
-            "latency_p50_ms": _percentile(sorted(r.latency_p50_ms for r in subset), 50.0),
-            "latency_p95_ms": _percentile(sorted(r.latency_p95_ms for r in subset), 95.0),
-            "latency_p99_ms": _percentile(sorted(r.latency_p99_ms for r in subset), 99.0),
+            "latency_p50_ms": _percentile(pooled, 50.0),
+            "latency_p95_ms": _percentile(pooled, 95.0),
+            "latency_p99_ms": _percentile(pooled, 99.0),
         })
 
     return {
