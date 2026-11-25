@@ -392,16 +392,302 @@ def generate_judge_charts(
     return paths
 
 
+_STRATEGY_LABELS = {
+    "full_context": "Full Context",
+    "vector_rag": "Vector RAG",
+    "keyword_dr_dci": "Keyword DR-DCI",
+    "agentic_dr_dci": "Agentic DR-DCI",
+}
+_STRATEGY_COLORS = {
+    "Full Context": "#64748B",
+    "Vector RAG": "#F59E0B",
+    "Keyword DR-DCI": "#0EA5E9",
+    "Agentic DR-DCI": "#2563EB",
+}
+
+
+def plot_four_way_pareto(payload: dict[str, Any], output_path: Path) -> Path:
+    """4종 검색 전략의 입력 토큰 대비 Macro-F1 / Evidence Recall 파레토 산점도를 생성한다."""
+    configure_plot_style()
+    rows = []
+    for s in payload["summaries"]:
+        label = _STRATEGY_LABELS.get(s["strategy"], s["strategy"])
+        rows.append({
+            "strategy": label,
+            "mean_input_tokens": float(s["mean_input_tokens"]),
+            "macro_f1_pct": float(s["macro_f1"]) * 100.0,
+            "recall_pct": float(s["mean_evidence_recall"]) * 100.0,
+            "multi_hop_pct": float(s["multi_hop_evidence_recall"]) * 100.0,
+            "fsr_pct": float(s["false_supported_rate"]) * 100.0,
+            "p99_ms": float(s["latency_p99_ms"]),
+            "reduction_pct": float(s["token_reduction_vs_full"]) * 100.0,
+        })
+    df = pd.DataFrame(rows)
+
+    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(13.0, 5.0))
+    for ax, y_col, y_title in (
+        (ax1, "macro_f1_pct", "Macro-F1 (%, ↑)"),
+        (ax2, "multi_hop_pct", "Multi-Hop Evidence Recall (%, ↑)"),
+    ):
+        sns.scatterplot(
+            data=df,
+            x="mean_input_tokens",
+            y=y_col,
+            hue="strategy",
+            palette=_STRATEGY_COLORS,
+            s=260,
+            edgecolor="#0F172A",
+            linewidth=1.1,
+            ax=ax,
+            legend=False,
+        )
+        label_offsets = {
+            "Full Context": ((0, -28), "center"),
+            "Agentic DR-DCI": ((0, 14), "center"),
+            "Vector RAG": ((16, 4), "left"),
+            "Keyword DR-DCI": ((16, -24), "left"),
+        }
+        for _, r in df.iterrows():
+            red_lbl = "base" if r["strategy"] == "Full Context" else f"-{r['reduction_pct']:.0f}% tok"
+            (dx, dy), ha = label_offsets.get(r["strategy"], ((10, 10), "left"))
+            ax.annotate(
+                f"{r['strategy']}\n{r[y_col]:.1f}% | {red_lbl} | FSR {r['fsr_pct']:.1f}%",
+                (r["mean_input_tokens"], r[y_col]),
+                textcoords="offset points",
+                xytext=(dx, dy),
+                ha=ha,
+                fontsize=8.3,
+                fontweight="bold",
+                color="#1E293B",
+                bbox={"boxstyle": "round,pad=0.22", "facecolor": "white", "edgecolor": "none", "alpha": 0.78},
+            )
+        ax.set_xlabel("Mean Input Tokens per Incident (↓ lower is cheaper)", fontsize=9.5)
+        ax.set_ylabel(y_title, fontsize=9.5)
+        ax.set_ylim(max(0, float(df[y_col].min()) - 18), 112)
+        x_max = float(df["mean_input_tokens"].max())
+        ax.set_xlim(-120, x_max * 1.20)
+        ax.set_title(f"Token Efficiency vs. {y_title.split(' (')[0]}", fontsize=11, fontweight="bold")
+
+    fig.suptitle(
+        f"4-Way Retrieval Strategy Pareto Comparison ({payload['dataset_version']}, n={payload['total_cases']})",
+        fontsize=13,
+        fontweight="bold",
+        y=1.02,
+    )
+    fig.tight_layout()
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    fig.savefig(output_path, dpi=300, bbox_inches="tight")
+    plt.close(fig)
+    return output_path
+
+
+def plot_four_way_groundedness_and_safety(payload: dict[str, Any], output_path: Path) -> Path:
+    """4종 검색 전략의 회수율·Groundedness·Macro-F1·안전 지표(Ungrounded Rate, FSR)를 비교한다."""
+    configure_plot_style()
+    qual_rows = []
+    risk_rows = []
+    for s in payload["summaries"]:
+        label = _STRATEGY_LABELS.get(s["strategy"], s["strategy"])
+        qual_rows.extend([
+            {"strategy": label, "metric": "Evidence\nRecall", "pct": float(s["mean_evidence_recall"]) * 100.0},
+            {"strategy": label, "metric": "Multi-Hop\nRecall", "pct": float(s["multi_hop_evidence_recall"]) * 100.0},
+            {"strategy": label, "metric": "Groundedness", "pct": float(s["groundedness_rate"]) * 100.0},
+            {"strategy": label, "metric": "Macro-F1", "pct": float(s["macro_f1"]) * 100.0},
+        ])
+        risk_rows.extend([
+            {"strategy": label, "metric": "Ungrounded Rate (↓)", "pct": float(s["ungrounded_rate"]) * 100.0},
+            {"strategy": label, "metric": "FSR (↓)", "pct": float(s["false_supported_rate"]) * 100.0},
+        ])
+
+    q_df = pd.DataFrame(qual_rows)
+    r_df = pd.DataFrame(risk_rows)
+
+    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(13.5, 5.0), gridspec_kw={"width_ratios": [1.45, 1.0]})
+    sns.barplot(data=q_df, x="metric", y="pct", hue="strategy", palette=_STRATEGY_COLORS, ax=ax1)
+    ax1.set_title("Quality & Groundedness Metrics (%, ↑ higher is better)", fontsize=11, fontweight="bold")
+    ax1.set_xlabel("")
+    ax1.set_ylabel("Score (%)")
+    ax1.set_ylim(0, 118)
+    for container in ax1.containers:
+        ax1.bar_label(container, fmt="%.1f", padding=2, fontsize=7.8)
+    ax1.legend(title="Strategy", loc="lower right", frameon=True, fontsize=8.5)
+
+    sns.barplot(data=r_df, x="metric", y="pct", hue="strategy", palette=_STRATEGY_COLORS, ax=ax2)
+    ax2.set_title("Safety Risk Metrics (%, ↓ lower is safer)", fontsize=11, fontweight="bold")
+    ax2.set_xlabel("")
+    ax2.set_ylabel("Rate (%)")
+    ax2.set_ylim(0, max(16.0, float(r_df["pct"].max()) + 10.0))
+    ax2.axhline(5.0, color="#DC2626", linestyle="--", linewidth=1.2, label="FSR Safety Gate (5.0%)")
+    for container in ax2.containers:
+        ax2.bar_label(container, fmt="%.1f%%", padding=2, fontsize=8)
+    ax2.legend(title="Strategy / Gate", loc="upper right", frameon=True, fontsize=8.5)
+
+    fig.suptitle(
+        f"4-Way Retrieval Quality, Groundedness & Safety Comparison ({payload['dataset_version']})",
+        fontsize=13,
+        fontweight="bold",
+        y=1.02,
+    )
+    fig.tight_layout()
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    fig.savefig(output_path, dpi=300, bbox_inches="tight")
+    plt.close(fig)
+    return output_path
+
+
+def plot_four_way_latency_and_steps(payload: dict[str, Any], output_path: Path) -> Path:
+    """4종 전략별 레이턴시 분포(p50/p95/p99)와 평균 인출 스텝·토큰 절감률을 시각화한다."""
+    configure_plot_style()
+    case_rows = [
+        {
+            "strategy": _STRATEGY_LABELS.get(c["strategy"], c["strategy"]),
+            "latency_ms": float(c["latency_ms"]),
+        }
+        for c in payload["cases"]
+    ]
+    c_df = pd.DataFrame(case_rows)
+
+    sum_rows = [
+        {
+            "strategy": _STRATEGY_LABELS.get(s["strategy"], s["strategy"]),
+            "mean_pulls": float(s["mean_pull_calls"]),
+            "mean_tokens": float(s["mean_input_tokens"]),
+            "p50": float(s["latency_p50_ms"]),
+            "p95": float(s["latency_p95_ms"]),
+            "p99": float(s["latency_p99_ms"]),
+        }
+        for s in payload["summaries"]
+    ]
+    s_df = pd.DataFrame(sum_rows)
+
+    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(13.2, 4.9))
+    sns.boxplot(
+        data=c_df,
+        y="strategy",
+        x="latency_ms",
+        hue="strategy",
+        palette=_STRATEGY_COLORS,
+        width=0.5,
+        fliersize=2,
+        legend=False,
+        ax=ax1,
+    )
+    is_live = payload.get("latency_scope") == "live_llm_api_inclusive"
+    ax1.set_title(
+        "Live LLM API End-to-End Latency — p50/p95/p99 (incl. OpenAI RTT)"
+        if is_live
+        else "Offline In-Memory CPU Latency — p50/p95/p99 (Pre-Indexed RAG; excl. LLM/MCP RTT)",
+        fontsize=10,
+        fontweight="bold",
+    )
+    ax1.set_xlabel("Live API Wall-Clock Latency (ms)" if is_live else "Offline CPU Wall-Clock Latency (ms, no network/LLM RTT)")
+    ax1.set_ylabel("")
+    note = "\n".join(f"{r['strategy']}: p50={r['p50']:.2f} | p95={r['p95']:.2f} | p99={r['p99']:.2f} ms" for _, r in s_df.iterrows())
+    build_ms = payload.get("vector_index_build_ms_total")
+    if build_ms is not None and not is_live:
+        note += f"\n(Vector RAG pre-index build total: {float(build_ms):.1f} ms excl.)"
+    ax1.text(0.98, 0.05, note, transform=ax1.transAxes, ha="right", va="bottom", fontsize=7.6,
+             bbox={"boxstyle": "round,pad=0.35", "facecolor": "white", "edgecolor": "#CBD5E1", "alpha": 0.92})
+
+    sns.barplot(data=s_df, x="strategy", y="mean_tokens", hue="strategy", palette=_STRATEGY_COLORS, legend=False, ax=ax2)
+    ax2.set_title("Mean Estimated Input Tokens & Pulled Chunks per Incident", fontsize=10.5, fontweight="bold")
+    ax2.set_xlabel("")
+    ax2.set_ylabel("Mean Estimated Input Tokens (incl. selector)")
+    ax2.set_ylim(0, float(s_df["mean_tokens"].max()) * 1.25)
+    for idx, (_, row) in enumerate(s_df.iterrows()):
+        ax2.text(
+            idx,
+            row["mean_tokens"] + float(s_df["mean_tokens"].max()) * 0.03,
+            f"{row['mean_tokens']:.0f} tok\n({row['mean_pulls']:.1f} chunks)",
+            ha="center",
+            va="bottom",
+            fontsize=8.5,
+            fontweight="bold",
+            color="#1E293B",
+        )
+
+    fig.suptitle(
+        f"4-Way {'Live LLM' if is_live else 'Offline Benchmark'} Latency & Token Budget Profile ({payload['dataset_version']})",
+        fontsize=13,
+        fontweight="bold",
+        y=1.02,
+    )
+    fig.tight_layout()
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    fig.savefig(output_path, dpi=300, bbox_inches="tight")
+    plt.close(fig)
+    return output_path
+
+
+def plot_four_way_category_recall_heatmap(payload: dict[str, Any], output_path: Path) -> Path:
+    """6개 장애 카테고리 × 4종 검색 전략의 Evidence Recall 히트맵을 생성한다."""
+    configure_plot_style()
+    categories = sorted(payload["summaries"][0]["per_category_recall"].keys())
+    data: dict[str, list[float]] = {}
+    for s in payload["summaries"]:
+        label = _STRATEGY_LABELS.get(s["strategy"], s["strategy"])
+        data[label] = [float(s["per_category_recall"][cat]) * 100.0 for cat in categories]
+
+    df = pd.DataFrame(data, index=[_CATEGORY_LABELS.get(c, c) for c in categories])
+    fig, ax = plt.subplots(figsize=(9.6, 5.2))
+    sns.heatmap(
+        df,
+        annot=True,
+        fmt=".1f",
+        cmap="YlGnBu",
+        vmin=40.0,
+        vmax=100.0,
+        linewidths=0.8,
+        linecolor="#CBD5E1",
+        cbar_kws={"label": "Evidence Recall (%)"},
+        annot_kws={"size": 10.5, "weight": "bold"},
+        ax=ax,
+    )
+    ax.set_title(
+        f"Category × Strategy Evidence Recall Heatmap (%, {payload['dataset_version']})",
+        fontsize=12,
+        fontweight="bold",
+        pad=12,
+    )
+    ax.set_xlabel("Retrieval Strategy", fontsize=10, labelpad=8)
+    ax.set_ylabel("Incident Category", fontsize=10, labelpad=8)
+    ax.tick_params(axis="y", rotation=0)
+
+    fig.tight_layout()
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    fig.savefig(output_path, dpi=300, bbox_inches="tight")
+    plt.close(fig)
+    return output_path
+
+
+def generate_four_way_charts(
+    four_way_json_path: str | Path,
+    output_dir: str | Path,
+    *,
+    prefix: str = "phase6",
+) -> list[Path]:
+    """4종 DR-DCI 벤치마크 JSON 리포트에서 4종 비교 차트를 일괄 생성한다."""
+    payload = _load_json(four_way_json_path)
+    out = Path(output_dir)
+    return [
+        plot_four_way_pareto(payload, out / f"{prefix}-pareto-token-vs-quality.png"),
+        plot_four_way_groundedness_and_safety(payload, out / f"{prefix}-groundedness-and-safety.png"),
+        plot_four_way_latency_and_steps(payload, out / f"{prefix}-latency-and-steps.png"),
+        plot_four_way_category_recall_heatmap(payload, out / f"{prefix}-category-recall-heatmap.png"),
+    ]
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Generate matplotlib/seaborn benchmark charts from raw JSON reports.")
     parser.add_argument("--judge-json", default=None, help="Path to EvidenceJudge evaluation JSON report")
     parser.add_argument("--dr-dci-json", default=None, help="Path to DR-DCI baseline JSON report")
+    parser.add_argument("--four-way-json", default=None, help="Path to Phase 6 4-way DR-DCI benchmark JSON report")
     parser.add_argument("--output-dir", required=True, help="Directory to save generated PNG charts")
     parser.add_argument("--prefix", default="phase5", help="Output filename prefix (default: phase5)")
     args = parser.parse_args(argv)
 
-    if not args.judge_json and not args.dr_dci_json:
-        raise ValueError("Provide at least one of --judge-json or --dr-dci-json.")
+    if not args.judge_json and not args.dr_dci_json and not args.four_way_json:
+        raise ValueError("Provide at least one of --judge-json, --dr-dci-json, or --four-way-json.")
 
     generated: list[Path] = []
     out_dir = Path(args.output_dir)
@@ -410,6 +696,8 @@ def main(argv: Sequence[str] | None = None) -> int:
     if args.dr_dci_json:
         payload = _load_json(args.dr_dci_json)
         generated.append(plot_dr_dci_budget_curve(payload, out_dir / f"{args.prefix}-dr-dci-budget-curve.png"))
+    if args.four_way_json:
+        generated.extend(generate_four_way_charts(args.four_way_json, out_dir, prefix=args.prefix))
 
     for path in generated:
         print(f"Generated chart: {path}")

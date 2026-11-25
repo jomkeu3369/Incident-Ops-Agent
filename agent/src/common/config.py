@@ -13,6 +13,8 @@ _ROOT_ENV = Path(__file__).resolve().parents[3] / ".env"
 INTERNAL_TOKEN_HEADER = "X-Internal-Token"
 OPERATOR_ID_HEADER = "X-Operator-Id"
 VALID_EVIDENCE_JUDGE_MODES = frozenset({"decisions_api", "structured_output", "rule_based", "auto"})
+VALID_DR_DCI_MODES = frozenset({"keyword", "agentic"})
+VALID_DR_DCI_SELECTOR_MODES = frozenset({"adaptive", "openai"})
 
 
 @dataclass(frozen=True)
@@ -74,9 +76,31 @@ class Settings(BaseSettings):
     remediation_agent_a2a_url: str = "http://localhost:8002"
 
     # DR-DCI 및 플래너 제한 상수
+    dr_dci_mode: str = "keyword"
+    dr_dci_selector_mode: str = "adaptive"
     dr_dci_max_chunk_chars: int = 4000
     dr_dci_max_pull_steps: int = 5
+    dr_dci_max_context_chars: int = 6000
+    dr_dci_timeout_seconds: float = 10.0
     max_replan_attempts: int = 3
+
+    @field_validator("dr_dci_mode")
+    @classmethod
+    def _validate_dr_dci_mode(cls, value: str) -> str:
+        normalized = value.strip().lower()
+        if normalized not in VALID_DR_DCI_MODES:
+            allowed = ", ".join(sorted(VALID_DR_DCI_MODES))
+            raise ValueError(f"DR_DCI_MODE must be one of: {allowed}")
+        return normalized
+
+    @field_validator("dr_dci_selector_mode")
+    @classmethod
+    def _validate_dr_dci_selector_mode(cls, value: str) -> str:
+        normalized = value.strip().lower()
+        if normalized not in VALID_DR_DCI_SELECTOR_MODES:
+            allowed = ", ".join(sorted(VALID_DR_DCI_SELECTOR_MODES))
+            raise ValueError(f"DR_DCI_SELECTOR_MODE must be one of: {allowed}")
+        return normalized
     http_timeout_seconds: float = 15.0
     tool_cache_ttl_seconds: float = 300.0
 

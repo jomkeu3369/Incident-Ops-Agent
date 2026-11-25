@@ -20,9 +20,10 @@ def _score_chunk(meta: dict[str, Any], user_keywords: list[str]) -> tuple[int, i
     return (-score, int(meta.get("sequenceOrder") or 0))
 
 
-def _summarize_chunk(content: str, max_chars: int) -> str:
+def _summarize_chunk(content: str, max_chars: int, *, preserve_newlines: bool = False) -> str:
     """인출한 원문을 지정 길이 이하로 정제해 컨텍스트 폭발을 방지한다."""
-    cleaned = " ".join(line.strip() for line in content.splitlines() if line.strip())
+    sep = "\n" if preserve_newlines else " "
+    cleaned = sep.join(line.strip() for line in content.splitlines() if line.strip())
     return cleaned if len(cleaned) <= max_chars else cleaned[: max(1, max_chars - 3)].rstrip() + "..."
 
 
@@ -36,7 +37,12 @@ def _extract_command(text: str) -> str | None:
 
 
 async def run_dr_dci_investigation(backend: BackendClient, settings: Settings, req: LogInvestigationRequest) -> LogInvestigationResponse:
-    """DR-DCI 루프: 메타데이터 색인 조회 -> 우선순위 선별 인출 -> 근거 요약 반환."""
+    """DR-DCI 루프: 설정(keyword | agentic)에 따라 정적 키워드 또는 에이전틱 반복 인출을 실행한다."""
+    if settings.dr_dci_mode == "agentic":
+        from log_agent.agentic_dr_dci import run_agentic_dr_dci_investigation
+
+        return await run_agentic_dr_dci_investigation(backend, settings, req)
+
     budget = min(req.maxPulls or settings.dr_dci_max_pull_steps, settings.dr_dci_max_pull_steps)
     async with traced_span(
         "log_agent.dr_dci_investigate",
@@ -130,9 +136,9 @@ async def _run_dr_dci_investigation_impl(backend: BackendClient, settings: Setti
         raw_content = str(chunk.get("content") or "")
         corpus_type = str(chunk.get("corpusType") or meta.get("corpusType") or "LOG")
         tool_trace.append({"tool": "pullCorpusChunk", "args": {"incidentCode": req.incidentCode, "chunkId": cid}, "ok": True, "chars": len(raw_content)})
-        evidence.append(EvidenceItem(chunkId=cid, corpusType=corpus_type, title=str(chunk.get("title") or meta.get("title") or cid), summary=_summarize_chunk(raw_content, min(max_chars, 400))))
+        evidence.append(EvidenceItem(chunkId=cid, corpusType=corpus_type, title=str(chunk.get("title") or meta.get("title") or cid), summary=_summarize_chunk(raw_content, min(max_chars, 400), preserve_newlines=(corpus_type == "RUNBOOK"))))
         if corpus_type == "RUNBOOK":
-            runbook_summaries.append(_summarize_chunk(raw_content, max_chars))
+            runbook_summaries.append(_summarize_chunk(raw_content, max_chars, preserve_newlines=True))
             if recommended_command is None:
                 recommended_command = _extract_command(raw_content)
 
