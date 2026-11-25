@@ -39,6 +39,18 @@ class Settings(BaseSettings):
     evidence_judge_mode: str = "decisions_api"
     evidence_judge_model: str = ""
 
+    # LangSmith 관측성·분산 트레이싱 설정 (기본 비활성, opt-in)
+    langsmith_tracing: bool = False
+    langsmith_api_key: SecretStr = SecretStr("")
+    langsmith_project: str = "incident-ops-agent"
+    langsmith_endpoint: str = "https://api.smith.langchain.com"
+
+    @property
+    def langsmith_enabled(self) -> bool:
+        """LANGSMITH_TRACING=true이고 유효한 API 키가 설정된 경우에만 트레이싱을 활성화한다."""
+        key = self.langsmith_api_key.get_secret_value().strip()
+        return self.langsmith_tracing and bool(key) and key != "your-langsmith-api-key-here"
+
     @field_validator("evidence_judge_mode")
     @classmethod
     def _validate_evidence_judge_mode(cls, value: str) -> str:

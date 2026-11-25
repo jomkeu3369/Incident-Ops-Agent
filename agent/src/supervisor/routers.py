@@ -25,13 +25,27 @@ def get_supervisor_store(container: AppContainer = Depends(get_container)) -> Su
 
 def get_supervisor_service(container: AppContainer = Depends(get_container), backend: BackendClient = Depends(get_backend_client), store: SupervisorRedisStore = Depends(get_supervisor_store)) -> SupervisorService:
     """AG-UI·LangGraph 총괄 오케스트레이션 서비스를 DI로 주입한다."""
-    return SupervisorService(container.settings, container.http_client, backend, store, event_bus=container.event_bus, a2a_caller=container.a2a_caller)
+    return SupervisorService(
+        container.settings,
+        container.http_client,
+        backend,
+        store,
+        event_bus=container.event_bus,
+        a2a_caller=container.a2a_caller,
+        langsmith_client=container.langsmith_client,
+    )
 
 
 @router.get("/status")
 async def ag_ui_status(operator_id: str = Depends(get_operator_id), cfg: Settings = Depends(get_settings)) -> dict[str, str]:
     """AG-UI 총괄 서비스 상태와 서버 측 운영자 식별자를 확인한다."""
-    return {"service": "supervisor-agent", "protocol": "ag-ui", "operator": operator_id, "model": cfg.openai_model}
+    return {
+        "service": "supervisor-agent",
+        "protocol": "ag-ui",
+        "operator": operator_id,
+        "model": cfg.openai_model,
+        "langsmith": "enabled" if cfg.langsmith_enabled else "disabled",
+    }
 
 
 @router.post("")

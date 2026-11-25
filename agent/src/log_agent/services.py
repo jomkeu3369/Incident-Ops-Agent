@@ -4,6 +4,7 @@ from typing import Any
 
 from common.backend_client import BackendApiError, BackendClient
 from common.config import Settings
+from common.observability import end_span, traced_span
 from log_agent.cruds import CorpusCrud
 from log_agent.schemas import EvidenceItem, LogInvestigationRequest, LogInvestigationResponse
 
@@ -36,10 +37,38 @@ def _extract_command(text: str) -> str | None:
 
 async def run_dr_dci_investigation(backend: BackendClient, settings: Settings, req: LogInvestigationRequest) -> LogInvestigationResponse:
     """DR-DCI 루프: 메타데이터 색인 조회 -> 우선순위 선별 인출 -> 근거 요약 반환."""
+    budget = min(req.maxPulls or settings.dr_dci_max_pull_steps, settings.dr_dci_max_pull_steps)
+    async with traced_span(
+        "log_agent.dr_dci_investigate",
+        run_type="retriever",
+        inputs={
+            "incidentCode": req.incidentCode,
+            "keywords": req.keywords,
+            "maxPulls": budget,
+            "excludeCount": len(req.excludeChunkIds),
+        },
+        tags=["dr-dci", "log-agent", "mcp"],
+    ) as span:
+        response = await _run_dr_dci_investigation_impl(backend, settings, req, budget)
+        end_span(
+            span,
+            outputs={
+                "ok": response.ok,
+                "evidenceChunkIds": response.evidenceChunkIds,
+                "pulledCount": len(response.evidence),
+                "remainingCount": len(response.remainingChunkIds),
+                "recommendedCommand": response.recommendedCommand,
+            },
+            error=str((response.error or {}).get("message")) if not response.ok and response.error else None,
+        )
+        return response
+
+
+async def _run_dr_dci_investigation_impl(backend: BackendClient, settings: Settings, req: LogInvestigationRequest, budget: int) -> LogInvestigationResponse:
+    """DR-DCI 루프 실제 구현."""
     crud = CorpusCrud(backend)
     kw_list = [k.strip() for k in req.keywords if k and k.strip()]
     excluded = set(req.excludeChunkIds)
-    budget = min(req.maxPulls or settings.dr_dci_max_pull_steps, settings.dr_dci_max_pull_steps)
     max_chars = max(120, settings.dr_dci_max_chunk_chars)
     tool_trace: list[dict[str, Any]] = []
 

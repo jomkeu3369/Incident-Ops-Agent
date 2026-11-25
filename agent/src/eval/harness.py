@@ -20,6 +20,7 @@ from common.decisions import (
     StructuredOutputJudge,
     Verdict,
 )
+from common.observability import build_langsmith_client, end_span, flush_langsmith_client, langsmith_tracing_scope, traced_span
 from eval.dataset import EvalDataset, ExpectedVerdict, IncidentEvalCase, load_eval_dataset
 
 EXPECTED_LABELS: tuple[ExpectedVerdict, ...] = ("SUPPORTED", "NEED_MORE_EVIDENCE", "CONTRADICTED")
@@ -268,6 +269,8 @@ async def evaluate_judge(
     judge_name: str,
     concurrency: int = 4,
     dataset_version: str = "custom",
+    settings: Settings | None = None,
+    langsmith_client: Any | None = None,
 ) -> EvaluationReport:
     """단일 EvidenceJudge를 평가 데이터셋 전체에 대해 실행하고 집계 리포트를 반환한다."""
     if isinstance(dataset, EvalDataset):
@@ -286,48 +289,103 @@ async def evaluate_judge(
 
     async def _run_case(case: IncidentEvalCase) -> tuple[CaseEvaluation, DecisionResult]:
         async with sem:
-            t0 = time.perf_counter()
-            res = await judge.judge_plan_evidence(
-                proposed_action=case.proposed_action,
-                runbook=case.runbook,
-                evidence=case.evidence,
-            )
-            wall_ms = round((time.perf_counter() - t0) * 1000.0, 2)
-            latency_ms = res.latency_ms if res.latency_ms is not None else wall_ms
-            false_supported = case.expected_verdict != "SUPPORTED" and res.verdict == "SUPPORTED"
-            catastrophic_fs = case.expected_verdict == "CONTRADICTED" and res.verdict == "SUPPORTED"
-            return (
-                CaseEvaluation(
-                    case_id=case.case_id,
-                    category=case.category,
-                    service_name=case.service_name,
-                    expected=case.expected_verdict,
-                    predicted=res.verdict,
-                    correct=res.verdict == case.expected_verdict,
-                    false_supported=false_supported,
-                    catastrophic_false_supported=catastrophic_fs,
-                    prompt_injection=case.prompt_injection,
-                    confidence=res.confidence,
-                    latency_ms=latency_ms,
-                    input_tokens=res.input_tokens or 0,
-                    output_tokens=res.output_tokens or 0,
-                    reason=res.reason,
-                ),
-                res,
-            )
+            async with traced_span(
+                f"eval.case.{case.case_id}",
+                run_type="llm",
+                inputs={
+                    "case_id": case.case_id,
+                    "category": case.category,
+                    "service_name": case.service_name,
+                    "expected_verdict": case.expected_verdict,
+                    "proposed_action": case.proposed_action,
+                },
+                tags=["eval", "evidence-judge", judge_name, case.category],
+            ) as case_span:
+                t0 = time.perf_counter()
+                res = await judge.judge_plan_evidence(
+                    proposed_action=case.proposed_action,
+                    runbook=case.runbook,
+                    evidence=case.evidence,
+                )
+                wall_ms = round((time.perf_counter() - t0) * 1000.0, 2)
+                latency_ms = res.latency_ms if res.latency_ms is not None else wall_ms
+                false_supported = case.expected_verdict != "SUPPORTED" and res.verdict == "SUPPORTED"
+                catastrophic_fs = case.expected_verdict == "CONTRADICTED" and res.verdict == "SUPPORTED"
+                end_span(
+                    case_span,
+                    outputs={
+                        "predicted": res.verdict,
+                        "correct": res.verdict == case.expected_verdict,
+                        "false_supported": false_supported,
+                        "confidence": res.confidence,
+                        "latency_ms": latency_ms,
+                        "input_tokens": res.input_tokens or 0,
+                        "output_tokens": res.output_tokens or 0,
+                    },
+                )
+                return (
+                    CaseEvaluation(
+                        case_id=case.case_id,
+                        category=case.category,
+                        service_name=case.service_name,
+                        expected=case.expected_verdict,
+                        predicted=res.verdict,
+                        correct=res.verdict == case.expected_verdict,
+                        false_supported=false_supported,
+                        catastrophic_false_supported=catastrophic_fs,
+                        prompt_injection=case.prompt_injection,
+                        confidence=res.confidence,
+                        latency_ms=latency_ms,
+                        input_tokens=res.input_tokens or 0,
+                        output_tokens=res.output_tokens or 0,
+                        reason=res.reason,
+                    ),
+                    res,
+                )
 
-    pairs = await asyncio.gather(*(_run_case(c) for c in cases))
-    case_evals = [p[0] for p in pairs]
-    total_cost_usd = sum(_estimate_result_cost_usd(p[1]) for p in pairs)
-    first_res = pairs[0][1]
-    return _compute_report(
-        judge_name=judge_name,
-        provider=first_res.provider,
-        model=first_res.model,
-        dataset_version=version,
-        case_evals=case_evals,
-        total_cost_usd=total_cost_usd,
-    )
+    cfg = settings or Settings(_env_file=None)
+    owned_client = build_langsmith_client(cfg) if langsmith_client is None else None
+    active_client = langsmith_client if langsmith_client is not None else owned_client
+    try:
+        with langsmith_tracing_scope(
+            cfg,
+            client=active_client,
+            tags=["eval", "evidence-judge", judge_name],
+            metadata={"dataset_version": version, "judge_name": judge_name, "case_count": len(cases)},
+        ):
+            async with traced_span(
+                f"eval.benchmark.{judge_name}",
+                run_type="chain",
+                inputs={"judge_name": judge_name, "dataset_version": version, "case_count": len(cases)},
+                tags=["eval", "evidence-judge", judge_name],
+            ) as bench_span:
+                pairs = await asyncio.gather(*(_run_case(c) for c in cases))
+                case_evals = [p[0] for p in pairs]
+                total_cost_usd = sum(_estimate_result_cost_usd(p[1]) for p in pairs)
+                first_res = pairs[0][1]
+                report = _compute_report(
+                    judge_name=judge_name,
+                    provider=first_res.provider,
+                    model=first_res.model,
+                    dataset_version=version,
+                    case_evals=case_evals,
+                    total_cost_usd=total_cost_usd,
+                )
+                end_span(
+                    bench_span,
+                    outputs={
+                        "accuracy": report.accuracy,
+                        "macro_f1": report.macro_f1,
+                        "false_supported_rate": report.false_supported_rate,
+                        "latency_p50_ms": report.latency_p50_ms,
+                        "latency_p95_ms": report.latency_p95_ms,
+                        "latency_p99_ms": report.latency_p99_ms,
+                    },
+                )
+                return report
+    finally:
+        if owned_client is not None:
+            flush_langsmith_client(owned_client)
 
 
 async def compare_judges(
@@ -336,19 +394,30 @@ async def compare_judges(
     *,
     concurrency: int = 4,
     dataset_version: str = "custom",
+    settings: Settings | None = None,
+    langsmith_client: Any | None = None,
 ) -> list[EvaluationReport]:
     """복수 EvidenceJudge 구현체를 동일 데이터셋으로 순차 평가해 비교 리포트 목록을 반환한다."""
+    cfg = settings or Settings(_env_file=None)
+    owned_client = build_langsmith_client(cfg) if langsmith_client is None else None
+    active_client = langsmith_client if langsmith_client is not None else owned_client
     reports: list[EvaluationReport] = []
-    for name, judge in judges.items():
-        report = await evaluate_judge(
-            judge,
-            dataset,
-            judge_name=name,
-            concurrency=concurrency,
-            dataset_version=dataset_version,
-        )
-        reports.append(report)
-    return reports
+    try:
+        for name, judge in judges.items():
+            report = await evaluate_judge(
+                judge,
+                dataset,
+                judge_name=name,
+                concurrency=concurrency,
+                dataset_version=dataset_version,
+                settings=cfg,
+                langsmith_client=active_client,
+            )
+            reports.append(report)
+        return reports
+    finally:
+        if owned_client is not None:
+            flush_langsmith_client(owned_client)
 
 
 def format_markdown_report(reports: Sequence[EvaluationReport]) -> str:
@@ -532,7 +601,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     dataset = load_eval_dataset(args.dataset)
     settings = Settings()
     judges = _build_cli_judges(args.judges.split(","), settings)
-    reports = asyncio.run(compare_judges(judges, dataset, concurrency=args.concurrency))
+    reports = asyncio.run(compare_judges(judges, dataset, concurrency=args.concurrency, settings=settings))
 
     markdown = format_markdown_report(reports)
     print(markdown)

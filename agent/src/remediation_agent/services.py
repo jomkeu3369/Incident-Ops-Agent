@@ -6,6 +6,7 @@ import uuid
 from typing import Any
 
 from common.decisions import EvidenceJudge
+from common.observability import end_span, traced_span
 from common.planner_math import find_work_window, select_rollback_candidate
 from common.tools import ExternalToolsClient
 from remediation_agent.schemas import (
@@ -24,17 +25,55 @@ async def _call_or_reuse(cache: dict[str, Any], cache_key: str, tool_name: str, 
     """캐시된 외부 Tool 결과가 있으면 재사용하고, 없을 때만 실제 호출한다."""
     if cache_key in cache:
         return cache[cache_key]
-    t0 = time.perf_counter()
-    res = await call_fn()
-    elapsed_ms = round((time.perf_counter() - t0) * 1000, 1)
-    tool_calls.append({"tool": tool_name, "args": args, "ok": bool(res.get("ok")), "errorCode": None if res.get("ok") else (res.get("error") or {}).get("code"), "elapsedMs": elapsed_ms})
-    if res.get("ok"):
-        cache[cache_key] = res
-    return res
+    async with traced_span(
+        f"external_tool.{tool_name}",
+        run_type="tool",
+        inputs=args,
+        tags=["external-tool", "remediation-agent"],
+    ) as span:
+        t0 = time.perf_counter()
+        res = await call_fn()
+        elapsed_ms = round((time.perf_counter() - t0) * 1000, 1)
+        ok = bool(res.get("ok"))
+        err_code = None if ok else (res.get("error") or {}).get("code")
+        tool_calls.append({"tool": tool_name, "args": args, "ok": ok, "errorCode": err_code, "elapsedMs": elapsed_ms})
+        end_span(span, outputs={"ok": ok, "errorCode": err_code, "elapsedMs": elapsed_ms}, error=None if ok else str(err_code))
+        if ok:
+            cache[cache_key] = res
+        return res
 
 
 async def build_remediation_plan(tools: ExternalToolsClient, decisions: EvidenceJudge, req: RemediationPlanRequest) -> RemediationPlanResponse:
     """외부 API Tool 3종 조회 -> 제약 계산·재계획 -> Decisions 근거 판정까지 수행한다."""
+    async with traced_span(
+        "remediation_agent.build_plan",
+        run_type="chain",
+        inputs={
+            "incidentCode": req.incidentCode,
+            "serviceName": req.serviceName,
+            "max502RatePercent": req.max502RatePercent,
+            "evidenceCount": len(req.evidence),
+            "cachedToolKeys": sorted(req.cachedToolResults.keys()),
+        },
+        tags=["remediation-agent", "planner"],
+    ) as span:
+        response = await _build_remediation_plan_impl(tools, decisions, req)
+        end_span(
+            span,
+            outputs={
+                "ok": response.ok,
+                "status": response.status,
+                "verdict": response.verdict,
+                "confidence": response.confidence,
+                "toolCallCount": len(response.toolCalls),
+            },
+            error=None if response.ok else response.message,
+        )
+        return response
+
+
+async def _build_remediation_plan_impl(tools: ExternalToolsClient, decisions: EvidenceJudge, req: RemediationPlanRequest) -> RemediationPlanResponse:
+    """복구 계획 수립·재계획·근거 판정 실제 구현."""
     cache = dict(req.cachedToolResults)
     tool_calls: list[dict[str, Any]] = []
 
@@ -129,12 +168,39 @@ async def build_remediation_plan(tools: ExternalToolsClient, decisions: Evidence
         f"[External] 기준 배포 {reference_dep.get('ref', reference_dep['gitSha'])} 502 비율={ref_rate}%{ref_total_suffix}, "
         f"후보 {target_ref} 502 비율={eval_res.selected['http502RatePercent']}%{cand_total_suffix}"
     )
-    verdict = await decisions.judge_plan_evidence(
-        proposed_action=f"Rollback {req.serviceName} to {target_ref} ({action_cmd}) during {win_dec.selected_window.start.isoformat()}~{win_dec.selected_window.end.isoformat()}",
-        runbook="\n".join(runbook_parts) or _DEFAULT_RUNBOOK,
-        evidence="\n".join(evidence_lines),
-        max_error_rate_percent=req.max502RatePercent,
-    )
+    proposed_action = f"Rollback {req.serviceName} to {target_ref} ({action_cmd}) during {win_dec.selected_window.start.isoformat()}~{win_dec.selected_window.end.isoformat()}"
+    runbook_text = "\n".join(runbook_parts) or _DEFAULT_RUNBOOK
+    evidence_text = "\n".join(evidence_lines)
+    async with traced_span(
+        "evidence_judge.evaluate",
+        run_type="llm",
+        inputs={
+            "proposed_action": proposed_action,
+            "runbook_chars": len(runbook_text),
+            "evidence_chars": len(evidence_text),
+            "max_error_rate_percent": req.max502RatePercent,
+        },
+        tags=["evidence-judge", "remediation-agent"],
+    ) as judge_span:
+        verdict = await decisions.judge_plan_evidence(
+            proposed_action=proposed_action,
+            runbook=runbook_text,
+            evidence=evidence_text,
+            max_error_rate_percent=req.max502RatePercent,
+        )
+        end_span(
+            judge_span,
+            outputs={
+                "verdict": verdict.verdict,
+                "provider": verdict.provider,
+                "model": verdict.model,
+                "confidence": verdict.confidence,
+                "input_tokens": verdict.input_tokens,
+                "output_tokens": verdict.output_tokens,
+                "latency_ms": verdict.latency_ms,
+                "reason": verdict.reason,
+            },
+        )
 
     chunk_ids = [e.chunkId for e in req.evidence]
     plan_id = f"PLAN-{req.incidentCode}-{uuid.uuid4().hex[:6].upper()}"
@@ -184,16 +250,24 @@ async def build_remediation_plan(tools: ExternalToolsClient, decisions: Evidence
 
 async def execute_approved_remediation(req: RemediationExecuteRequest) -> RemediationExecuteResponse:
     """운영자 승인을 통과한 복구 조치를 안전 시뮬레이션으로 실행하고 검증·포스트모템 초안을 생성한다."""
-    # shortcut: 실제 클러스터 명령 대신 시뮬레이션 실행, 운영 클러스터 연동 시 kube/executor 어댑터로 교체
-    evidence_refs = ", ".join(e.chunkId for e in req.evidence) or "인용 청크 없음"
-    return RemediationExecuteResponse(
-        ok=True,
-        incidentCode=req.incidentCode,
-        approvalId=req.approvalId,
-        executionStatus="SUCCESS",
-        executionOutput=f"[simulated] executed `{req.actionCommand}` for {req.incidentCode} (approval={req.approvalId})",
-        verificationSummary=f"복구 확인 기준 충족 확인 완료: {req.verificationCriteria or '502 오류율 및 커넥션 대기 시간 정상화 확인'}",
-        rootCause=f"{req.incidentCode} 신규 배포 이후 발생한 리소스/커넥션 이상 ({evidence_refs})",
-        timelineMarkdown=f"- 장애 조사 완료 ({evidence_refs})\n- 계획({req.planId}) 승인 완료 ({req.approvalId})\n- `{req.actionCommand}` 실행 및 복구 확인 완료",
-        preventionItems="배포 전 커넥션 누수 통합 테스트 및 카나리 502 임계치 자동 알림 적용",
-    )
+    async with traced_span(
+        "remediation_agent.execute_approved",
+        run_type="tool",
+        inputs={"incidentCode": req.incidentCode, "approvalId": req.approvalId, "planId": req.planId, "actionCommand": req.actionCommand},
+        tags=["remediation-agent", "execution"],
+    ) as span:
+        # shortcut: 실제 클러스터 명령 대신 시뮬레이션 실행, 운영 클러스터 연동 시 kube/executor 어댑터로 교체
+        evidence_refs = ", ".join(e.chunkId for e in req.evidence) or "인용 청크 없음"
+        res = RemediationExecuteResponse(
+            ok=True,
+            incidentCode=req.incidentCode,
+            approvalId=req.approvalId,
+            executionStatus="SUCCESS",
+            executionOutput=f"[simulated] executed `{req.actionCommand}` for {req.incidentCode} (approval={req.approvalId})",
+            verificationSummary=f"복구 확인 기준 충족 확인 완료: {req.verificationCriteria or '502 오류율 및 커넥션 대기 시간 정상화 확인'}",
+            rootCause=f"{req.incidentCode} 신규 배포 이후 발생한 리소스/커넥션 이상 ({evidence_refs})",
+            timelineMarkdown=f"- 장애 조사 완료 ({evidence_refs})\n- 계획({req.planId}) 승인 완료 ({req.approvalId})\n- `{req.actionCommand}` 실행 및 복구 확인 완료",
+            preventionItems="배포 전 커넥션 누수 통합 테스트 및 카나리 502 임계치 자동 알림 적용",
+        )
+        end_span(span, outputs={"ok": res.ok, "executionStatus": res.executionStatus})
+        return res

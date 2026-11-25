@@ -33,6 +33,7 @@ from common.a2a_utils import send_a2a_json
 from common.backend_client import BackendApiError, BackendClient
 from common.config import Settings
 from common.event_log import EventBus, publish_safe
+from common.observability import end_span, langsmith_tracing_scope, traced_span
 from supervisor.cruds import SupervisorRedisStore
 from supervisor.graph import A2ACaller, build_supervisor_graph
 from supervisor.schemas import ForwardedPropsInput
@@ -88,13 +89,14 @@ def _isolate_incident_memory(memory: dict[str, Any], thread_id: str, incident_co
 class SupervisorService:
     """AG-UI 스트리밍·HITL 승인·LangGraph 5단계 오케스트레이션을 총괄하는 서비스."""
 
-    def __init__(self, settings: Settings, http_client: httpx.AsyncClient, backend: BackendClient, store: SupervisorRedisStore, event_bus: EventBus | None = None, a2a_caller: A2ACaller | None = None) -> None:
+    def __init__(self, settings: Settings, http_client: httpx.AsyncClient, backend: BackendClient, store: SupervisorRedisStore, event_bus: EventBus | None = None, a2a_caller: A2ACaller | None = None, langsmith_client: Any | None = None) -> None:
         self._settings = settings
         self._http = http_client
         self._backend = backend
         self._store = store
         self._bus = event_bus
         self._a2a_caller = a2a_caller
+        self._langsmith_client = langsmith_client
 
     def parse_forwarded_props(self, run_input: RunAgentInput) -> ForwardedPropsInput:
         """스트림을 열기 전에 forwardedProps 계약을 검증한다(위반 시 HTTP 400)."""
@@ -214,7 +216,34 @@ class SupervisorService:
 
                 async def _run_graph() -> dict[str, Any]:
                     try:
-                        return await live_graph.ainvoke(init_state)
+                        with langsmith_tracing_scope(
+                            self._settings,
+                            client=self._langsmith_client,
+                            tags=["ag-ui", "supervisor"],
+                            metadata={
+                                "incident_code": props.incidentCode,
+                                "thread_id": tid,
+                                "run_id": rid,
+                                "operator_id": operator_id,
+                            },
+                        ):
+                            async with traced_span(
+                                "supervisor.ag_ui_run",
+                                run_type="chain",
+                                inputs={"incidentCode": props.incidentCode, "userMessage": user_text},
+                                tags=["ag-ui", "supervisor"],
+                            ) as span:
+                                result = await live_graph.ainvoke(init_state)
+                                end_span(
+                                    span,
+                                    outputs={
+                                        "intent": result.get("intent"),
+                                        "workflowStatus": result.get("workflow_status"),
+                                        "replanCount": result.get("replan_count"),
+                                        "pulledChunkIds": result.get("pulled_chunk_ids"),
+                                    },
+                                )
+                                return result
                     finally:
                         await ui_queue.put(None)
 
@@ -313,12 +342,57 @@ class SupervisorService:
         action_cmd = str(decided.get("actionCommand") or _find_plan_command(plan, approval_obj["stepNo"]) or f"kubectl rollout undo deployment/{self._settings.default_service_name}")
         exec_payload = {"action": "execute", "incidentCode": props.incidentCode, "approvalId": approval_id, "planId": str(approval_obj["planId"] or "PLAN-UNKNOWN"), "actionCommand": action_cmd, "verificationCriteria": str((plan or {}).get("verificationCriteria") or ""), "evidence": list((plan or {}).get("evidence") or [])}
 
-        try:
-            if self._a2a_caller is not None:
-                exec_res = await self._a2a_caller(self._settings.remediation_agent_a2a_url, exec_payload, tid)
-            else:
-                exec_res = await send_a2a_json(self._http, base_url=self._settings.remediation_agent_a2a_url, internal_token=self._settings.internal_service_token.get_secret_value(), payload=exec_payload, context_id=tid)
-        except Exception:
+        async def _execute_and_complete() -> tuple[str, str | None, str]:
+            with langsmith_tracing_scope(
+                self._settings,
+                client=self._langsmith_client,
+                tags=["ag-ui", "supervisor", "approval-execution"],
+                metadata={
+                    "incident_code": props.incidentCode,
+                    "thread_id": tid,
+                    "run_id": rid,
+                    "approval_id": approval_id,
+                    "operator_id": operator_id,
+                },
+            ):
+                async with traced_span(
+                    "supervisor.execute_approved",
+                    run_type="chain",
+                    inputs={"incidentCode": props.incidentCode, "approvalId": approval_id, "planId": exec_payload["planId"]},
+                    tags=["ag-ui", "approval-execution"],
+                ) as exec_span:
+                    try:
+                        if self._a2a_caller is not None:
+                            exec_res = await self._a2a_caller(self._settings.remediation_agent_a2a_url, exec_payload, tid)
+                        else:
+                            exec_res = await send_a2a_json(self._http, base_url=self._settings.remediation_agent_a2a_url, internal_token=self._settings.internal_service_token.get_secret_value(), payload=exec_payload, context_id=tid)
+                    except Exception:
+                        end_span(exec_span, error="execution_interrupted")
+                        return ("INTERRUPTED", None, "")
+
+                    try:
+                        await self._backend.complete_incident_with_postmortem(
+                            approval_id=approval_id,
+                            incident_code=props.incidentCode,
+                            action_command=action_cmd,
+                            executed_by="remediation-agent",
+                            execution_status=exec_res.get("executionStatus", "SUCCESS"),
+                            execution_output=exec_res.get("executionOutput"),
+                            verification_summary=exec_res.get("verificationSummary"),
+                            root_cause=exec_res.get("rootCause"),
+                            timeline_markdown=exec_res.get("timelineMarkdown"),
+                            prevention_items=exec_res.get("preventionItems"),
+                        )
+                        status_out = "RESOLVED" if exec_res.get("executionStatus") == "SUCCESS" else "EXECUTION_FAILED"
+                        text_out = f"승인({approval_id})된 조치(`{action_cmd}`)를 실행하고 포스트모템을 반영했습니다. 장애 상태: {status_out}"
+                        end_span(exec_span, outputs={"finalStatus": status_out, "executionStatus": exec_res.get("executionStatus")})
+                        return ("DONE", status_out, text_out)
+                    except BackendApiError as exc:
+                        end_span(exec_span, outputs={"finalStatus": "EXECUTION_FAILED"}, error=exc.message)
+                        return ("DONE", "EXECUTION_FAILED", f"실행 결과 반영 중 백엔드 오류가 발생했습니다: {exc.message}")
+
+        outcome, maybe_status, reply_text = await _execute_and_complete()
+        if outcome == "INTERRUPTED":
             yield encoder.encode(StepFinishedEvent(step_name="execute_approved"))
             await publish_safe(self._bus, tid, "execution_interrupted", {"incidentCode": props.incidentCode, "approvalId": approval_id})
             msg_id = f"msg-a-{uuid.uuid4().hex[:6]}"
@@ -331,24 +405,7 @@ class SupervisorService:
             yield encoder.encode(RunFinishedEvent(thread_id=tid, run_id=rid))
             return
 
-        try:
-            await self._backend.complete_incident_with_postmortem(
-                approval_id=approval_id,
-                incident_code=props.incidentCode,
-                action_command=action_cmd,
-                executed_by="remediation-agent",
-                execution_status=exec_res.get("executionStatus", "SUCCESS"),
-                execution_output=exec_res.get("executionOutput"),
-                verification_summary=exec_res.get("verificationSummary"),
-                root_cause=exec_res.get("rootCause"),
-                timeline_markdown=exec_res.get("timelineMarkdown"),
-                prevention_items=exec_res.get("preventionItems"),
-            )
-            final_status = "RESOLVED" if exec_res.get("executionStatus") == "SUCCESS" else "EXECUTION_FAILED"
-            reply_text = f"승인({approval_id})된 조치(`{action_cmd}`)를 실행하고 포스트모템을 반영했습니다. 장애 상태: {final_status}"
-        except BackendApiError as exc:
-            final_status = "EXECUTION_FAILED"
-            reply_text = f"실행 결과 반영 중 백엔드 오류가 발생했습니다: {exc.message}"
+        final_status = maybe_status or "EXECUTION_FAILED"
 
         yield encoder.encode(StepFinishedEvent(step_name="execute_approved"))
         await publish_safe(self._bus, tid, "execution_completed", {"incidentCode": props.incidentCode, "approvalId": approval_id, "finalStatus": final_status})
