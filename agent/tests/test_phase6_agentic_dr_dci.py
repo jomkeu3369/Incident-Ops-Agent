@@ -133,11 +133,12 @@ async def test_agentic_dr_dci_server_guards_reject_hallucinated_or_duplicate_chu
 
     res_rb_cap = await run_agentic_dr_dci_investigation(
         InMemoryCorpusBackend(long_rb_chunks),
-        Settings(_env_file=None, dr_dci_max_pull_steps=1, dr_dci_max_context_chars=400),
+        Settings(_env_file=None, dr_dci_max_pull_steps=1, dr_dci_max_context_chars=600),
         LogInvestigationRequest(incidentCode="INC-G", keywords=["rollback"], maxPulls=1),
         selector=_PickRunbookSelector(),
     )
-    assert len(res_rb_cap.runbookSummary) == 400
+    assert len(res_rb_cap.runbookSummary) == 600
+    assert res_rb_cap.evidence[0].summary == res_rb_cap.runbookSummary
     assert res_rb_cap.stopReason == "CONTEXT_CHAR_BUDGET_REACHED"
 
 

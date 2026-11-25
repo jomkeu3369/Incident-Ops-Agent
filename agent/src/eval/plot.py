@@ -572,12 +572,19 @@ def plot_four_way_latency_and_steps(payload: dict[str, Any], output_path: Path) 
         legend=False,
         ax=ax1,
     )
-    ax1.set_title("Offline In-Memory CPU Latency — p50/p95/p99 (Pre-Indexed RAG; excl. LLM/MCP RTT)", fontsize=10, fontweight="bold")
-    ax1.set_xlabel("Offline CPU Wall-Clock Latency (ms, no network/LLM RTT)")
+    is_live = payload.get("latency_scope") == "live_llm_api_inclusive"
+    ax1.set_title(
+        "Live LLM API End-to-End Latency — p50/p95/p99 (incl. OpenAI RTT)"
+        if is_live
+        else "Offline In-Memory CPU Latency — p50/p95/p99 (Pre-Indexed RAG; excl. LLM/MCP RTT)",
+        fontsize=10,
+        fontweight="bold",
+    )
+    ax1.set_xlabel("Live API Wall-Clock Latency (ms)" if is_live else "Offline CPU Wall-Clock Latency (ms, no network/LLM RTT)")
     ax1.set_ylabel("")
     note = "\n".join(f"{r['strategy']}: p50={r['p50']:.2f} | p95={r['p95']:.2f} | p99={r['p99']:.2f} ms" for _, r in s_df.iterrows())
     build_ms = payload.get("vector_index_build_ms_total")
-    if build_ms is not None:
+    if build_ms is not None and not is_live:
         note += f"\n(Vector RAG pre-index build total: {float(build_ms):.1f} ms excl.)"
     ax1.text(0.98, 0.05, note, transform=ax1.transAxes, ha="right", va="bottom", fontsize=7.6,
              bbox={"boxstyle": "round,pad=0.35", "facecolor": "white", "edgecolor": "#CBD5E1", "alpha": 0.92})
@@ -600,7 +607,7 @@ def plot_four_way_latency_and_steps(payload: dict[str, Any], output_path: Path) 
         )
 
     fig.suptitle(
-        f"4-Way Offline Benchmark Latency & Token Budget Profile ({payload['dataset_version']})",
+        f"4-Way {'Live LLM' if is_live else 'Offline Benchmark'} Latency & Token Budget Profile ({payload['dataset_version']})",
         fontsize=13,
         fontweight="bold",
         y=1.02,

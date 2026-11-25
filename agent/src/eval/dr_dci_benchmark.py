@@ -602,6 +602,9 @@ async def run_four_way_benchmark(
 
     adoption_gate = evaluate_adoption_gate(summaries["agentic_dr_dci"], summaries["full_context"])
 
+    is_live_llm = (not isinstance(active_judge, RuleBasedJudge)) or (active_selector.name != "adaptive_agentic")
+    latency_scope = "live_llm_api_inclusive" if is_live_llm else "offline_in_memory_preindexed_no_llm_mcp_rtt"
+
     return {
         "schema_version": "dr-dci-4way-benchmark-v1",
         "dataset_version": dataset_version,
@@ -611,7 +614,7 @@ async def run_four_way_benchmark(
         "judge": type(active_judge).__name__,
         "selector": active_selector.name,
         "vector_index_build_ms_total": vector_index_build_ms_total,
-        "latency_scope": "offline_in_memory_preindexed_no_llm_mcp_rtt",
+        "latency_scope": latency_scope,
         "adoption_gate": adoption_gate,
         "summaries": [asdict(summaries[s]) for s in ALL_STRATEGIES],
         "split_summaries": split_summaries,

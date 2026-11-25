@@ -606,22 +606,23 @@ async def run_agentic_dr_dci_investigation(
                 stop_reason = "CONTEXT_CHAR_BUDGET_REACHED"
                 break
 
-            summary_cap = min(max_chunk_chars, 400, remaining_chars)
-            summary = _summarize_chunk(raw_content, summary_cap, preserve_newlines=(corpus_type == "RUNBOOK"))
-            tool_trace.append({"tool": "pullCorpusChunk", "args": {"incidentCode": req.incidentCode, "chunkId": target_id}, "ok": True, "chars": len(raw_content)})
-
-            evidence.append(EvidenceItem(chunkId=target_id, corpusType=corpus_type, title=str(chunk.get("title") or meta.get("title") or target_id), summary=summary))
-            pulled_ids.add(target_id)
-
             if corpus_type == "RUNBOOK":
                 rb_cap = min(max_chunk_chars, remaining_chars)
                 rb_summary = _summarize_chunk(raw_content, rb_cap, preserve_newlines=True)
+                # EvidenceItem.summary와 runbookSummary를 동일 문자열로 유지해 remediation_agent 중복 합산 및 예산 초과를 원천 차단한다
+                summary = rb_summary
                 runbook_summaries.append(rb_summary)
                 accumulated_context_chars += len(rb_summary)
                 if recommended_command is None:
                     recommended_command = _extract_command(raw_content)
             else:
+                summary_cap = min(max_chunk_chars, 400, remaining_chars)
+                summary = _summarize_chunk(raw_content, summary_cap, preserve_newlines=False)
                 accumulated_context_chars += len(summary)
+
+            tool_trace.append({"tool": "pullCorpusChunk", "args": {"incidentCode": req.incidentCode, "chunkId": target_id}, "ok": True, "chars": len(raw_content)})
+            evidence.append(EvidenceItem(chunkId=target_id, corpusType=corpus_type, title=str(chunk.get("title") or meta.get("title") or target_id), summary=summary))
+            pulled_ids.add(target_id)
 
             if accumulated_context_chars >= max_context_chars and len(pulled_ids) < len(all_meta):
                 stop_reason = "CONTEXT_CHAR_BUDGET_REACHED"
