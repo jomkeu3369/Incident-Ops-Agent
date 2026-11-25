@@ -735,9 +735,9 @@ def plot_scaling_dashboard(payload: dict[str, Any], output_path: Path) -> Path:
     ax_f1.set_ylim(0, 112)
     ax_f1.legend(loc="lower left", frameon=True, fontsize=8.5)
 
-    ax_lat.set_title("4. p95 Latency vs. Corpus Scale (↓ lower is faster)", fontsize=11, fontweight="bold")
+    ax_lat.set_title("4. Offline CPU p95 Query Latency (Pre-Indexed; excl. LLM/MCP RTT)", fontsize=10.2, fontweight="bold")
     ax_lat.set_xlabel("Chunks per Incident (N)")
-    ax_lat.set_ylabel("p95 Latency (ms)")
+    ax_lat.set_ylabel("Offline CPU p95 Latency (ms)")
     ax_lat.legend(loc="upper left", frameon=True, fontsize=8.5)
 
     scales = payload["scales"]
@@ -786,8 +786,8 @@ def plot_scaling_groundedness_and_latency(payload: dict[str, Any], output_path: 
 
     ax2.set_xticks(scales)
     ax2.set_xlabel("Chunks per Incident (N)")
-    ax2.set_ylabel("Latency (ms)")
-    ax2.set_title("Tail Latency Scaling: p50 (solid) vs. p99 (dashed)", fontsize=11, fontweight="bold")
+    ax2.set_ylabel("Offline CPU Latency (ms, no LLM/MCP RTT)")
+    ax2.set_title("Pre-Indexed Offline Query Latency: p50 (solid) vs. p99 (dashed)", fontsize=10.5, fontweight="bold")
     ax2.legend(loc="upper left", frameon=True, fontsize=7.8, ncol=2)
 
     fig.suptitle(

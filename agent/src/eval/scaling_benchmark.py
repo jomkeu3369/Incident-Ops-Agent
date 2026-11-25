@@ -121,53 +121,122 @@ def _chunks_to_response(case: DrDciBenchmarkCase, selected: Sequence[CorpusChunk
     )
 
 
-async def _run_native_rag(case: DrDciBenchmarkCase, top_k: int, max_chunk_chars: int) -> LogInvestigationResponse:
-    """Native RAG: 단일 쿼리 벡터 코사인 유사도 기반 정적 Top-K 검색."""
-    query_text = f"{case.service_name} {case.proposed_action} {' '.join(case.query_keywords)}"
-    doc_vecs = [_vectorize_text(f"{c.title} {c.keywords} {c.content}") for c in case.chunks]
-    query_vec = _vectorize_text(query_text)
+@dataclass(frozen=True)
+class _PrebuiltSearchIndex:
+    """쿼리 타이머 바깥에서 사전 구축한 Vector(TF-IDF/3-gram) + BM25(DF/TF/avg_dl) 통합 인덱스."""
 
+    doc_vecs: tuple[Counter[str], ...]
+    vec_idf: dict[str, float]
+    doc_tfs: tuple[Counter[str], ...]
+    doc_lens: tuple[int, ...]
+    bm25_df: dict[str, int]
+    avg_dl: float
+    vector_build_ms: float
+    hybrid_build_ms: float
+
+
+def _build_prebuilt_search_index(case: DrDciBenchmarkCase) -> _PrebuiltSearchIndex:
+    t0 = time.perf_counter()
+    doc_texts = [f"{c.title} {c.keywords} {c.content}" for c in case.chunks]
+    doc_vecs = tuple(_vectorize_text(t) for t in doc_texts)
     n_docs = len(doc_vecs)
-    df: Counter[str] = Counter()
+    v_df: Counter[str] = Counter()
     for vec in doc_vecs:
         for term in vec:
-            df[term] += 1
-    idf = {term: math.log((n_docs + 1.0) / (freq + 1.0)) + 1.0 for term, freq in df.items()}
+            v_df[term] += 1
+    vec_idf = {term: math.log((n_docs + 1.0) / (freq + 1.0)) + 1.0 for term, freq in v_df.items()}
+    vec_ms = round((time.perf_counter() - t0) * 1000.0, 3)
 
-    scored = [(_cosine_similarity(query_vec, vec, idf), -idx, idx) for idx, vec in enumerate(doc_vecs)]
+    t1 = time.perf_counter()
+    doc_toks = [_tokenize_bm25(t) for t in doc_texts]
+    doc_tfs = tuple(Counter(d) for d in doc_toks)
+    doc_lens = tuple(len(d) for d in doc_toks)
+    avg_dl = (sum(doc_lens) / n_docs) if n_docs else 1.0
+    bm_df: Counter[str] = Counter()
+    for tf in doc_tfs:
+        for term in tf:
+            bm_df[term] += 1
+    hyb_ms = round(vec_ms + (time.perf_counter() - t1) * 1000.0, 3)
+
+    return _PrebuiltSearchIndex(
+        doc_vecs=doc_vecs,
+        vec_idf=vec_idf,
+        doc_tfs=doc_tfs,
+        doc_lens=doc_lens,
+        bm25_df=dict(bm_df),
+        avg_dl=avg_dl,
+        vector_build_ms=vec_ms,
+        hybrid_build_ms=hyb_ms,
+    )
+
+
+def _bm25_scores_preindexed(
+    query_tokens: list[str],
+    index: _PrebuiltSearchIndex,
+    *,
+    k1: float = 1.5,
+    b: float = 0.75,
+) -> list[float]:
+    n_docs = len(index.doc_tfs)
+    if n_docs == 0:
+        return []
+    q_unique = list(dict.fromkeys(query_tokens))
+    scores: list[float] = []
+    for tf, dl in zip(index.doc_tfs, index.doc_lens):
+        score = 0.0
+        for term in q_unique:
+            freq = tf.get(term, 0)
+            if freq == 0:
+                continue
+            doc_freq = index.bm25_df.get(term, 0)
+            idf = math.log(1.0 + (n_docs - doc_freq + 0.5) / (doc_freq + 0.5))
+            denom = freq + k1 * (1.0 - b + b * (dl / index.avg_dl))
+            score += idf * ((freq * (k1 + 1.0)) / denom)
+        scores.append(score)
+    return scores
+
+
+async def _run_native_rag(
+    case: DrDciBenchmarkCase,
+    top_k: int,
+    max_chunk_chars: int,
+    *,
+    index: _PrebuiltSearchIndex | None = None,
+) -> LogInvestigationResponse:
+    """Native RAG: 사전 구축된 문서 벡터 인덱스에 대해 쿼리 1회만 벡터화해 Top-K를 검색한다."""
+    idx = index or _build_prebuilt_search_index(case)
+    query_text = f"{case.service_name} {case.proposed_action} {' '.join(case.query_keywords)}"
+    query_vec = _vectorize_text(query_text)
+
+    scored = [(_cosine_similarity(query_vec, vec, idx.vec_idf), -i, i) for i, vec in enumerate(idx.doc_vecs)]
     scored.sort(reverse=True)
-    selected = [case.chunks[idx] for _, _, idx in scored[:top_k]]
+    selected = [case.chunks[i] for _, _, i in scored[:top_k]]
     return _chunks_to_response(case, selected, max_chunk_chars, "NATIVE_RAG_TOP_K")
 
 
-async def _run_hybrid_rag_rrf(case: DrDciBenchmarkCase, top_k: int, max_chunk_chars: int) -> LogInvestigationResponse:
-    """Hybrid RAG (Vector + BM25 + RRF): 벡터 유사도와 Okapi BM25 순위를 RRF(k=60)로 융합해 Top-K 인출."""
+async def _run_hybrid_rag_rrf(
+    case: DrDciBenchmarkCase,
+    top_k: int,
+    max_chunk_chars: int,
+    *,
+    index: _PrebuiltSearchIndex | None = None,
+) -> LogInvestigationResponse:
+    """Hybrid RAG (Vector + BM25 + RRF): 사전 구축된 Vector·BM25 인덱스를 쿼리 시 RRF(k=60)로 융합해 Top-K 인출."""
+    idx = index or _build_prebuilt_search_index(case)
     query_text = f"{case.service_name} {case.proposed_action} {' '.join(case.query_keywords)}"
-    doc_texts = [f"{c.title} {c.keywords} {c.content}" for c in case.chunks]
 
-    # 1) Dense/Vector ranking
-    doc_vecs = [_vectorize_text(t) for t in doc_texts]
     query_vec = _vectorize_text(query_text)
-    n_docs = len(doc_vecs)
-    df: Counter[str] = Counter()
-    for vec in doc_vecs:
-        for term in vec:
-            df[term] += 1
-    idf = {term: math.log((n_docs + 1.0) / (freq + 1.0)) + 1.0 for term, freq in df.items()}
-    vec_ranked = [idx for _, _, idx in sorted(
-        ((_cosine_similarity(query_vec, vec, idf), -i, i) for i, vec in enumerate(doc_vecs)),
+    vec_ranked = [i for _, _, i in sorted(
+        ((_cosine_similarity(query_vec, vec, idx.vec_idf), -i, i) for i, vec in enumerate(idx.doc_vecs)),
         reverse=True,
     )]
 
-    # 2) BM25 lexical ranking
     q_toks = _tokenize_bm25(query_text)
-    doc_toks = [_tokenize_bm25(t) for t in doc_texts]
-    bm25 = _bm25_scores(q_toks, doc_toks)
-    bm25_ranked = [idx for _, _, idx in sorted(((s, -i, i) for i, s in enumerate(bm25)), reverse=True)]
+    bm25 = _bm25_scores_preindexed(q_toks, idx)
+    bm25_ranked = [i for _, _, i in sorted(((s, -i, i) for i, s in enumerate(bm25)), reverse=True)]
 
-    # 3) Reciprocal Rank Fusion
     fused_indices = _rrf_fuse([vec_ranked, bm25_ranked], k=60)
-    selected = [case.chunks[idx] for idx in fused_indices[:top_k]]
+    selected = [case.chunks[i] for i in fused_indices[:top_k]]
     return _chunks_to_response(case, selected, max_chunk_chars, "HYBRID_RRF_TOP_K")
 
 
@@ -373,6 +442,8 @@ async def run_linear_scaling_benchmark(
             _expand_case_to_scale(c, scale_n, seed=seed * 1000 + scale_n * 31 + idx)
             for idx, c in enumerate(base_cases)
         ]
+        # 실제 운영 Vector DB / BM25 엔진과 동일하게 문서 인덱스는 쿼리 타이머 바깥에서 사전 구축한다
+        prebuilt_indices = {c.case_id: _build_prebuilt_search_index(c) for c in scaled_cases}
 
         per_paradigm_rows: dict[ParadigmName, list[dict[str, Any]]] = {p: [] for p in ALL_PARADIGMS}
 
@@ -388,9 +459,9 @@ async def run_linear_scaling_benchmark(
                 t0 = time.perf_counter()
                 sel_tokens = 0
                 if paradigm == "native_rag":
-                    inv_res = await _run_native_rag(case, top_k, max_chunk_chars)
+                    inv_res = await _run_native_rag(case, top_k, max_chunk_chars, index=prebuilt_indices[case.case_id])
                 elif paradigm == "hybrid_rag_rrf":
-                    inv_res = await _run_hybrid_rag_rrf(case, top_k, max_chunk_chars)
+                    inv_res = await _run_hybrid_rag_rrf(case, top_k, max_chunk_chars, index=prebuilt_indices[case.case_id])
                 elif paradigm == "dci":
                     inv_res, _, _ = await _run_full_context(case, max_chunk_chars)
                 else:  # dr_dci
