@@ -65,6 +65,7 @@ class SupervisorState(TypedDict, total=False):
     runbook_summary: str
     recommended_command: str | None
     cached_tool_results: dict[str, Any]
+    cached_tool_results_timestamps: dict[str, float]
     remediation_result: dict[str, Any]
     replan_count: int
     should_replan: bool
@@ -350,7 +351,19 @@ def build_supervisor_graph(settings: Settings, http_client: httpx.AsyncClient, b
         a2a_task_ids = list(state.get("a2a_task_ids") or [])
 
         metrics_from, metrics_to, win_start, win_end = _resolve_time_bounds(state["constraints"])
-        cached_tools = dict(state.get("cached_tool_results") or {})
+        raw_cache = dict(state.get("cached_tool_results") or {})
+        raw_timestamps = dict(state.get("cached_tool_results_timestamps") or {})
+        now_ts = time.time()
+        ttl_s = settings.tool_cache_ttl_seconds
+        # 체크포인트 재개 시에도 TTL(tool_cache_ttl_seconds)이 지난 캐시 항목은 만료 처리해 최신 변경 금지 시간 등을 재조회한다
+        cached_tools: dict[str, Any] = {}
+        fresh_timestamps: dict[str, float] = {}
+        for k, v in raw_cache.items():
+            saved_at = raw_timestamps.get(k)
+            if saved_at is None or (now_ts - float(saved_at)) <= ttl_s:
+                cached_tools[k] = v
+                if saved_at is not None:
+                    fresh_timestamps[k] = float(saved_at)
         rem_task_key = f"a2a-rem-{state['run_id']}-r{int(state.get('replan_count', 0))}"
         a2a_task_ids.append(rem_task_key)
         rem_req = {
@@ -404,8 +417,15 @@ def build_supervisor_graph(settings: Settings, http_client: httpx.AsyncClient, b
 
         await publish_safe(event_bus, sid, "step_finished", {"step": "execute"})
         await _emit(ui, {"kind": "step_finish", "step": "execute"})
+        updated_cache = rem_res.get("cachedToolResults") or cached_tools
+        end_ts = time.time()
+        updated_timestamps = {
+            k: (fresh_timestamps[k] if k in cached_tools and cached_tools[k] == v and k in fresh_timestamps else end_ts)
+            for k, v in updated_cache.items()
+        }
         return {
-            "cached_tool_results": rem_res.get("cachedToolResults") or cached_tools,
+            "cached_tool_results": updated_cache,
+            "cached_tool_results_timestamps": updated_timestamps,
             "remediation_result": rem_res,
             "a2a_task_ids": a2a_task_ids,
             "last_completed_step": "execute_remediation",

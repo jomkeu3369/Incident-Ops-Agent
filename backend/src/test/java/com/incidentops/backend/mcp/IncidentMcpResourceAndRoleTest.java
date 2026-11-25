@@ -120,5 +120,31 @@ class IncidentMcpResourceAndRoleTest {
 
         assertThat(readChain.getRequest()).isSameAs(readReq);
         assertThat(InternalRoleContext.getRole()).isNull();
+
+        // MCP POST /mcp/message 서블릿 경계에서 investigator의 쓰기 도구 호출을 Reactor 스레드 전환 전에 403 차단
+        MockHttpServletRequest mcpWriteReq = new MockHttpServletRequest("POST", "/mcp/message");
+        mcpWriteReq.setServletPath("/mcp/message");
+        mcpWriteReq.addHeader("X-Internal-Token", "secret-tok");
+        mcpWriteReq.addHeader(InternalRoleContext.ROLE_HEADER, InternalRoleContext.ROLE_INVESTIGATOR);
+        mcpWriteReq.setContent("{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"tools/call\",\"params\":{\"name\":\"completeIncidentWithPostMortem\",\"arguments\":{}}}".getBytes(java.nio.charset.StandardCharsets.UTF_8));
+        MockHttpServletResponse mcpWriteResp = new MockHttpServletResponse();
+        MockFilterChain mcpWriteChain = new MockFilterChain();
+        filter.doFilter(mcpWriteReq, mcpWriteResp, mcpWriteChain);
+        assertThat(mcpWriteResp.getStatus()).isEqualTo(HttpServletResponse.SC_FORBIDDEN);
+        assertThat(mcpWriteChain.getRequest()).isNull();
+
+        // 읽기 전용 MCP 도구(searchCorpusIndex)는 통과하며 캐시된 본문이 다운스트림에 그대로 전달되어야 함
+        MockHttpServletRequest mcpReadReq = new MockHttpServletRequest("POST", "/mcp/message");
+        mcpReadReq.setServletPath("/mcp/message");
+        mcpReadReq.addHeader("X-Internal-Token", "secret-tok");
+        mcpReadReq.addHeader(InternalRoleContext.ROLE_HEADER, InternalRoleContext.ROLE_INVESTIGATOR);
+        String readJson = "{\"jsonrpc\":\"2.0\",\"id\":2,\"method\":\"tools/call\",\"params\":{\"name\":\"searchCorpusIndex\",\"arguments\":{}}}";
+        mcpReadReq.setContent(readJson.getBytes(java.nio.charset.StandardCharsets.UTF_8));
+        MockHttpServletResponse mcpReadResp = new MockHttpServletResponse();
+        MockFilterChain mcpReadChain = new MockFilterChain();
+        filter.doFilter(mcpReadReq, mcpReadResp, mcpReadChain);
+        assertThat(mcpReadChain.getRequest()).isNotNull();
+        assertThat(new String(mcpReadChain.getRequest().getInputStream().readAllBytes(), java.nio.charset.StandardCharsets.UTF_8))
+                .isEqualTo(readJson);
     }
 }

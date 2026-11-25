@@ -236,6 +236,7 @@ class SupervisorService:
                     "runbook_summary": str(memory.get("runbookSummary") or ""),
                     "recommended_command": memory.get("recommendedCommand"),
                     "cached_tool_results": loaded_cache,
+                    "cached_tool_results_timestamps": loaded_timestamps,
                     "replan_count": 0,
                     "should_replan": False,
                     "replan_history": list(memory.get("replanHistory") or []),
@@ -275,12 +276,18 @@ class SupervisorService:
                                 inputs={"incidentCode": props.incidentCode, "userMessage": user_text, "resume": props.resume},
                                 tags=["ag-ui", "supervisor"],
                             ) as span:
-                                # resume=True이고 영속 체크포인트에 미완료 다음 노드가 있으면 완료 노드를 스킵하고 중단 지점부터 재개한다
+                                # resume=True이고 영속 체크포인트가 동일 장애(incident_code)의 미완료 다음 노드를 가진 경우에만 재개한다
                                 graph_input: dict[str, Any] | None = init_state
                                 if props.resume and graph_config is not None:
                                     saved_state = await live_graph.aget_state(graph_config)
                                     if saved_state is not None and getattr(saved_state, "next", None):
-                                        graph_input = None
+                                        saved_vals = getattr(saved_state, "values", None) or {}
+                                        saved_inc = saved_vals.get("incident_code")
+                                        if saved_inc == props.incidentCode:
+                                            graph_input = None
+                                        elif self._checkpointer is not None and hasattr(self._checkpointer, "adelete_thread"):
+                                            # 다른 장애의 체크포인트가 섞이지 않도록 격리 삭제하고 새 장애 입력으로 시작한다
+                                            await self._checkpointer.adelete_thread(tid)
                                 if graph_config is not None:
                                     result = await live_graph.ainvoke(graph_input, config=graph_config)
                                 else:
@@ -323,12 +330,17 @@ class SupervisorService:
 
                 history_msgs.append({"id": msg_id, "role": "assistant", "content": reply_text})
                 new_cache = final_state.get("cached_tool_results") or {}
+                state_timestamps = final_state.get("cached_tool_results_timestamps") or {}
                 now_ts = time.time()
                 next_timestamps = {
                     key: (
-                        loaded_timestamps[key]
-                        if key in loaded_cache and loaded_cache[key] == val and key in loaded_timestamps
-                        else now_ts
+                        float(state_timestamps[key])
+                        if key in state_timestamps
+                        else (
+                            loaded_timestamps[key]
+                            if key in loaded_cache and loaded_cache[key] == val and key in loaded_timestamps
+                            else now_ts
+                        )
                     )
                     for key, val in new_cache.items()
                 }

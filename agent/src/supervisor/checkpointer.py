@@ -31,9 +31,38 @@ class RedisCheckpointSaver(BaseCheckpointSaver[str]):
         super().__init__()
         self._redis = redis_client
         self._ttl = ttl_seconds
-        # Redis 미연결·오프라인 테스트 시에도 프로세스 내 재개를 지원하는 폴백 저장소
+        # Redis 미연결·오프라인 테스트 시에도 프로세스 내 재개를 지원하는 폴백 저장소 및 리컨사일 추적
         self._mem_checkpoints: dict[tuple[str, str], list[tuple[str, str]]] = {}
         self._mem_writes: dict[tuple[str, str, str], dict[tuple[str, int], tuple[str, str, list[str]]]] = {}
+        self._dirty_mem_keys: set[tuple[str, str]] = set()
+
+    async def _reconcile_mem_to_redis(self, thread_id: str, checkpoint_ns: str) -> None:
+        """일시 Redis 단절 중 로컬 폴백에 쌓인 최신 체크포인트·쓰기를 Redis 복구 직후 순서대로 반영한다."""
+        key = (thread_id, checkpoint_ns)
+        if self._redis is None or key not in self._dirty_mem_keys:
+            return
+        bucket = self._mem_checkpoints.get(key) or []
+        idx_key = self._index_key(thread_id, checkpoint_ns)
+        existing_ids = set(str(x) for x in (await self._redis.lrange(idx_key, 0, -1)))
+        for cid, serialized in bucket:
+            cp_key = self._cp_key(thread_id, checkpoint_ns, cid)
+            await self._redis.set(cp_key, serialized, ex=self._ttl)
+            if cid not in existing_ids:
+                await self._redis.rpush(idx_key, cid)
+                existing_ids.add(cid)
+            mem_w = self._mem_writes.get((thread_id, checkpoint_ns, cid)) or {}
+            if mem_w:
+                w_key = self._writes_key(thread_id, checkpoint_ns, cid)
+                for (tid_w, write_idx), (_, channel, val_enc) in mem_w.items():
+                    field = f"{tid_w}:{write_idx}"
+                    raw_val = json.dumps({"task_id": tid_w, "channel": channel, "value": val_enc}, ensure_ascii=False)
+                    if write_idx >= 0:
+                        await self._redis.hsetnx(w_key, field, raw_val)
+                    else:
+                        await self._redis.hset(w_key, field, raw_val)
+                await self._redis.expire(w_key, self._ttl)
+        await self._redis.expire(idx_key, self._ttl)
+        self._dirty_mem_keys.discard(key)
 
     @staticmethod
     def _index_key(thread_id: str, checkpoint_ns: str) -> str:
@@ -126,6 +155,7 @@ class RedisCheckpointSaver(BaseCheckpointSaver[str]):
         stored_in_redis = False
         if self._redis is not None:
             try:
+                await self._reconcile_mem_to_redis(thread_id, checkpoint_ns)
                 cp_key = self._cp_key(thread_id, checkpoint_ns, checkpoint_id)
                 idx_key = self._index_key(thread_id, checkpoint_ns)
                 await self._redis.set(cp_key, serialized, ex=self._ttl)
@@ -138,6 +168,7 @@ class RedisCheckpointSaver(BaseCheckpointSaver[str]):
         if not stored_in_redis:
             bucket = self._mem_checkpoints.setdefault((thread_id, checkpoint_ns), [])
             bucket.append((checkpoint_id, serialized))
+            self._dirty_mem_keys.add((thread_id, checkpoint_ns))
 
         return {
             "configurable": {
@@ -187,6 +218,7 @@ class RedisCheckpointSaver(BaseCheckpointSaver[str]):
                 if write_idx >= 0 and key in mem_w:
                     continue
                 mem_w[key] = (task_id, channel, val_enc)
+            self._dirty_mem_keys.add((thread_id, checkpoint_ns))
 
     async def aget_tuple(self, config: RunnableConfig) -> CheckpointTuple | None:
         configurable = config.get("configurable") or {}
@@ -196,15 +228,17 @@ class RedisCheckpointSaver(BaseCheckpointSaver[str]):
 
         if self._redis is not None:
             try:
-                if not target_id:
+                await self._reconcile_mem_to_redis(thread_id, checkpoint_ns)
+                redis_target = target_id
+                if not redis_target:
                     ids = await self._redis.lrange(self._index_key(thread_id, checkpoint_ns), -1, -1)
                     if ids:
-                        target_id = str(ids[-1])
-                if target_id:
-                    raw = await self._redis.get(self._cp_key(thread_id, checkpoint_ns, target_id))
+                        redis_target = str(ids[-1])
+                if redis_target:
+                    raw = await self._redis.get(self._cp_key(thread_id, checkpoint_ns, redis_target))
                     if raw:
-                        raw_writes = await self._redis.hgetall(self._writes_key(thread_id, checkpoint_ns, target_id))
-                        return self._deserialize_tuple(thread_id, checkpoint_ns, target_id, raw, raw_writes)
+                        raw_writes = await self._redis.hgetall(self._writes_key(thread_id, checkpoint_ns, redis_target))
+                        return self._deserialize_tuple(thread_id, checkpoint_ns, redis_target, raw, raw_writes)
             except Exception:
                 pass
 

@@ -12,6 +12,7 @@ from common.observability import end_span, traced_span
 McpCaller = Callable[[str, dict[str, Any]], Awaitable[Any]]
 McpResourceReader = Callable[[str | None], Awaitable[Any]]
 READ_ONLY_AGENT_ROLES = frozenset({"investigator"})
+READ_ONLY_MCP_TOOLS = frozenset({"searchCorpusIndex", "pullCorpusChunk", "getIncidentDetail"})
 EVIDENCE_SUMMARY_RESOURCE_URI = "incident://evidence-summary/v1"
 
 
@@ -56,6 +57,8 @@ class BackendClient:
 
     async def call_mcp_tool(self, tool_name: str, arguments: dict[str, Any]) -> Any:
         """Spring AI MCP 서버의 도구를 SSE 세션으로 호출하고 JSON 텍스트를 파싱한다."""
+        if tool_name not in READ_ONLY_MCP_TOOLS:
+            self._require_write_permission(tool_name)
         clean_args = {k: v for k, v in arguments.items() if v is not None}
         async with traced_span(
             f"mcp.{tool_name}",

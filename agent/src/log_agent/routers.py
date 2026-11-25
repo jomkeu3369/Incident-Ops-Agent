@@ -66,6 +66,7 @@ class LogAgentExecutor(AgentExecutor):
     def __init__(self, app: FastAPI) -> None:
         self._app = app
         self._idempotency_cache: dict[str, dict] = {}
+        self._inflight_by_key: dict[str, asyncio.Task[LogInvestigationResponse]] = {}
         self._active_tasks: dict[str, asyncio.Task] = {}
         self._canceled_task_ids: set[str] = set()
 
@@ -168,10 +169,17 @@ class LogAgentExecutor(AgentExecutor):
 
         container = self._app.state.container
         backend = _investigator_backend(self._app)
-        work_task = asyncio.create_task(run_dr_dci_investigation(backend, container.settings, req))
+        # 동일 idempotencyKey의 동시 진행 중(in-flight) 요청이 있으면 중복 DR-DCI 실행을 막고 같은 작업을 공유 대기한다
+        shared_inflight = bool(idem_key and idem_key in self._inflight_by_key)
+        if shared_inflight:
+            work_task = self._inflight_by_key[idem_key]
+        else:
+            work_task = asyncio.create_task(run_dr_dci_investigation(backend, container.settings, req))
+            if idem_key:
+                self._inflight_by_key[idem_key] = work_task
         self._active_tasks[task_id] = work_task
         try:
-            result = await work_task
+            result = await asyncio.shield(work_task) if shared_inflight else await work_task
         except asyncio.CancelledError:
             self._canceled_task_ids.add(task_id)
             await event_queue.enqueue_event(
@@ -187,6 +195,8 @@ class LogAgentExecutor(AgentExecutor):
             return
         finally:
             self._active_tasks.pop(task_id, None)
+            if not shared_inflight and idem_key and self._inflight_by_key.get(idem_key) is work_task:
+                self._inflight_by_key.pop(idem_key, None)
 
         if task_id in self._canceled_task_ids:
             await event_queue.enqueue_event(

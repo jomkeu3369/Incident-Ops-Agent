@@ -645,3 +645,141 @@ async def test_mcp_resource_discovery_and_four_negative_security_contracts():
                 execution_status="SUCCESS",
             )
         assert e_unapproved.value.status_code == 409
+
+        # call_mcp_tool 직접 호출 경로에서도 investigator 쓰기 도구가 403 차단되어야 함
+        with pytest.raises(BackendApiError) as e_direct:
+            await investigator_client.call_mcp_tool("completeIncidentWithPostMortem", {"approvalId": "APR-1"})
+        assert e_direct.value.status_code == 403
+
+
+async def test_codex_regressions_incident_isolation_redis_reconcile_inflight_dedup_and_cache_ttl():
+    """Codex 1차 리뷰 4건(타 장애 재개 격리, Redis 복구 리컨사일, in-flight 중복 차단, 체크포인트 캐시 TTL 만료)을 회귀 검증한다."""
+    import time
+
+    cfg = _settings(tool_cache_ttl_seconds=60.0)
+
+    # 1) Redis 복구 시 폴백에 쌓인 최신 체크포인트가 이전 Redis 체크포인트보다 우선 리컨사일되어야 함
+    class _ToggleRedis(_SharedInMemoryRedis):
+        def __init__(self) -> None:
+            super().__init__()
+            self.down = False
+
+        async def set(self, key: str, value: str, ex: int | None = None, nx: bool = False) -> bool:
+            if self.down:
+                raise ConnectionError("redis down")
+            return await super().set(key, value, ex=ex, nx=nx)
+
+        async def get(self, key: str) -> str | None:
+            if self.down:
+                raise ConnectionError("redis down")
+            return await super().get(key)
+
+        async def lrange(self, key: str, start: int, end: int) -> list[str]:
+            if self.down:
+                raise ConnectionError("redis down")
+            return await super().lrange(key, start, end)
+
+    toggle_redis = _ToggleRedis()
+    cp = RedisCheckpointSaver(toggle_redis)
+    cfg_t = {"configurable": {"thread_id": "t-rec", "checkpoint_ns": ""}}
+    await cp.aput(cfg_t, {"id": "cp-old", "v": 1, "ts": "2026-11-25T00:00:00Z", "channel_values": {"step": "plan"}, "channel_versions": {}, "versions_seen": {}}, {}, {})
+    toggle_redis.down = True
+    await cp.aput(cfg_t, {"id": "cp-new", "v": 1, "ts": "2026-11-25T00:01:00Z", "channel_values": {"step": "execute_log"}, "channel_versions": {}, "versions_seen": {}}, {}, {})
+    toggle_redis.down = False
+    recovered = await cp.aget_tuple({"configurable": {"thread_id": "t-rec"}})
+    assert recovered is not None
+    assert recovered.checkpoint["id"] == "cp-new"
+
+    # 2) 동일 idempotencyKey의 동시 진행 중(in-flight) 2개 요청은 실제 MCP 검색을 1회만 실행해야 함
+    mcp_calls = {"search": 0}
+
+    async def slow_mcp(tool_name: str, args: dict[str, Any]) -> Any:
+        await asyncio.sleep(0.12)
+        if tool_name == "searchCorpusIndex":
+            mcp_calls["search"] += 1
+            return [{"chunkId": "LOG-1", "corpusType": args["corpusType"], "title": "502", "keywords": "502", "sequenceOrder": 1}]
+        return {"chunkId": "LOG-1", "corpusType": "LOG", "title": "502", "content": "502 error"}
+
+    log_app = create_log_agent_app(cfg)
+    async with log_app.router.lifespan_context(log_app):
+        log_app.state.container.backend_client = BackendClient(cfg, log_app.state.container.http_client, mcp_caller=slow_mcp, agent_role="investigator")
+        async with httpx.AsyncClient(transport=httpx.ASGITransport(app=log_app), base_url="http://log-agent") as http:
+            r1, r2 = await asyncio.gather(
+                send_a2a_stream(http, base_url="http://log-agent", internal_token=cfg.internal_service_token.get_secret_value(), payload={"incidentCode": "INC-1", "keywords": ["502"]}, idempotency_key="inflight-same"),
+                send_a2a_stream(http, base_url="http://log-agent", internal_token=cfg.internal_service_token.get_secret_value(), payload={"incidentCode": "INC-1", "keywords": ["502"]}, idempotency_key="inflight-same"),
+            )
+            assert r1.payload["ok"] is True and r2.payload["ok"] is True
+            # 1회 실행당 LOG+RUNBOOK 2회 검색만 수행 (동시 2번째 요청이 중복 실행하지 않음)
+            assert mcp_calls["search"] == 2
+
+    # 3) 타 장애(INC-B)로 resume=True 요청 시 INC-A의 체크포인트를 재개하지 않아야 함 & 4) 만료된 캐시 항목은 재개 시 제거되어야 함
+    shared_redis = _SharedInMemoryRedis()
+    seen_incidents: list[str] = []
+    seen_cached_keys: list[list[str]] = []
+    entered = asyncio.Event()
+    fail_once = {"flag": True}
+
+    async def trace_a2a(url: str, payload: dict[str, Any], ctx_id: str) -> dict[str, Any]:
+        if url == cfg.log_agent_a2a_url:
+            seen_incidents.append(str(payload["incidentCode"]))
+            return {"ok": True, "incidentCode": payload["incidentCode"], "evidence": [{"chunkId": "LOG-1", "corpusType": "LOG", "title": "t", "summary": "502"}], "evidenceChunkIds": ["LOG-1"], "runbookSummary": "rb", "remainingChunkIds": [], "pulledCount": 1}
+        seen_cached_keys.append(sorted((payload.get("cachedToolResults") or {}).keys()))
+        if fail_once["flag"]:
+            fail_once["flag"] = False
+            entered.set()
+            await asyncio.sleep(5.0)
+        return {"ok": True, "status": "BLOCKED", "message": "done", "toolCalls": [], "cachedToolResults": {}}
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(lambda req: httpx.Response(200, json={"incident": {"incidentCode": req.url.path.rsplit("/", 1)[-1], "serviceName": "payment-service", "status": "OPEN"}, "plans": [], "approvals": [], "executions": []}))) as http_client:
+        backend = BackendClient(cfg, http_client)
+        cp_iso = RedisCheckpointSaver(shared_redis)
+        g = build_supervisor_graph(cfg, http_client, backend, a2a_caller=trace_a2a, checkpointer=cp_iso)
+        t = asyncio.create_task(
+            g.ainvoke(
+                {
+                    "session_id": "tid-iso",
+                    "run_id": "r-a",
+                    "trace_id": "tr-a",
+                    "incident_code": "INC-A",
+                    "service_name": "payment-service",
+                    "user_message": "14:28~14:50 5분 롤백",
+                    "incident_started_at": "2026-11-18T14:04:00+09:00",
+                    "constraints": {},
+                    "evidence": [],
+                    "pulled_chunk_ids": [],
+                    "remaining_chunk_ids": [],
+                    "runbook_summary": "",
+                    "cached_tool_results": {"stale_freeze": {"ok": True}},
+                    "cached_tool_results_timestamps": {"stale_freeze": time.time() - 600.0},
+                    "replan_count": 0,
+                    "should_replan": False,
+                    "replan_history": [],
+                    "ui_events": [],
+                },
+                config={"configurable": {"thread_id": "tid-iso"}},
+            )
+        )
+        await entered.wait()
+        t.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await t
+        # 1차 실행에서 만료된 stale_freeze 캐시는 remediation_agent에 전달되지 않았어야 함
+        assert seen_cached_keys[0] == []
+
+        # 이제 INC-B로 resume=True 요청 시 INC-A 체크포인트를 재개하지 않고 INC-B로 새로 실행해야 함
+        svc = SupervisorService(cfg, http_client, backend, SupervisorRedisStore(shared_redis), a2a_caller=trace_a2a, checkpointer=cp_iso)
+        run_b = RunAgentInput(
+            thread_id="tid-iso",
+            run_id="r-b",
+            state={},
+            messages=[UserMessage(id="u1", content="14:28~14:50 5분 롤백")],
+            tools=[],
+            context=[],
+            forwarded_props={"incidentCode": "INC-B", "incidentStartedAt": "2026-11-18T14:04:00+09:00", "resume": True},
+        )
+        props_b = svc.parse_forwarded_props(run_b)
+        chunks_b = [c async for c in svc.stream_ag_ui(run_b, props_b, "op", None, "text/event-stream")]
+        events_b = _parse_ag_ui_events(chunks_b)
+        snap_b = [e["snapshot"] for e in events_b if e["type"] == "STATE_SNAPSHOT"][-1]
+        assert snap_b["incidentCode"] == "INC-B"
+        assert "INC-B" in seen_incidents
