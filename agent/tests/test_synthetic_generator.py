@@ -4,6 +4,8 @@ import json
 from pathlib import Path
 import re
 
+from eval.plot import generate_scaling_charts
+from eval.scaling_benchmark import main as scaling_cli_main
 from eval.synthetic_generator import (
     generate_synthetic_incidents,
     main as synthetic_cli_main,
@@ -103,3 +105,35 @@ def test_synthetic_cli_runs_end_to_end_with_benchmark_summary(tmp_path: Path):
     assert summary["total_corpus_chunks"] > 250
     assert len(summary["summaries"]) == 4
     assert summary["adoption_gate"]["passed"] is True
+
+
+def test_linear_scaling_4paradigm_cli_and_charts(tmp_path: Path):
+    """선형 스케일링 벤치마크(Native RAG / RAG+BM25+RRF / DCI / DR-DCI) CLI와 2종 차트 생성을 검증한다."""
+    out_json = tmp_path / "scaling.json"
+    out_csv = tmp_path / "scaling.csv"
+    out_md = tmp_path / "scaling.md"
+
+    code = scaling_cli_main([
+        "--scales", "10,30",
+        "--incidents", "6",
+        "--seed", "42",
+        "--top-k", "3",
+        "--output-json", str(out_json),
+        "--output-csv", str(out_csv),
+        "--output-md", str(out_md),
+    ])
+    assert code == 0
+    assert out_csv.is_file()
+    assert out_md.is_file()
+
+    payload = json.loads(out_json.read_text(encoding="utf-8"))
+    assert len(payload["points"]) == 8  # 2 scales * 4 paradigms
+    p30 = {row["paradigm"]: row for row in payload["points"] if row["chunks_per_incident"] == 30}
+    assert p30["dr_dci"]["mean_input_tokens"] < p30["dci"]["mean_input_tokens"]
+    assert p30["dr_dci"]["mean_evidence_recall"] >= p30["native_rag"]["mean_evidence_recall"]
+
+    charts = generate_scaling_charts(out_json, tmp_path / "charts", prefix="sc")
+    assert len(charts) == 2
+    for ch in charts:
+        assert ch.is_file()
+        assert ch.stat().st_size > 5_000
