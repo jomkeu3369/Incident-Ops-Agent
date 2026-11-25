@@ -377,15 +377,23 @@ class OpenAiDrDciSelector:
             parse_fn = getattr(completions, "parse", None)
             if parse_fn is None:
                 parse_fn = client.beta.chat.completions.parse
-            return parse_fn(
-                model=self._model,
-                messages=[
+            kwargs: dict[str, Any] = {
+                "model": self._model,
+                "messages": [
                     {"role": "system", "content": _AGENTIC_SELECTOR_SYSTEM_PROMPT},
                     {"role": "user", "content": user_payload},
                 ],
-                response_format=_StructuredSelectorSchema,
-                temperature=0.0,
-            )
+                "response_format": _StructuredSelectorSchema,
+            }
+            if not self._model.strip().lower().startswith(("gpt-6", "gpt-5", "o1", "o3", "o4")):
+                kwargs["temperature"] = 0.0
+            try:
+                return parse_fn(**kwargs)
+            except Exception as exc:
+                if "temperature" in kwargs and "temperature" in str(exc).lower():
+                    kwargs.pop("temperature", None)
+                    return parse_fn(**kwargs)
+                raise
 
         try:
             resp = await asyncio.to_thread(_invoke)

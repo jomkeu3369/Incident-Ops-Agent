@@ -14,6 +14,7 @@ from typing import Any, Literal, Sequence
 
 from common.config import Settings
 from common.decisions import DecisionsApiJudge, EvidenceJudge, RuleBasedJudge, StructuredOutputJudge, Verdict
+from common.observability import build_langsmith_client, flush_langsmith_client, langsmith_tracing_scope
 from eval.dr_dci_baseline import CorpusChunkFixture, InMemoryCorpusBackend, _measure_reasoning_context_chars
 from eval.dr_dci_corpus import DatasetSplit, DrDciBenchmarkCase, build_dr_dci_benchmark_dataset
 from eval.harness import ALL_VERDICTS, EXPECTED_LABELS, _percentile
@@ -440,12 +441,15 @@ async def run_four_way_benchmark(
     prebuilt_vector_indices = {c.case_id: _build_vector_index(c) for c in filtered}
     vector_index_build_ms_total = round(sum(idx.build_ms for idx in prebuilt_vector_indices.values()), 2)
 
+    is_live_llm = (not isinstance(active_judge, RuleBasedJudge)) or (active_selector.name != "adaptive_agentic")
+
     for strategy in ALL_STRATEGIES:
         settings = Settings(
             _env_file=None,
             dr_dci_mode="agentic" if strategy == "agentic_dr_dci" else "keyword",
             dr_dci_max_pull_steps=max_pull_steps,
             dr_dci_max_chunk_chars=max_chunk_chars,
+            dr_dci_timeout_seconds=45.0 if is_live_llm else 10.0,
         )
         for case in filtered:
             t0 = time.perf_counter()
@@ -723,12 +727,22 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser.add_argument("--max-pull-steps", type=int, default=3)
     parser.add_argument("--judge", choices=("rule_based", "structured_output", "decisions_api"), default="rule_based")
     parser.add_argument("--selector", choices=("adaptive", "openai"), default="adaptive")
+    parser.add_argument("--env-file", default=None, help="Optional .env file path to load Settings from")
+    parser.add_argument("--openai-model", default=None, help="Optional override for OPENAI_MODEL")
+    parser.add_argument("--decisions-model", default=None, help="Optional override for DECISIONS_MODEL")
     parser.add_argument("--output-json", required=True)
     parser.add_argument("--output-csv", default=None)
     parser.add_argument("--output-md", default=None)
     args = parser.parse_args(argv)
 
-    settings = Settings()
+    settings = Settings(_env_file=args.env_file) if args.env_file else Settings()
+    updates: dict[str, Any] = {}
+    if args.openai_model:
+        updates["openai_model"] = args.openai_model
+    if args.decisions_model:
+        updates["decisions_model"] = args.decisions_model
+    if updates:
+        settings = settings.model_copy(update=updates)
     judge: EvidenceJudge
     if args.judge == "rule_based":
         judge = RuleBasedJudge()
@@ -739,12 +753,22 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     selector: DrDciSelector = OpenAiDrDciSelector(settings) if args.selector == "openai" else AdaptiveEvidenceSelector()
 
-    payload = asyncio.run(run_four_way_benchmark(
-        split=args.split,
-        max_pull_steps=args.max_pull_steps,
-        judge=judge,
-        selector=selector,
-    ))
+    ls_client = build_langsmith_client(settings)
+    try:
+        with langsmith_tracing_scope(
+            settings,
+            client=ls_client,
+            tags=["eval", "dr-dci-4way", args.judge, args.selector],
+            metadata={"split": args.split, "max_pull_steps": args.max_pull_steps},
+        ):
+            payload = asyncio.run(run_four_way_benchmark(
+                split=args.split,
+                max_pull_steps=args.max_pull_steps,
+                judge=judge,
+                selector=selector,
+            ))
+    finally:
+        flush_langsmith_client(ls_client)
     md = format_four_way_markdown(payload)
     print(md)
 

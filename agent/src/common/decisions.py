@@ -443,12 +443,21 @@ class StructuredOutputJudge:
             parse_fn = getattr(beta_completions, "parse", None) if beta_completions is not None else None
         if parse_fn is None:
             raise AttributeError("OpenAI client does not expose chat.completions.parse")
-        return parse_fn(
-            model=model,
-            messages=messages,
-            response_format=_StructuredVerdictSchema,
-            temperature=0,
-        )
+        kwargs: dict[str, Any] = {
+            "model": model,
+            "messages": messages,
+            "response_format": _StructuredVerdictSchema,
+        }
+        lowered = model.strip().lower()
+        if not lowered.startswith(("gpt-6", "gpt-5", "o1", "o3", "o4")):
+            kwargs["temperature"] = 0
+        try:
+            return parse_fn(**kwargs)
+        except APIStatusError as exc:
+            if "temperature" in kwargs and "temperature" in str(exc).lower():
+                kwargs.pop("temperature", None)
+                return parse_fn(**kwargs)
+            raise
 
     def _call_sync(self, *, api_key: str, model: str, proposed_action: str, runbook: str, evidence: str) -> DecisionResult:
         """동기 Structured Outputs 호출을 안전하게 감싸 DecisionResult로 변환한다."""

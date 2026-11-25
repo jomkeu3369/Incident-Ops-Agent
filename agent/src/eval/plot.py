@@ -586,7 +586,7 @@ def plot_four_way_latency_and_steps(payload: dict[str, Any], output_path: Path) 
     build_ms = payload.get("vector_index_build_ms_total")
     if build_ms is not None and not is_live:
         note += f"\n(Vector RAG pre-index build total: {float(build_ms):.1f} ms excl.)"
-    ax1.text(0.98, 0.05, note, transform=ax1.transAxes, ha="right", va="bottom", fontsize=7.6,
+    ax1.text(0.98, 0.96, note, transform=ax1.transAxes, ha="right", va="top", fontsize=7.6,
              bbox={"boxstyle": "round,pad=0.35", "facecolor": "white", "edgecolor": "#CBD5E1", "alpha": 0.92})
 
     sns.barplot(data=s_df, x="strategy", y="mean_tokens", hue="strategy", palette=_STRATEGY_COLORS, legend=False, ax=ax2)
@@ -677,17 +677,181 @@ def generate_four_way_charts(
     ]
 
 
+_PARADIGM_LABELS = {
+    "native_rag": "Native RAG",
+    "hybrid_rag_rrf": "RAG + BM25 + RRF",
+    "dci": "DCI (Full Context)",
+    "dr_dci": "DR-DCI (Dynamic)",
+}
+_PARADIGM_COLORS = {
+    "Native RAG": "#F59E0B",
+    "RAG + BM25 + RRF": "#10B981",
+    "DCI (Full Context)": "#64748B",
+    "DR-DCI (Dynamic)": "#2563EB",
+}
+_PARADIGM_MARKERS = {
+    "Native RAG": "o",
+    "RAG + BM25 + RRF": "^",
+    "DCI (Full Context)": "s",
+    "DR-DCI (Dynamic)": "D",
+}
+
+
+def plot_scaling_dashboard(payload: dict[str, Any], output_path: Path) -> Path:
+    """선형 데이터 증가(N)에 따른 4대 패러다임 2x2 종합 성능 대시보드 차트를 생성한다."""
+    configure_plot_style()
+    df = pd.DataFrame(payload["points"])
+    df["label"] = df["paradigm"].map(_PARADIGM_LABELS)
+    df["recall_pct"] = df["mean_evidence_recall"] * 100.0
+    df["mh_recall_pct"] = df["multi_hop_evidence_recall"] * 100.0
+    df["f1_pct"] = df["macro_f1"] * 100.0
+    df["grounded_pct"] = df["groundedness_rate"] * 100.0
+
+    fig, axes = plt.subplots(2, 2, figsize=(14.0, 9.6))
+    ax_tok, ax_mh = axes[0]
+    ax_f1, ax_lat = axes[1]
+
+    order = ["Native RAG", "RAG + BM25 + RRF", "DCI (Full Context)", "DR-DCI (Dynamic)"]
+    for label in order:
+        sub = df[df["label"] == label].sort_values("chunks_per_incident")
+        kw = dict(
+            color=_PARADIGM_COLORS[label],
+            marker=_PARADIGM_MARKERS[label],
+            linewidth=2.3,
+            markersize=7.5,
+            label=label,
+        )
+        ax_tok.plot(sub["chunks_per_incident"], sub["mean_input_tokens"], **kw)
+        ax_mh.plot(sub["chunks_per_incident"], sub["mh_recall_pct"], **kw)
+        ax_f1.plot(sub["chunks_per_incident"], sub["f1_pct"], **kw)
+        ax_lat.plot(sub["chunks_per_incident"], sub["latency_p95_ms"], **kw)
+
+    limit_tok = int(payload.get("context_limit_tokens", 32000))
+    ax_tok.axhline(limit_tok, color="#DC2626", linestyle="--", linewidth=1.3, label=f"Context Limit ({limit_tok:,} tok)")
+    ax_tok.set_title("1. Mean Input Tokens vs. Corpus Scale (↓ lower is cheaper)", fontsize=11, fontweight="bold")
+    ax_tok.set_xlabel("Chunks per Incident (N)")
+    ax_tok.set_ylabel("Mean Input Tokens (incl. selector)")
+    ax_tok.legend(loc="upper left", frameon=True, fontsize=8.5)
+
+    ax_mh.set_title("2. Multi-Hop Evidence Recall vs. Corpus Scale (↑ higher is better)", fontsize=11, fontweight="bold")
+    ax_mh.set_xlabel("Chunks per Incident (N)")
+    ax_mh.set_ylabel("Multi-Hop Recall (%)")
+    ax_mh.set_ylim(0, 112)
+    ax_mh.legend(loc="lower left", frameon=True, fontsize=8.5)
+
+    ax_f1.set_title("3. End-to-End Macro-F1 vs. Corpus Scale (↑ higher is better)", fontsize=11, fontweight="bold")
+    ax_f1.set_xlabel("Chunks per Incident (N)")
+    ax_f1.set_ylabel("Macro-F1 (%)")
+    ax_f1.set_ylim(0, 112)
+    ax_f1.legend(loc="lower left", frameon=True, fontsize=8.5)
+
+    is_live = payload.get("latency_scope") == "live_llm_api_inclusive"
+    ax_lat.set_title(
+        "4. Live End-to-End p95 Latency (incl. OpenAI)"
+        if is_live
+        else "4. Offline CPU p95 Query Latency (Pre-Indexed; excl. LLM/MCP RTT)",
+        fontsize=10.2,
+        fontweight="bold",
+    )
+    ax_lat.set_xlabel("Chunks per Incident (N)")
+    ax_lat.set_ylabel("Live End-to-End p95 Latency (ms)" if is_live else "Offline CPU p95 Latency (ms)")
+    ax_lat.legend(loc="upper left", frameon=True, fontsize=8.5)
+
+    scales = payload["scales"]
+    for ax in (ax_tok, ax_mh, ax_f1, ax_lat):
+        ax.set_xticks(scales)
+
+    fig.suptitle(
+        f"Linear Corpus Scaling (N = {scales[0]} → {scales[-1]} chunks/incident, {payload['incidents_per_scale']} incidents/point)\n"
+        "Native RAG vs. RAG+BM25+RRF vs. DCI (Full) vs. DR-DCI (Dynamic)",
+        fontsize=13.5,
+        fontweight="bold",
+        y=1.01,
+    )
+    fig.tight_layout()
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    fig.savefig(output_path, dpi=300, bbox_inches="tight")
+    plt.close(fig)
+    return output_path
+
+
+def plot_scaling_groundedness_and_latency(payload: dict[str, Any], output_path: Path) -> Path:
+    """선형 데이터 증가에 따른 Groundedness(%) 및 p50/p99 tail latency 비교 차트를 생성한다."""
+    configure_plot_style()
+    df = pd.DataFrame(payload["points"])
+    df["label"] = df["paradigm"].map(_PARADIGM_LABELS)
+    df["grounded_pct"] = df["groundedness_rate"] * 100.0
+    df["recall_pct"] = df["mean_evidence_recall"] * 100.0
+
+    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(13.6, 5.0))
+    order = ["Native RAG", "RAG + BM25 + RRF", "DCI (Full Context)", "DR-DCI (Dynamic)"]
+    for label in order:
+        sub = df[df["label"] == label].sort_values("chunks_per_incident")
+        color = _PARADIGM_COLORS[label]
+        marker = _PARADIGM_MARKERS[label]
+        ax1.plot(sub["chunks_per_incident"], sub["grounded_pct"], color=color, marker=marker, linewidth=2.2, markersize=7, label=label)
+        ax2.plot(sub["chunks_per_incident"], sub["latency_p50_ms"], color=color, marker=marker, linewidth=2.1, markersize=6.5, linestyle="-", label=f"{label} p50")
+        ax2.plot(sub["chunks_per_incident"], sub["latency_p99_ms"], color=color, marker=marker, linewidth=1.6, markersize=5, linestyle="--", alpha=0.72, label=f"{label} p99")
+
+    scales = payload["scales"]
+    ax1.set_xticks(scales)
+    ax1.set_ylim(0, 112)
+    ax1.set_xlabel("Chunks per Incident (N)")
+    ax1.set_ylabel("Groundedness (%)")
+    ax1.set_title("Groundedness Stability Under Linear Scale Growth", fontsize=11, fontweight="bold")
+    ax1.legend(loc="lower left", frameon=True, fontsize=8.8)
+
+    ax2.set_xticks(scales)
+    ax2.set_xlabel("Chunks per Incident (N)")
+    is_live = payload.get("latency_scope") == "live_llm_api_inclusive"
+    ax2.set_ylabel("Live End-to-End Latency (ms)" if is_live else "Offline CPU Latency (ms, no LLM/MCP RTT)")
+    ax2.set_title(
+        ("Live End-to-End Latency" if is_live else "Pre-Indexed Offline Query Latency")
+        + ": p50 (solid) vs. p99 (dashed)",
+        fontsize=10.5,
+        fontweight="bold",
+    )
+    ax2.legend(loc="upper left", frameon=True, fontsize=7.8, ncol=2)
+
+    fig.suptitle(
+        f"Groundedness & Tail Latency Scaling (N = {scales[0]} → {scales[-1]} chunks/incident)",
+        fontsize=13,
+        fontweight="bold",
+        y=1.02,
+    )
+    fig.tight_layout()
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    fig.savefig(output_path, dpi=300, bbox_inches="tight")
+    plt.close(fig)
+    return output_path
+
+
+def generate_scaling_charts(
+    scaling_json_path: str | Path,
+    output_dir: str | Path,
+    *,
+    prefix: str = "scaling-4paradigm",
+) -> list[Path]:
+    payload = _load_json(scaling_json_path)
+    out = Path(output_dir)
+    return [
+        plot_scaling_dashboard(payload, out / f"{prefix}-dashboard.png"),
+        plot_scaling_groundedness_and_latency(payload, out / f"{prefix}-groundedness-and-latency.png"),
+    ]
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Generate matplotlib/seaborn benchmark charts from raw JSON reports.")
     parser.add_argument("--judge-json", default=None, help="Path to EvidenceJudge evaluation JSON report")
     parser.add_argument("--dr-dci-json", default=None, help="Path to DR-DCI baseline JSON report")
     parser.add_argument("--four-way-json", default=None, help="Path to Phase 6 4-way DR-DCI benchmark JSON report")
+    parser.add_argument("--scaling-json", default=None, help="Path to 4-paradigm linear scaling benchmark JSON report")
     parser.add_argument("--output-dir", required=True, help="Directory to save generated PNG charts")
     parser.add_argument("--prefix", default="phase5", help="Output filename prefix (default: phase5)")
     args = parser.parse_args(argv)
 
-    if not args.judge_json and not args.dr_dci_json and not args.four_way_json:
-        raise ValueError("Provide at least one of --judge-json, --dr-dci-json, or --four-way-json.")
+    if not args.judge_json and not args.dr_dci_json and not args.four_way_json and not args.scaling_json:
+        raise ValueError("Provide at least one of --judge-json, --dr-dci-json, --four-way-json, or --scaling-json.")
 
     generated: list[Path] = []
     out_dir = Path(args.output_dir)
@@ -698,6 +862,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         generated.append(plot_dr_dci_budget_curve(payload, out_dir / f"{args.prefix}-dr-dci-budget-curve.png"))
     if args.four_way_json:
         generated.extend(generate_four_way_charts(args.four_way_json, out_dir, prefix=args.prefix))
+    if args.scaling_json:
+        generated.extend(generate_scaling_charts(args.scaling_json, out_dir, prefix=args.prefix))
 
     for path in generated:
         print(f"Generated chart: {path}")
