@@ -443,8 +443,8 @@ def plot_four_way_pareto(payload: dict[str, Any], output_path: Path) -> Path:
         )
         label_offsets = {
             "Full Context": ((0, -28), "center"),
-            "Agentic DR-DCI": ((14, -24), "left"),
-            "Vector RAG": ((16, 8), "left"),
+            "Agentic DR-DCI": ((0, 14), "center"),
+            "Vector RAG": ((16, 4), "left"),
             "Keyword DR-DCI": ((16, -24), "left"),
         }
         for _, r in df.iterrows():
@@ -572,23 +572,26 @@ def plot_four_way_latency_and_steps(payload: dict[str, Any], output_path: Path) 
         legend=False,
         ax=ax1,
     )
-    ax1.set_title("End-to-End Latency Distribution — p50 / p95 / p99 (ms)", fontsize=11, fontweight="bold")
-    ax1.set_xlabel("Latency (ms)")
+    ax1.set_title("Offline In-Memory CPU Latency — p50/p95/p99 (Pre-Indexed RAG; excl. LLM/MCP RTT)", fontsize=10, fontweight="bold")
+    ax1.set_xlabel("Offline CPU Wall-Clock Latency (ms, no network/LLM RTT)")
     ax1.set_ylabel("")
     note = "\n".join(f"{r['strategy']}: p50={r['p50']:.2f} | p95={r['p95']:.2f} | p99={r['p99']:.2f} ms" for _, r in s_df.iterrows())
-    ax1.text(0.98, 0.05, note, transform=ax1.transAxes, ha="right", va="bottom", fontsize=8,
+    build_ms = payload.get("vector_index_build_ms_total")
+    if build_ms is not None:
+        note += f"\n(Vector RAG pre-index build total: {float(build_ms):.1f} ms excl.)"
+    ax1.text(0.98, 0.05, note, transform=ax1.transAxes, ha="right", va="bottom", fontsize=7.6,
              bbox={"boxstyle": "round,pad=0.35", "facecolor": "white", "edgecolor": "#CBD5E1", "alpha": 0.92})
 
     sns.barplot(data=s_df, x="strategy", y="mean_tokens", hue="strategy", palette=_STRATEGY_COLORS, legend=False, ax=ax2)
-    ax2.set_title("Mean Input Tokens & Average Pulls per Incident", fontsize=11, fontweight="bold")
+    ax2.set_title("Mean Estimated Input Tokens & Pulled Chunks per Incident", fontsize=10.5, fontweight="bold")
     ax2.set_xlabel("")
-    ax2.set_ylabel("Mean Input Tokens (incl. selector)")
+    ax2.set_ylabel("Mean Estimated Input Tokens (incl. selector)")
     ax2.set_ylim(0, float(s_df["mean_tokens"].max()) * 1.25)
     for idx, (_, row) in enumerate(s_df.iterrows()):
         ax2.text(
             idx,
             row["mean_tokens"] + float(s_df["mean_tokens"].max()) * 0.03,
-            f"{row['mean_tokens']:.0f} tok\n({row['mean_pulls']:.1f} pulls)",
+            f"{row['mean_tokens']:.0f} tok\n({row['mean_pulls']:.1f} chunks)",
             ha="center",
             va="bottom",
             fontsize=8.5,
@@ -597,7 +600,7 @@ def plot_four_way_latency_and_steps(payload: dict[str, Any], output_path: Path) 
         )
 
     fig.suptitle(
-        f"4-Way Retrieval Latency & Token Budget Profile ({payload['dataset_version']})",
+        f"4-Way Offline Benchmark Latency & Token Budget Profile ({payload['dataset_version']})",
         fontsize=13,
         fontweight="bold",
         y=1.02,

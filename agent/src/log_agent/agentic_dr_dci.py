@@ -31,10 +31,27 @@ _FOLLOWUP_CLUE_RULES: tuple[tuple[re.Pattern[str], tuple[str, ...]], ...] = (
     (re.compile(r"certificate\s*expired|tls|ssl|인증서\s*만료|ddos|rate\s*limit", re.I), ("tls", "cert", "certificate", "ddos", "waf", "runbook")),
 )
 
-# 본문 내부에 다른 청크 ID나 trace/deploy 참조가 직접 언급된 경우 추출 (예: see LOG-08, ref=RB-02, txId=TX9001, v3.4.2)
-_CHUNK_REF_RE = re.compile(r"\b([A-Z]{2,8}-(?:RB-)?\d{2,4})\b")
+# 본문 내부에 다른 청크 ID나 trace/deploy 참조가 직접 언급된 경우 추출 (예: LOG-08, L-0001-R2, RB-02)
+_CHUNK_REF_RE = re.compile(r"\b([A-Z]{1,8}-(?:[A-Z]{1,4}-)?\d{2,4}(?:-[A-Z0-9]{1,4})?)\b")
 _ENTITY_HINT_RE = re.compile(r"\b(?:txId|traceId|release|image|migration|job|worker|module|service)=([A-Za-z0-9._:/-]+)", re.I)
 _VERSION_HINT_RE = re.compile(r"\b(v\d+\.\d+(?:\.\d+)?)\b", re.I)
+
+_PRE_NEGATION_RE = re.compile(r"(?:no|not|without|never|neither|ruled\s+out|없음|아님|무관)\s*$", re.I)
+_POST_NEGATION_RE = re.compile(r"^\s*(?:없음|없다|없으며|없고|아님|아니며|배제|ruled\s+out|not\s+detected|not\s+found|cleared|resolved)", re.I)
+
+
+def _has_unnegated_signal(pattern: re.Pattern[str], text: str) -> bool:
+    """부정·배제 문맥('external PG outage ruled out', '외부 PG사 장애 없음' 등)이 아닌 긍정 매치만 인정한다."""
+    for match in pattern.finditer(text):
+        prefix = text[max(0, match.start() - 32) : match.start()]
+        suffix = text[match.end() : min(len(text), match.end() + 36)]
+        # 문장/줄 경계로 자른다
+        prefix_seg = re.split(r"[\n.;,]", prefix)[-1]
+        suffix_seg = re.split(r"[\n.;,]", suffix)[0]
+        if _PRE_NEGATION_RE.search(prefix_seg) or _POST_NEGATION_RE.search(suffix_seg):
+            continue
+        return True
+    return False
 
 # 본문에서 명백한 충돌/누락 또는 인젝션 시도를 식별하는 패턴
 _CONTRADICTION_SIGNAL_RE = re.compile(
@@ -163,10 +180,10 @@ def _has_sufficient_evidence(collected: Sequence[EvidenceItem], remaining_index:
     if not runbooks and has_runbook_available:
         return False, ""
 
-    has_symptom = bool(_SYMPTOM_SIGNAL_RE.search(log_text))
-    has_root_or_deploy = bool(_ROOT_OR_DEPLOY_SIGNAL_RE.search(log_text))
-    has_contradiction = bool(_CONTRADICTION_SIGNAL_RE.search(log_text))
-    has_missing = bool(_MISSING_TELEMETRY_SIGNAL_RE.search(log_text))
+    has_symptom = _has_unnegated_signal(_SYMPTOM_SIGNAL_RE, log_text)
+    has_root_or_deploy = _has_unnegated_signal(_ROOT_OR_DEPLOY_SIGNAL_RE, log_text)
+    has_contradiction = _has_unnegated_signal(_CONTRADICTION_SIGNAL_RE, log_text)
+    has_missing = _has_unnegated_signal(_MISSING_TELEMETRY_SIGNAL_RE, log_text)
 
     # 이미 인출한 본문에 아직 읽지 않은 청크 ID 직접 참조가 있으면 한 번 더 추적한다
     direct_refs, _ = _extract_dynamic_clues(collected)

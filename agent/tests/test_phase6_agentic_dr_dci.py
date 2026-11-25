@@ -233,7 +233,7 @@ async def test_openai_dr_dci_selector_tracks_tokens_and_fails_closed():
 
 
 def test_phase6_corpus_has_60_cases_6_categories_and_clean_dev_eval_split():
-    """60건 벤치마크 코퍼스가 6개 카테고리 × 10건, 고유 ID, dev/eval 원형 분리 조건을 만족한다."""
+    """60건 벤치마크 코퍼스가 6개 카테고리 × 10건, 고유 ID, dev/eval 생성 템플릿 완전 분리 조건을 만족한다."""
     version, cases = build_dr_dci_benchmark_dataset()
     assert version == "dr-dci-corpus-v1.0"
     assert len(cases) == 60
@@ -242,18 +242,54 @@ def test_phase6_corpus_has_60_cases_6_categories_and_clean_dev_eval_split():
     by_cat: dict[str, int] = {}
     dev_archetypes = set()
     eval_archetypes = set()
+    dev_templates = set()
+    eval_templates = set()
     for c in cases:
         by_cat[c.category] = by_cat.get(c.category, 0) + 1
         if c.split == "dev":
             dev_archetypes.add(c.archetype)
+            dev_templates.add(c.template_id)
         else:
             eval_archetypes.add(c.archetype)
+            eval_templates.add(c.template_id)
     assert len(by_cat) == 6
     assert all(cnt == 10 for cnt in by_cat.values())
     assert dev_archetypes.isdisjoint(eval_archetypes)
+    assert dev_templates.isdisjoint(eval_templates)
     assert sum(1 for c in cases if c.prompt_injection) >= 6
     assert sum(1 for c in cases if c.multi_hop) >= 12
     assert sum(1 for c in cases if c.agentic_disadvantage) >= 2
+
+
+async def test_adaptive_selector_ignores_negated_contradictions_and_adoption_gate_rejects_undecidable_judge():
+    """부정 충돌 문구('external PG outage ruled out')에 조기 종료하지 않고, 판정기 전면 UNDECIDABLE 시 채택 게이트가 HOLD를 반환한다."""
+    chunks = (
+        CorpusChunkFixture("LOG-01", "LOG", "INC-NEG", "svc", "502 오류 초기 확인", "502,error", "502 detected; external PG outage ruled out. See LOG-02.", 1),
+        CorpusChunkFixture("LOG-02", "LOG", "INC-NEG", "svc", "커넥션 누수 스택", "leak,HikariPool", "v42 배포 직후 ProxyLeakTask connection leak detected.", 2),
+        CorpusChunkFixture("RB-01", "RUNBOOK", None, "svc", "롤백 런북", "502,rollback,kubectl", "1. 배포 직후 누수 확인 시 롤백 실행\nkubectl rollout undo deployment/svc", 1),
+    )
+    res = await run_agentic_dr_dci_investigation(
+        InMemoryCorpusBackend(chunks),
+        Settings(_env_file=None, dr_dci_max_pull_steps=4),
+        LogInvestigationRequest(incidentCode="INC-NEG", keywords=["502"], maxPulls=4),
+        selector=AdaptiveEvidenceSelector(),
+    )
+    # 부정 충돌 문구만으로 LOG-02를 놓치고 조기 종료해서는 안 됨
+    assert "LOG-02" in res.evidenceChunkIds
+    assert "RB-01" in res.evidenceChunkIds
+
+    # 모든 케이스가 UNDECIDABLE인 판정기(예: API 키 누락 StructuredOutputJudge)로 벤치마크 실행 시 채택 게이트는 반드시 HOLD
+    from common.decisions import DecisionResult
+
+    class _AlwaysUndecidableJudge:
+        async def judge_plan_evidence(self, **kwargs: Any) -> DecisionResult:
+            return DecisionResult(verdict="UNDECIDABLE", confidence=None, probabilities={}, provider="test", model="none", reason="no key")
+
+    _, all_cases = build_dr_dci_benchmark_dataset()
+    payload = await run_four_way_benchmark(all_cases[:4], max_pull_steps=2, judge=_AlwaysUndecidableJudge())
+    assert payload["adoption_gate"]["passed"] is False
+    assert payload["adoption_gate"]["recommended_default"] == "keyword"
+    assert payload["adoption_gate"]["checks"]["judge_decided_rate_ge_80pct"]["passed"] is False
 
 
 def test_four_way_benchmark_and_phase6_charts_cli(tmp_path: Path):
