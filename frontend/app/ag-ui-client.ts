@@ -1,5 +1,5 @@
 import { HttpAgent, type AgentSubscriber, type Message } from "@ag-ui/client";
-import type { ChatMessageRecord, ForwardedProps, ReplanRecord } from "./ag-ui-contract";
+import { eventSequence, type A2aProgress, type ChatMessageRecord, type ForwardedProps, type ReplanRecord } from "./ag-ui-contract";
 import type { WorkspaceAction } from "./workspace-state";
 
 export type AgUiMode = "live" | "mock";
@@ -61,6 +61,21 @@ function mapSnapshotMessages(messages: Message[]): ChatMessageRecord[] {
       role: msg.role as "user" | "assistant",
       content: typeof msg.content === "string" ? msg.content : "",
     }));
+}
+
+function isA2aProgress(value: Record<string, unknown>): value is A2aProgress {
+  return (
+    value.version === 1 &&
+    typeof value.incidentCode === "string" &&
+    typeof value.runId === "string" &&
+    typeof value.worker === "string" &&
+    typeof value.taskId === "string" &&
+    typeof value.state === "string" &&
+    typeof value.stage === "string" &&
+    typeof value.elapsedMs === "number" &&
+    Number.isFinite(value.elapsedMs) &&
+    value.elapsedMs >= 0
+  );
 }
 
 export async function runAgUiRequest({
@@ -134,7 +149,7 @@ export async function runAgUiRequest({
       dispatch({
         type: "RUN_ERROR",
         message: event.message || "에이전트 실행 중 오류가 발생했습니다.",
-        needsResync: Boolean(forwardedProps.approvalDecision),
+        needsResync: forwardedProps.restore !== true,
       });
     },
     onStepStartedEvent({ event }) {
@@ -202,6 +217,22 @@ export async function runAgUiRequest({
       if (event.name === "replan" && isReplanRecord(event.value)) {
         dispatch({ type: "CUSTOM_REPLAN", value: event.value });
       }
+      if (!event.value || typeof event.value !== "object") return;
+      const value = event.value as Record<string, unknown>;
+      if (event.name === "checkpoint_sync") {
+        const lastEventSeq = eventSequence(value.lastEventSeq, value.snapshotSeq, value.eventSeq);
+        if (lastEventSeq === undefined) return;
+        dispatch({
+          type: "CHECKPOINT_SYNC",
+          value: {
+            incidentCode: typeof value.incidentCode === "string" ? value.incidentCode : forwardedProps.incidentCode,
+            lastEventSeq,
+            lastCompletedStep: typeof value.lastCompletedStep === "string" ? value.lastCompletedStep : null,
+          },
+        });
+      } else if (event.name === "a2a_progress" && isA2aProgress(value)) {
+        dispatch({ type: "A2A_PROGRESS", value });
+      }
     },
   };
 
@@ -224,14 +255,11 @@ export async function runAgUiRequest({
         ok: false,
         aborted: false,
         message: "에이전트 실행 중 오류가 발생했습니다.",
-        needsResync: Boolean(forwardedProps.approvalDecision),
+        needsResync: forwardedProps.restore !== true,
       };
     }
     return { ok: true };
   } catch {
-    if (isStale()) {
-      return { ok: false, aborted: true, message: "", needsResync: false };
-    }
     if (isStale()) {
       return { ok: false, aborted: true, message: "", needsResync: false };
     }
@@ -240,7 +268,7 @@ export async function runAgUiRequest({
         ok: false,
         aborted: false,
         message: "에이전트 실행 중 오류가 발생했습니다.",
-        needsResync: Boolean(forwardedProps.approvalDecision),
+        needsResync: forwardedProps.restore !== true,
       };
     }
 

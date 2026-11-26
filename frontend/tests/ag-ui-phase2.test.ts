@@ -163,6 +163,124 @@ test("STATE_SNAPSHOT normalizes Spring-hydrated plans that omit evidence and wor
   assert.equal(canResumeApprovedExecution(state.snapshot), true);
 });
 
+test("RESOLVED does not regress to a delayed AWAITING_EXECUTION_RESULT snapshot", () => {
+  const state = createInitialState(activeIncident);
+  const resolved = workspaceReducer(state, {
+    type: "STATE_SNAPSHOT",
+    snapshot: { ...state.snapshot, workflowStatus: "RESOLVED", eventSeq: 4 },
+  });
+  const delayed = { ...state.snapshot, workflowStatus: "AWAITING_EXECUTION_RESULT" };
+  for (const eventSeq of [undefined, 3, 5]) {
+    assert.strictEqual(workspaceReducer(resolved, {
+      type: "STATE_SNAPSHOT",
+      snapshot: { ...delayed, eventSeq },
+    }), resolved);
+  }
+  assert.strictEqual(workspaceReducer(resolved, { type: "RUN_FINISHED" }).snapshot, resolved.snapshot);
+});
+
+test("CANCELLED yields to a ledger approval that still needs the operator", () => {
+  const initial = createInitialState(activeIncident);
+  const cancelled = workspaceReducer(initial, {
+    type: "STATE_SNAPSHOT",
+    snapshot: { ...initial.snapshot, workflowStatus: "CANCELLED", eventSeq: 2 },
+  });
+  const detail = (approvals: Array<Record<string, unknown>>) => ({
+    incident: { incidentCode: initial.incidentCode, status: "WAITING_APPROVAL" },
+    plans: [],
+    approvals,
+    executions: [],
+    postMortem: null,
+  });
+  const sync = (approvals: Array<Record<string, unknown>>) =>
+    workspaceReducer(cancelled, {
+      type: "BACKEND_DETAIL_SYNCED",
+      detail: detail(approvals) as unknown as Extract<
+        Parameters<typeof workspaceReducer>[1],
+        { type: "BACKEND_DETAIL_SYNCED" }
+      >["detail"],
+    }).snapshot.workflowStatus;
+
+  assert.equal(sync([{ approvalId: "APR-1", planId: "PLAN-1", stepNo: 2, decision: "PENDING" }]), "AWAITING_APPROVAL");
+  assert.equal(sync([]), "CANCELLED");
+});
+
+test("a snapshot below lastEventSeq is ignored, but the same checkpoint cursor can supply its snapshot", () => {
+  const state = createInitialState(activeIncident);
+  const synced = workspaceReducer(state, {
+    type: "CHECKPOINT_SYNC",
+    value: { incidentCode: state.incidentCode, lastEventSeq: 8, lastCompletedStep: "evaluate" },
+  });
+  assert.strictEqual(workspaceReducer(synced, {
+    type: "STATE_SNAPSHOT",
+    snapshot: { ...state.snapshot, workflowStatus: "PLANNING", eventSeq: 7 },
+  }), synced);
+  const updated = workspaceReducer(synced, {
+    type: "STATE_SNAPSHOT",
+    snapshot: { ...state.snapshot, workflowStatus: "AWAITING_APPROVAL", snapshotSeq: 8 },
+  });
+  assert.equal(updated.snapshot.workflowStatus, "AWAITING_APPROVAL");
+  assert.equal(updated.lastEventSeq, 8);
+});
+
+test("HttpAgent sends resume/cancel with the cursor and consumes progress, checkpoint sync, and CANCELLED", async (t) => {
+  let state = createInitialState(activeIncident);
+  const incidentCode = state.incidentCode;
+  const requestBodies: unknown[] = [];
+  const threadId = "thread-phase7";
+  const progress = {
+    version: 1, incidentCode, runId: "original-run", worker: "log_agent", taskId: "server-task-1",
+    state: "working", stage: "pulling_chunks", elapsedMs: 9,
+  };
+  t.mock.method(globalThis, "fetch", async (_url: unknown, init: RequestInit) => {
+    const { runId, forwardedProps } = JSON.parse(String(init.body));
+    requestBodies.push(forwardedProps);
+    const eventSeq = forwardedProps.explicitCancel ? 10 : 9;
+    const workflowStatus = forwardedProps.explicitCancel ? "CANCELLED" : "AWAITING_APPROVAL";
+    const events = [
+      { type: "RUN_STARTED", threadId, runId },
+      ...(forwardedProps.resume ? [{ type: "CUSTOM", name: "a2a_progress", value: progress }] : []),
+      { type: "STATE_SNAPSHOT", snapshot: { incidentCode, workflowStatus, eventSeq } },
+      {
+        type: "CUSTOM", name: "checkpoint_sync",
+        value: { incidentCode, lastEventSeq: eventSeq, snapshotSeq: eventSeq, lastCompletedStep: "evaluate" },
+      },
+      { type: "RUN_FINISHED", threadId, runId },
+    ];
+    return new Response(events.map((event) => `data: ${JSON.stringify(event)}\n\n`).join(""), {
+      headers: { "Content-Type": "text/event-stream" },
+    });
+  });
+  const request = {
+    url: "http://ag-ui.invalid/",
+    threadId,
+    signal: new AbortController().signal,
+    dispatch: (action: WorkspaceAction) => {
+      state = workspaceReducer(state, action);
+    },
+  };
+  assert.deepEqual(await runAgUiRequest({
+    ...request,
+    runId: "resume-run",
+    forwardedProps: { incidentCode, resume: true, lastEventSeq: 8 },
+  }), { ok: true });
+  assert.deepEqual(state.a2aProgress, progress);
+  assert.equal(state.lastEventSeq, 9);
+  assert.equal(state.lastCompletedStep, "evaluate");
+  assert.deepEqual(await runAgUiRequest({
+    ...request,
+    runId: "cancel-run",
+    forwardedProps: { incidentCode, explicitCancel: true, lastEventSeq: state.lastEventSeq },
+  }), { ok: true });
+  assert.deepEqual(requestBodies, [
+    { incidentCode, resume: true, lastEventSeq: 8 },
+    { incidentCode, explicitCancel: true, lastEventSeq: 9 },
+  ]);
+  assert.equal(state.snapshot.workflowStatus, "CANCELLED");
+  assert.equal(state.busy, false);
+  assert.equal(state.lastEventSeq, 10);
+});
+
 test("HttpAgent SSE end-to-end against /api/mock-ag-ui (plan, restore, approve, 409, reject, error, abort)", async (t) => {
   const baseUrl = process.env.TEST_AG_UI_BASE_URL;
   if (!baseUrl) {

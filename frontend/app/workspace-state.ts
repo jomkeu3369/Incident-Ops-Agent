@@ -3,7 +3,9 @@ import {
   normalizeSnapshot,
   stepLabel,
   windowLabel,
+  type A2aProgress,
   type ChatMessageRecord,
+  type CheckpointSync,
   type Plan,
   type ReplanRecord,
   type Snapshot,
@@ -36,6 +38,9 @@ export type WorkspaceState = {
   entries: TimelineEntry[];
   toolNames: Record<string, string>;
   activeStep: string | null;
+  lastEventSeq: number;
+  lastCompletedStep: string | null;
+  a2aProgress: A2aProgress | null;
   replan: ReplanRecord | null;
   busy: boolean;
   restoring: boolean;
@@ -58,9 +63,18 @@ export type WorkspaceAction =
   | { type: "TEXT_MESSAGE_CONTENT"; messageId: string; delta: string }
   | { type: "TEXT_MESSAGE_END"; messageId: string }
   | { type: "STATE_SNAPSHOT"; snapshot: unknown }
+  | { type: "CHECKPOINT_SYNC"; value: CheckpointSync }
+  | { type: "A2A_PROGRESS"; value: A2aProgress }
   | { type: "MESSAGES_SNAPSHOT"; messages: ChatMessageRecord[] }
   | { type: "CUSTOM_REPLAN"; value: ReplanRecord }
   | { type: "BACKEND_DETAIL_SYNCED"; detail: BackendIncidentDetail };
+
+const LEDGER_OUTRANKS_CANCELLED: ReadonlySet<Snapshot["workflowStatus"]> = new Set([
+  "AWAITING_APPROVAL",
+  "AWAITING_EXECUTION_RESULT",
+  "EXECUTION_FAILED",
+  "RESOLVED",
+]);
 
 function mergePlans(backendPlan: Plan | null, existingPlan: Plan | null): Plan | null {
   if (!backendPlan) return existingPlan;
@@ -106,6 +120,9 @@ export function createInitialState(
     ],
     toolNames: {},
     activeStep: null,
+    lastEventSeq: base.eventSeq ?? 0,
+    lastCompletedStep: null,
+    a2aProgress: null,
     replan: null,
     busy: false,
     restoring: false,
@@ -138,7 +155,7 @@ export function workspaceReducer(state: WorkspaceState, action: WorkspaceAction)
       };
 
     case "RUN_STARTED":
-      return { ...state, busy: true, error: null };
+      return { ...state, busy: true, error: null, a2aProgress: null };
 
     case "RUN_FINISHED":
       return {
@@ -242,7 +259,11 @@ export function workspaceReducer(state: WorkspaceState, action: WorkspaceAction)
 
     case "STATE_SNAPSHOT": {
       const next = normalizeSnapshot(action.snapshot, state.incidentCode);
-      if (!next || next.incidentCode !== state.incidentCode) {
+      if (
+        !next ||
+        next.incidentCode !== state.incidentCode ||
+        (next.eventSeq !== undefined && next.eventSeq < state.lastEventSeq)
+      ) {
         return state;
       }
       const latestReplan =
@@ -272,8 +293,13 @@ export function workspaceReducer(state: WorkspaceState, action: WorkspaceAction)
         }
       }
 
+      if (state.snapshot.workflowStatus === "RESOLVED" && next.workflowStatus !== "RESOLVED") {
+        return state;
+      }
+
       return {
         ...state,
+        lastEventSeq: next.eventSeq ?? state.lastEventSeq,
         snapshot: {
           ...next,
           plan: mergePlans(next.plan, state.snapshot.plan),
@@ -281,6 +307,16 @@ export function workspaceReducer(state: WorkspaceState, action: WorkspaceAction)
         replan: latestReplan,
       };
     }
+
+    case "CHECKPOINT_SYNC":
+      return action.value.incidentCode !== state.incidentCode || action.value.lastEventSeq < state.lastEventSeq
+        ? state
+        : { ...state, lastEventSeq: action.value.lastEventSeq, lastCompletedStep: action.value.lastCompletedStep };
+
+    case "A2A_PROGRESS":
+      return action.value.incidentCode !== state.incidentCode
+        ? state
+        : { ...state, a2aProgress: action.value };
 
     case "MESSAGES_SNAPSHOT": {
       if (!action.messages.length) return state;
@@ -337,7 +373,13 @@ export function workspaceReducer(state: WorkspaceState, action: WorkspaceAction)
         state.snapshot.workflowStatus === "BLOCKED" &&
         hydrated.workflowStatus !== "RESOLVED" &&
         hydrated.workflowStatus !== "AWAITING_APPROVAL";
-      if (retainBlockedOutcome) {
+      const regressesResolved =
+        state.snapshot.workflowStatus === "RESOLVED" && hydrated.workflowStatus !== "RESOLVED";
+      // 취소 표시는 원장에 처리할 승인이나 실행 결과가 없을 때만 유지한다.
+      const retainCancelled =
+        state.snapshot.workflowStatus === "CANCELLED" &&
+        !LEDGER_OUTRANKS_CANCELLED.has(hydrated.workflowStatus);
+      if (retainBlockedOutcome || regressesResolved || retainCancelled) {
         return {
           ...state,
           executions: action.detail.executions,
@@ -362,7 +404,8 @@ export function workspaceReducer(state: WorkspaceState, action: WorkspaceAction)
 
 export function canSendPrompt(status: WorkflowStatus, resolved: boolean): boolean {
   if (resolved) return false;
-  return status === "IDLE" || status === "REJECTED" || status === "BLOCKED" || status === "EXECUTION_FAILED";
+  return status === "IDLE" || status === "REJECTED" || status === "BLOCKED" || status === "EXECUTION_FAILED" ||
+    status === "CANCELLED";
 }
 
 export function canResumeApprovedExecution(snapshot: Snapshot): boolean {

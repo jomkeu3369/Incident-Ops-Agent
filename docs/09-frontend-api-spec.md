@@ -23,7 +23,13 @@
 | `incidentCode` | 문자열, 필수 | 선택한 장애의 식별자 |
 | `incidentStartedAt` | RFC 3339 문자열, 선택 | 배포 후보 비교에 필요한 장애 시작 시각. 모르면 사용자에게 물으며 `createdAt`과 구분한다. |
 | `approvalDecision` | 객체, 선택 | `approvalId`와 `decision`을 전달한다. `decision`은 `APPROVED` 또는 `REJECTED`다. |
-| `restore` | `true`, 선택 | 같은 대화의 상태를 읽는 요청. 승인 결정과 함께 보낼 수 없다. |
+| `restore` | `true`, 선택 | 같은 대화의 상태를 읽는 요청. 워커 호출과 원장 쓰기가 없다. |
+| `resume` | `true`, 선택 | 중단된 계획 요청을 이어서 처리한다. 같은 사용자 메시지를 다시 보낸다. |
+| `resumeRunId` | 문자열, 선택 | `resume`과 함께 처음 요청의 `runId`를 보낸다. 서버에 저장된 실행과 다르면 새 요청으로 처리한다. |
+| `explicitCancel` | `true`, 선택 | 진행 중인 작업을 중단한다. 연결을 끊는 것과 다르다. |
+| `lastEventSeq` | 0 이상 정수, 선택 | 클라이언트가 마지막으로 받은 스냅샷 순번. 서버는 이보다 큰 순번을 발급한다. |
+
+`restore`, `resume`, `explicitCancel`, `approvalDecision`은 한 요청에 하나만 보낸다. 둘 이상이면 HTTP `400`이다.
 
 ### 2.1 계획 요청
 
@@ -77,10 +83,21 @@
 - **승인(`APPROVED`) 후 실행·완료 흐름:** Spring 승인 저장이 끝나면 `AWAITING_EXECUTION_RESULT` 스냅샷을 보낸 뒤, Supervisor가 `remediation-agent`(A2A)로 승인된 조치를 실행(내부 시연에서는 시뮬레이션 실행 + 복구 확인 기준 검증)하고 Spring MCP `completeIncidentWithPostMortem`으로 실행 결과와 포스트모템을 반영한다. 성공 시 `RESOLVED`, 실행 실패 시 `EXECUTION_FAILED` 스냅샷을 발행하고 `RUN_FINISHED`로 종료한다.
 - **반려(`REJECTED`) 흐름:** 조치를 실행하지 않고 `REJECTED` 스냅샷과 안내 메시지를 보낸 뒤 `RUN_FINISHED`로 종료한다.
 - 승인 제출 결과를 받기 전에 연결이 끊기거나 이미 처리된 승인 충돌(`409`)이 발생하면 Spring 상세를 다시 조회해 화면을 갱신한다.
+- 원장에 같은 결정이 있지만 해당 대화가 결과를 확정하지 못한 경우에는 같은 승인 요청을 다시 보낼 수 있다. 실행 결과가 이미 기록돼 있으면 워커 호출과 완료 쓰기 없이 원장 상태를 반환하고, 없으면 실행을 이어서 처리한다. 이미 결과를 전달한 승인은 `409`다.
+- 완료 쓰기의 응답을 받지 못했거나 거절되면 원장을 다시 조회한다. 원장에 실행 기록이 없으면 `AWAITING_EXECUTION_RESULT`를 유지하며 같은 승인으로 다시 실행할 수 있다.
+- 종결된 과거 결정을 다시 보냈는데 더 새로운 승인이 있으면 `409`다.
 
 ### 2.3 다시 열기와 연결 복원
 
-Spring 상세를 먼저 조회해 저장된 계획·승인·실행 상태를 복원한다. 현재 탭에서 새로고침할 때는 장애별 `threadId`를 `sessionStorage`에서 읽는다. 등록된 대화가 있으면 같은 `threadId`, 새 `runId`, `"state": {}`, 빈 `messages`와 `forwardedProps: { "incidentCode": "INC-2026-009", "restore": true }`를 보낸다. 복원 응답은 `STATE_SNAPSHOT`(최신 `plan`, `approval`, `workflowStatus`, `replanHistory`)과 `MESSAGES_SNAPSHOT`(보존된 대화 목록)을 반환하고 종료한다. 전체 단계·Tool 이력은 `GET /api/ag-ui/sessions/{sessionId}`로 조회한다.
+Spring 상세를 먼저 조회해 저장된 계획·승인·실행 상태를 복원한다. 현재 탭에서 새로고침할 때는 장애별 `threadId`를 `sessionStorage`에서 읽는다. 등록된 대화가 있으면 같은 `threadId`, 새 `runId`, `"state": {}`, 빈 `messages`와 `forwardedProps: { "incidentCode": "INC-2026-009", "restore": true }`를 보낸다. 복원 응답은 `STATE_SNAPSHOT`(최신 `plan`, `approval`, `workflowStatus`, `replanHistory`)과 `MESSAGES_SNAPSHOT`(보존된 대화 목록)을 반환하고 종료한다. 저장된 스냅샷보다 Spring 원장이 앞서 있으면 원장 상태를 반영해 반환한다. 전체 단계·Tool 이력은 `GET /api/ag-ui/sessions/{sessionId}`로 조회한다.
+
+### 2.4 재개와 취소
+
+- **순번:** 상태 전이마다 스냅샷의 `eventSeq`가 증가하며 `CUSTOM checkpoint_sync`에도 같은 값이 담긴다. 클라이언트는 더 작은 순번의 스냅샷을 무시한다.
+- **재개(`resume`):** `resumeRunId`가 저장된 실행과 같을 때(완료된 실행의 재전송에는 필수), 끝나지 않은 실행은 완료한 단계를 건너뛰고 이어서 처리한다. 이미 끝난 실행은 워커를 다시 호출하지 않고 저장 결과를 보낸다. 중단 전에 같은 실행이 등록한 계획·승인은 재사용한다.
+- **취소(`explicitCancel`):** 진행 중인 워커 호출을 중단하고, 이미 시작한 원장 쓰기는 끝난 뒤 원장을 확인한다. 승인이 남아 있으면 `AWAITING_APPROVAL` 또는 `AWAITING_EXECUTION_RESULT`, 이미 완료됐으면 `RESOLVED`, 남은 것이 없으면 `CANCELLED`다.
+- **취소 오류:** 같은 대화에서 다른 장애의 작업이 진행 중이면 `RUN_ERROR`(`CANCEL_SCOPE_MISMATCH`), 원장을 확인할 수 없으면 `RUN_ERROR`(`LEDGER_UNAVAILABLE`)다.
+- **한계:** 취소 신호는 Supervisor 프로세스 안에서만 전달된다. Redis 장애 중 삭제한 체크포인트는 복구 전에 프로세스가 재시작되면 남을 수 있다.
 
 ## 3. SSE 이벤트
 

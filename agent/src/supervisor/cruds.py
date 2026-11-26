@@ -2,13 +2,14 @@ from __future__ import annotations
 
 import asyncio
 from collections import OrderedDict
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager, contextmanager
 import json
 import time
 import uuid
-from typing import Any, AsyncIterator
+from typing import Any, AsyncIterator, Iterator
 
 from common.event_log import now_iso_utc
+from supervisor.active_runs import ActiveRun
 from supervisor.schemas import ManagedPlanCreate, ManagedPlanItem, ManagedPlanMutationResponse, ManagedPlanUpdate, SessionSummary
 
 # Redis 키 프리픽스 분리: 대화 메모리(memory:), 실행 로그(exec_log:), 작업 계획(planner_plan:)
@@ -82,6 +83,8 @@ class SupervisorRedisStore:
         self._redis_ever_connected = False
         self._reconcile_lock = asyncio.Lock()
         self._thread_locks: dict[str, list[Any]] = {}
+        self._active_runs: dict[str, set[ActiveRun]] = {}
+        self._cancel_epochs: dict[tuple[str, str], int] = {}
         # 로컬 테스트나 Redis 일시 단절 시 사용하는 프로세스 메모리 폴백 저장소 및 복구 재반영 큐
         self._mem_threads: OrderedDict[str, dict[str, Any]] = OrderedDict()
         self._mem_logs: dict[str, list[dict[str, Any]]] = {}
@@ -111,6 +114,29 @@ class SupervisorRedisStore:
             if entry[1] <= 0 and not lock.locked():
                 self._thread_locks.pop(thread_id, None)
                 self._trim_thread_cache()
+
+    @contextmanager
+    def track_run(self, thread_id: str, run: ActiveRun) -> Iterator[ActiveRun]:
+        """명시적 취소가 찾을 수 있도록 스레드 락 대기 전부터 실행을 등록한다."""
+        self._active_runs.setdefault(thread_id, set()).add(run)
+        try:
+            yield run
+        finally:
+            runs = self._active_runs.get(thread_id)
+            if runs is not None:
+                runs.discard(run)
+                if not runs:
+                    self._active_runs.pop(thread_id, None)
+
+    def active_runs(self, thread_id: str) -> list[ActiveRun]:
+        return list(self._active_runs.get(thread_id, ()))
+
+    def cancel_epoch(self, thread_id: str, incident_code: str) -> int:
+        """아직 등록되지 않은 요청(승인 저장 중)이 그 사이의 취소를 알아챌 수 있는 카운터."""
+        return self._cancel_epochs.get((thread_id, incident_code), 0)
+
+    def bump_cancel_epoch(self, thread_id: str, incident_code: str) -> None:
+        self._cancel_epochs[(thread_id, incident_code)] = self.cancel_epoch(thread_id, incident_code) + 1
 
     def _trim_thread_cache(self, keep: str | None = None) -> None:
         """LRU 상한을 초과한 clean·비잠금 스레드 캐시 항목을 오래된 순으로 제거한다."""
