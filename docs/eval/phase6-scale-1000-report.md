@@ -60,7 +60,7 @@
 | `500` | **`dr_dci`** | **74.4%** | **66.7%** | **86.7%** | **0.671** | **0.0% (0/18)** | **1,062 (-98.6%)** | **0%** | 4.58 / 5.07 / 8.57 |
 
 - **핵심 해석:**
-  1. 기본 설정의 `dr_dci`는 distractor 전용 감점을 제거한 뒤에도 `N=10 → 500` 전 구간에서 `native_rag`·`hybrid_rag_rrf` 대비 더 높은 Evidence Recall·Multi-Hop Recall·Macro-F1을 유지하면서 `dci` 대비 입력 토큰을 **-49.1% → -98.6%** 절감하고 `>32k Overflow 0%`, `FSR 0.0%`를 기록했습니다. 다만 `N=500`에서 런북 색인 가산점이나 본문의 청크 ID 참조 중 하나만 없어도 `native_rag`보다 낮아집니다([영향 측정](scaling-4paradigm-report.md#5-dr-dci-설계-요소의-영향-multi-hop-recall--macro-f1)).
+  1. 기본 설정의 `dr_dci`는 distractor 전용 감점을 제거한 뒤에도 `N=10 → 500` 전 구간에서 `native_rag`·`hybrid_rag_rrf` 대비 더 높은 Evidence Recall·Multi-Hop Recall·Macro-F1을 유지하면서 `dci` 대비 입력 토큰을 **-49.1% → -98.6%** 절감하고 `>32k Overflow 0%`, `FSR 0.0%`를 기록했습니다. 다만 `N=500`에서 런북 색인 가산점이나 본문의 청크 ID 참조 중 하나만 없어도 Multi-Hop Recall은 `native_rag`보다 낮아집니다([영향 측정](scaling-4paradigm-report.md#5-dr-dci-설계-요소의-영향-multi-hop-recall--macro-f1)).
   2. 동시에 고정 12슬롯 색인 창(`index_window=12`)의 실제 한계도 투명하게 드러났습니다. 25% Hard Distractor가 `N=200 → 500`으로 누적되면 `dr_dci`의 Multi-Hop Recall이 `90.5% (N=100) → 85.7% (N=200) → 71.4% (N=300) → 66.7% (N=500)`으로, Macro-F1이 `0.734 → 0.671`로 점진 하락합니다.
 
 ![4대 패러다임 선형 스케일링 대시보드](charts/scaling-4paradigm-dashboard.png)

@@ -3,7 +3,7 @@
 > **목적:** 첫 인출 본문의 단서로 다음 청크와 종료 여부를 결정하는 읽기 전용 에이전틱 DR-DCI를 비교했습니다. 합성 장애 60건에서 네 전략에 동일한 사례와 규칙 판정기를 적용했습니다.
 
 - **원시 데이터:** [`results/phase6-4way-benchmark.json`](results/phase6-4way-benchmark.json) · [`results/phase6-4way-benchmark.csv`](results/phase6-4way-benchmark.csv) · [`results/phase6-4way-benchmark.md`](results/phase6-4way-benchmark.md)
-- **데이터와 결과 이력:** 원시 JSON의 코퍼스 버전은 `dr-dci-corpus-v1.0`, `split_filter=all`입니다. 생성 템플릿을 분리한 `dev` 30건과 `eval` 30건을 합산했습니다. 정답이 `SUPPORTED`가 아닌 44건, multi-hop 25건(dev 2 + eval 23), 간접 프롬프트 인젝션 6건이 포함됐습니다. 원시 결과는 `0ce6c0e`에서 갱신됐으며 실행 Git SHA는 기록되지 않았습니다.
+- **데이터와 결과 이력:** 원시 JSON의 코퍼스 버전은 `dr-dci-corpus-v1.0`, `split_filter=all`입니다. 생성 템플릿을 분리한 `dev` 30건과 `eval` 30건을 합산했습니다. 정답이 `SUPPORTED`가 아닌 44건, multi-hop 25건(dev 2 + eval 23), 간접 프롬프트 인젝션 6건이 포함됐습니다. 원시 결과는 `0ce6c0e`에서 갱신됐으며 실행 Git SHA는 기록되지 않았습니다. 두 분할의 런북 본문은 겹치지 않지만, 오답용 공용 런북을 빼고도 런북 제목 4종이 공통입니다(`eval` 7/30건).
 - **공통 조건:** `RuleBasedJudge`를 사용했습니다. 인출 예산은 `max_pull_steps=3`이며 전체 청크를 투입하는 `full_context`에는 이 제한을 적용하지 않았습니다.
 - **계측:** 토큰 수는 문자 수 기반 추정치이며 선택기가 읽은 메타데이터를 포함합니다. 지연은 로컬 검색부터 규칙 판정까지의 경과 시간입니다. 사전 TF-IDF 인덱스 구축, LLM API 및 MCP 네트워크 지연은 계측 범위에서 제외했습니다. API 포함 실측은 [라이브 보고서](live-llm-benchmark-report.md)에 따로 기록했습니다.
 

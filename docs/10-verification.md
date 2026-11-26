@@ -129,7 +129,7 @@
 
 | 항목 | 현재 상태 |
 | :--- | :--- |
-| 실스택 종단 실행 | 2026-11-26 격리 Compose 스택(MySQL·Spring·Redis·Caddy·Frontend)에서 `scripts/smoke-test.ps1`(REST 승인·반려·실행 실패·완료) 통과. 에이전트가 계획을 만드는 AG-UI 흐름과 프런트 실서버 통합 테스트는 이 결과에 포함하지 않음 |
+| 실스택 종단 실행 | 2026-11-26 격리 Compose 스택(MySQL·Spring·Redis·Caddy·Supervisor·워커 2종·Frontend)에서 `scripts/smoke-test.ps1`(REST 승인·반려·실행 실패·완료) 통과. 에이전트가 계획을 만드는 AG-UI 흐름과 프런트 실서버 통합 테스트는 이 결과에 포함하지 않음 |
 | MCP 실통신 | 독립 MCP 클라이언트로 Spring `/sse`의 도구·리소스를 조회하는 검증 없음 |
 | 근거 판정 정확도 | 합성 사례 평가([리포트](eval/))만 있으며 실제 장애 데이터 검증 없음 |
 | 오프라인 평가와 실 DB의 차이 | 합성 평가의 런북 후보는 장애당 1–2건, 시드 SQL을 적재한 DB는 서비스당 14–26건 |

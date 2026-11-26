@@ -209,8 +209,8 @@ $heldRes = Invoke-Api -Method "GET" -Url "$BaseUrl/api/incidents/$smokeIncident"
 Assert-Status -Name "Fetch incident after worker failure" -Actual $heldRes.Status -Expected 200
 $held = $heldRes.Content | ConvertFrom-Json
 $failedRows = @($held.executions | Where-Object { $_.approvalId -eq $failApprovalId -and $_.executionStatus -eq "FAILED" })
-if ($held.incident.status -eq "RESOLVED" -or $failedRows.Count -ne 1) {
-    throw "[FAIL] Ledger must keep the incident unresolved with one FAILED execution (status=$($held.incident.status), rows=$($failedRows.Count))"
+if ($held.incident.status -ne "WAITING_APPROVAL" -or $failedRows.Count -ne 1) {
+    throw "[FAIL] Ledger must keep the incident at WAITING_APPROVAL with one FAILED execution (status=$($held.incident.status), rows=$($failedRows.Count))"
 }
 Write-Host "[PASS] Worker FAILED execution held incident at $($workerFailedObj.incidentStatus) with no postmortem" -ForegroundColor Green
 
