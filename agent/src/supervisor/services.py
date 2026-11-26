@@ -30,7 +30,7 @@ from ag_ui.core import (
 )
 from ag_ui.encoder import EventEncoder
 
-from common.a2a_utils import send_a2a_json
+from common.a2a_utils import A2ATaskNotActiveError, cancel_a2a_task, send_a2a_json
 from common.backend_client import BackendApiError, BackendClient
 from common.config import Settings
 from common.event_log import EventBus, publish_safe
@@ -275,6 +275,10 @@ class SupervisorService:
                 yield encoder.encode(scope_error)
                 return
             memory = _isolate_incident_memory(raw, tid, props.incidentCode)
+            # 명시적 취소만 원격 작업까지 중단한다(단순 연결 단절은 재개를 위해 남겨 둔다).
+            # 취소 요청마저 끊겨도 빠지지 않도록 보호 구간에서 보낸다
+            with anyio.CancelScope(shield=True):
+                unconfirmed = await self._cancel_remote_tasks(tid, props.incidentCode)
             draft_plan = await self._checkpoint_plan(tid)
             if self._checkpointer is not None and hasattr(self._checkpointer, "adelete_thread"):
                 await self._checkpointer.adelete_thread(tid)
@@ -284,6 +288,8 @@ class SupervisorService:
                 return
 
             snapshot, text = _snapshot_after_cancel(props.incidentCode, memory.get("snapshot"), detail, draft_plan)
+            if unconfirmed:
+                text += " 원격 조사 중단은 확인하지 못했습니다. 다시 취소하면 재시도합니다."
             msg_id = f"msg-a-{uuid.uuid4().hex[:6]}"
             memory.setdefault("messages", []).append({"id": msg_id, "role": "assistant", "content": text})
             snapshot = await self._commit_snapshot(tid, memory, props, snapshot, "cancelled")
@@ -293,6 +299,25 @@ class SupervisorService:
                 yield chunk
             yield encoder.encode(_checkpoint_sync(props.incidentCode, memory, snapshot))
             yield encoder.encode(RunFinishedEvent(thread_id=tid, run_id=rid))
+
+    async def _cancel_remote_tasks(self, thread_id: str, incident_code: str) -> int:
+        """이 대화에 남은 원격 A2A 작업에 CancelTask를 보내고, 중단을 확인하지 못한 작업 수를 반환한다."""
+        remote_tasks = self._store.remote_tasks(thread_id, incident_code)
+        unconfirmed = 0
+        for task_id, (base_url, _) in list(remote_tasks.items()):
+            try:
+                await cancel_a2a_task(self._http, base_url=base_url, internal_token=self._settings.internal_service_token.get_secret_value(), task_id=task_id)
+                confirmed = True
+                remote_tasks.pop(task_id, None)
+            except A2ATaskNotActiveError:
+                confirmed = False
+                remote_tasks.pop(task_id, None)
+            except Exception:
+                # 전달되지 못한 취소는 다음 취소 요청에서 다시 시도할 수 있게 남긴다
+                confirmed = False
+                unconfirmed += 1
+            await publish_safe(self._bus, thread_id, "remote_task_cancel", {"taskId": task_id, "confirmed": confirmed})
+        return unconfirmed
 
     async def _checkpoint_plan(self, thread_id: str) -> dict[str, Any] | None:
         """체크포인트에 보존된 계획 초안을 읽는다(취소 후에도 승인 대상 계획을 보여 주기 위함)."""
@@ -354,6 +379,7 @@ class SupervisorService:
             on_ui_event=ui_queue.put,
             checkpointer=self._checkpointer,
             ledger_writes=ledger_writes,
+            remote_tasks=self._store.remote_tasks(tid, props.incidentCode),
         )
         graph_config = {"configurable": {"thread_id": tid}} if self._checkpointer is not None else None
 
@@ -436,7 +462,9 @@ class SupervisorService:
             with anyio.CancelScope(shield=True):
                 # SSE 클라이언트가 중간에 연결을 끊으면 백그라운드 그래프 태스크를 즉시 정리한다
                 if not graph_task.done():
-                    graph_task.cancel()
+                    # 이미 취소 중이면 다시 취소하지 않는다: 원격 작업 ID를 확보하는 대기가 중단된다
+                    if not graph_task.cancelling():
+                        graph_task.cancel()
                     await asyncio.wait([graph_task])
                     if not graph_task.cancelled():
                         graph_task.exception()
@@ -747,6 +775,8 @@ def _encode_ui_event(encoder: EventEncoder, ev: dict[str, Any]) -> list[str]:
         return [encoder.encode(StepStartedEvent(step_name=str(ev["step"])))]
     if kind == "step_finish":
         return [encoder.encode(StepFinishedEvent(step_name=str(ev["step"])))]
+    if kind == "a2a_progress":
+        return [encoder.encode(CustomEvent(name="a2a_progress", value=ev.get("value")))]
     if kind == "replan":
         return [encoder.encode(CustomEvent(name="replan", value=ev.get("value")))]
     if kind == "tool_call":

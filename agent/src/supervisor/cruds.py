@@ -19,6 +19,7 @@ _LOG_IDS_PREFIX = "exec_log_ids:"
 _LOG_INDEX_KEY = "exec_log:index"
 _PLAN_PREFIX = "planner_plan:"
 _PLAN_INDEX_KEY = "planner_plan:index"
+_MAX_REMOTE_TASK_THREADS = 512
 
 _APPEND_LOG_LUA = """
 if redis.call('SADD', KEYS[2], ARGV[1]) == 1 then
@@ -85,6 +86,7 @@ class SupervisorRedisStore:
         self._thread_locks: dict[str, list[Any]] = {}
         self._active_runs: dict[str, set[ActiveRun]] = {}
         self._cancel_epochs: dict[tuple[str, str], int] = {}
+        self._remote_tasks: OrderedDict[tuple[str, str], dict[str, tuple[str, str]]] = OrderedDict()
         # 로컬 테스트나 Redis 일시 단절 시 사용하는 프로세스 메모리 폴백 저장소 및 복구 재반영 큐
         self._mem_threads: OrderedDict[str, dict[str, Any]] = OrderedDict()
         self._mem_logs: dict[str, list[dict[str, Any]]] = {}
@@ -137,6 +139,15 @@ class SupervisorRedisStore:
 
     def bump_cancel_epoch(self, thread_id: str, incident_code: str) -> None:
         self._cancel_epochs[(thread_id, incident_code)] = self.cancel_epoch(thread_id, incident_code) + 1
+
+    def remote_tasks(self, thread_id: str, incident_code: str) -> dict[str, tuple[str, str]]:
+        """연결이 끊겨도 취소할 수 있도록 대화 단위로 보존하는 원격 작업 {taskId: (URL, 멱등 키)}."""
+        key = (thread_id, incident_code)
+        tasks = self._remote_tasks.setdefault(key, {})
+        self._remote_tasks.move_to_end(key)
+        while len(self._remote_tasks) > _MAX_REMOTE_TASK_THREADS:
+            self._remote_tasks.popitem(last=False)
+        return tasks
 
     def _trim_thread_cache(self, keep: str | None = None) -> None:
         """LRU 상한을 초과한 clean·비잠금 스레드 캐시 항목을 오래된 순으로 제거한다."""

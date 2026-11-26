@@ -5,7 +5,7 @@ from dataclasses import dataclass
 import json
 import re
 import time
-from typing import Any, Literal, Protocol, Sequence, runtime_checkable
+from typing import Any, Awaitable, Callable, Literal, Protocol, Sequence, runtime_checkable
 
 from openai import OpenAI
 from pydantic import BaseModel, Field
@@ -453,6 +453,7 @@ async def run_agentic_dr_dci_investigation(
     req: LogInvestigationRequest,
     *,
     selector: DrDciSelector | None = None,
+    on_pull_start: Callable[[], Awaitable[None]] | None = None,
 ) -> LogInvestigationResponse:
     """에이전틱 DR-DCI 읽기 전용 루프: 서버 강제 범위·중복·예산 가드 하에 반복적으로 다음 청크 또는 종료를 선택한다."""
     budget = min(req.maxPulls or settings.dr_dci_max_pull_steps, settings.dr_dci_max_pull_steps)
@@ -595,6 +596,10 @@ async def run_agentic_dr_dci_investigation(
                 break
 
             try:
+                if on_pull_start is not None:
+                    await on_pull_start()
+                    on_pull_start = None
+                    rem = _remaining_timeout()
                 chunk = await asyncio.wait_for(crud.pull_chunk(req.incidentCode, target_id), timeout=rem)
             except asyncio.TimeoutError:
                 stop_reason = "TIMEOUT_BUDGET_REACHED"

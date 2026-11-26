@@ -1,11 +1,12 @@
 from __future__ import annotations
 
+import json
 from typing import Any
 import httpx
 from fastapi.testclient import TestClient
 from pydantic import SecretStr
 
-from common.a2a_utils import send_a2a_json
+from common.a2a_utils import cancel_a2a_task, send_a2a_json, send_a2a_stream
 from common.backend_client import BackendClient
 from common.config import Settings
 from common.decisions import RuleBasedJudge
@@ -317,3 +318,37 @@ async def test_traced_span_sanitizes_raised_exception_secrets_and_preserves_toke
         assert "sk-proj-secret1234567890" not in err
         assert "abcdef1234567890" not in err
         assert REDACTED_VALUE in err
+
+
+async def test_a2a_streaming_and_cancel_propagate_trace_headers_without_secrets():
+    """Supervisor 실서비스 경로(SendStreamingMessage·CancelTask)도 추적 헤더만 전파하고 비밀값은 내보내지 않는다."""
+    recorder = _RecordingLangSmithClient()
+    captured: list[dict[str, str]] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        captured.append({k.lower(): v for k, v in request.headers.items()})
+        if b"CancelTask" in request.content:
+            return httpx.Response(200, json={"jsonrpc": "2.0", "id": "1", "result": {"id": "task-1"}})
+        frames = [
+            {"artifactUpdate": {"taskId": "task-1", "lastChunk": True, "artifact": {"artifactId": "a", "parts": [{"text": '{"ok": true}'}]}}},
+            {"statusUpdate": {"taskId": "task-1", "status": {"state": "TASK_STATE_COMPLETED"}}},
+        ]
+        body = "".join(f"data: {json.dumps({'jsonrpc': '2.0', 'id': '1', 'result': frame})}\n\n" for frame in frames)
+        return httpx.Response(200, text=body, headers={"content-type": "text/event-stream"})
+
+    cfg = _settings(langsmith_tracing=True, langsmith_api_key=SecretStr("lsv2_pt_valid_key_1234567890"))
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as http_client:
+        with langsmith_tracing_scope(cfg, client=recorder, tags=["ag-ui"]):
+            async with traced_span("supervisor.root", run_type="chain") as root_span:
+                streamed = await send_a2a_stream(
+                    http_client, base_url="http://log-agent:8001", internal_token="secret-internal-tok",
+                    payload={"incidentCode": "INC-2026-001", "api_key": "sk-proj-abcdef1234567890"},
+                )
+                await cancel_a2a_task(http_client, base_url="http://log-agent:8001", internal_token="secret-internal-tok", task_id="task-1")
+                end_span(root_span, outputs={"done": True})
+
+    assert streamed.payload == {"ok": True} and streamed.task_id == "task-1"
+    assert len(captured) == 2 and all(LANGSMITH_TRACE_HEADER in headers for headers in captured)
+    exported = repr(recorder.created) + repr(recorder.updated)
+    assert "a2a.send_streaming_message" in exported
+    assert "sk-proj-abcdef" not in exported and "secret-internal-tok" not in exported

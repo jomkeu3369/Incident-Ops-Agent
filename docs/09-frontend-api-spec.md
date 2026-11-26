@@ -97,6 +97,7 @@ Spring 상세를 먼저 조회해 저장된 계획·승인·실행 상태를 복
 - **재개(`resume`):** `resumeRunId`가 저장된 실행과 같을 때(완료된 실행의 재전송에는 필수), 끝나지 않은 실행은 완료한 단계를 건너뛰고 이어서 처리한다. 이미 끝난 실행은 워커를 다시 호출하지 않고 저장 결과를 보낸다. 중단 전에 같은 실행이 등록한 계획·승인은 재사용한다.
 - **취소(`explicitCancel`):** 진행 중인 워커 호출을 중단하고, 이미 시작한 원장 쓰기는 끝난 뒤 원장을 확인한다. 승인이 남아 있으면 `AWAITING_APPROVAL` 또는 `AWAITING_EXECUTION_RESULT`, 이미 완료됐으면 `RESOLVED`, 남은 것이 없으면 `CANCELLED`다.
 - **취소 오류:** 같은 대화에서 다른 장애의 작업이 진행 중이면 `RUN_ERROR`(`CANCEL_SCOPE_MISMATCH`), 원장을 확인할 수 없으면 `RUN_ERROR`(`LEDGER_UNAVAILABLE`)다.
+- **원격 취소:** 로그 조사 중 취소하면 해당 A2A 작업에 `CancelTask`를 보내고 확인 여부를 실행 로그(`remote_task_cancel`)에 남긴다. 단순 연결 단절은 원격 작업을 취소하지 않으며, 재개하면 같은 멱등 키로 이어받는다. 단절 전에 시작한 작업의 ID도 대화 단위로 보존해, 이후 명시적 취소가 남은 작업을 모두 중단한다.
 - **한계:** 취소 신호는 Supervisor 프로세스 안에서만 전달된다. Redis 장애 중 삭제한 체크포인트는 복구 전에 프로세스가 재시작되면 남을 수 있다.
 
 ## 3. SSE 이벤트
@@ -112,6 +113,7 @@ Spring 상세를 먼저 조회해 저장된 계획·승인·실행 상태를 복
 | `STATE_SNAPSHOT` | 계획과 승인 상태를 스냅샷으로 교체한다. |
 | `MESSAGES_SNAPSHOT` | 복원 시 보존된 대화 목록으로 교체한다. |
 | `CUSTOM`의 `replan` | 재계획 이유와 이전·새 작업 시간을 작업 기록에 표시한다. |
+| `CUSTOM`의 `a2a_progress` | 로그 조사 워커의 진행 상태. `version`(1), `incidentCode`, `runId`, `worker`, `taskId`(워커가 발급한 A2A 작업 ID), `state`, `stage`(`searching_index`, `pulling_chunks`, `deduplicated_hit`, `completed`), `elapsedMs`. 장애의 업무 상태를 바꾸지 않는다. |
 | `RUN_FINISHED` | 현재 요청의 진행 표시를 끝낸다. 승인 대기와 장애 해결 여부는 스냅샷과 Spring 데이터로 판단한다. |
 | `RUN_ERROR` | 사용자에게 오류 메시지를 표시하고 진행을 종료한다. 승인 제출 중이었다면 Spring 상세를 갱신한다. |
 

@@ -135,6 +135,14 @@ class A2AStreamResult:
     canceled: bool = False
 
 
+# 작업이 없거나 이미 끝나 취소 대상이 아니라는 A2A 오류 코드(TaskNotFound, TaskNotCancelable)
+_A2A_TASK_GONE_CODES = frozenset({-32001, -32002})
+
+
+class A2ATaskNotActiveError(RuntimeError):
+    """원격에 취소할 작업이 남아 있지 않아 다시 시도할 필요가 없는 응답."""
+
+
 async def cancel_a2a_task(
     http_client: httpx.AsyncClient,
     *,
@@ -158,7 +166,22 @@ async def cancel_a2a_task(
     resp = await http_client.post(f"{base_url.rstrip('/')}/", json=rpc_body, headers=headers)
     if resp.status_code != 200:
         raise RuntimeError(f"A2A CancelTask 실패 (HTTP {resp.status_code})")
-    return resp.json()
+    body = resp.json()
+    error = body.get("error") if isinstance(body, dict) else None
+    if isinstance(error, dict) and error.get("code") in _A2A_TASK_GONE_CODES:
+        raise A2ATaskNotActiveError("A2A CancelTask 대상 작업이 남아 있지 않습니다.")
+    if not isinstance(body, dict) or "error" in body or not isinstance(body.get("result"), dict):
+        raise RuntimeError("A2A CancelTask JSON-RPC 오류")
+    return body
+
+
+# A2A SDK의 SSE ping 간격(15초)보다 커야 조용한 조사 중에 스트림이 끊기지 않는다
+_STREAM_MIN_READ_TIMEOUT_SECONDS = 45.0
+
+
+def _stream_timeout(base: httpx.Timeout) -> httpx.Timeout:
+    read = None if base.read is None else max(base.read, _STREAM_MIN_READ_TIMEOUT_SECONDS)
+    return httpx.Timeout(connect=base.connect, read=read, write=base.write, pool=base.pool)
 
 
 async def send_a2a_stream(
@@ -172,6 +195,7 @@ async def send_a2a_stream(
     trace_id: str | None = None,
     timeout_seconds: float | None = None,
     on_progress: Callable[[dict[str, Any]], Awaitable[None]] | None = None,
+    on_task_id: Callable[[str], None] | None = None,
 ) -> A2AStreamResult:
     """원격 A2A v1.0 워커에 SendStreamingMessage SSE 요청을 전송하고 진행 상태·최종 산출물을 수신한다."""
     enriched_payload = dict(payload)
@@ -207,10 +231,29 @@ async def send_a2a_stream(
         first_progress_ms: float | None = None
         final_artifact_ms: float | None = None
         final_text: str = ""
+        direct_message: str = ""
+        artifact_parts: dict[str, str] = {}
         task_id: str | None = None
-        canceled = False
+        terminal_state = ""
 
-        async with http_client.stream("POST", f"{base_url.rstrip('/')}/", json=rpc_body, headers=headers) as resp:
+        def state_name(raw: Any) -> str:
+            return str(raw or "").upper().removeprefix("TASK_STATE_")
+
+        def note_task(raw: Any) -> None:
+            """원격 작업 ID를 처음 알게 된 즉시 알려 호출자가 취소할 수 있게 한다."""
+            nonlocal task_id
+            if raw and str(raw) != task_id:
+                task_id = str(raw)
+                if on_task_id is not None:
+                    on_task_id(task_id)
+
+        def record_status(raw: Any) -> None:
+            nonlocal terminal_state
+            state = state_name(raw)
+            if state in {"COMPLETED", "FAILED", "CANCELED", "CANCELLED", "REJECTED"}:
+                terminal_state = state
+
+        async with http_client.stream("POST", f"{base_url.rstrip('/')}/", json=rpc_body, headers=headers, timeout=_stream_timeout(http_client.timeout)) as resp:
             if resp.status_code != 200:
                 raise RuntimeError(f"A2A 스트리밍 호출 실패 (HTTP {resp.status_code})")
 
@@ -223,17 +266,17 @@ async def send_a2a_stream(
                     continue
                 envelope = json.loads(data_str)
                 if "error" in envelope:
-                    err = envelope["error"]
-                    raise RuntimeError(f"A2A 스트리밍 JSON-RPC 오류: {err.get('message', err)}")
+                    raise RuntimeError("A2A 스트리밍 JSON-RPC 오류")
 
                 result = envelope.get("result") or {}
                 elapsed_ms = round((time.perf_counter() - t0) * 1000.0, 3)
 
                 status_update = result.get("statusUpdate") or result.get("status_update")
                 if isinstance(status_update, dict):
-                    task_id = str(status_update.get("taskId") or status_update.get("task_id") or task_id or "") or task_id
+                    note_task(status_update.get("taskId") or status_update.get("task_id"))
                     status_obj = status_update.get("status") or {}
                     state_str = str(status_obj.get("state") or "")
+                    record_status(state_str)
                     msg_text = _first_part_text((status_obj.get("message") or {}).get("parts"))
                     parsed_detail: Any = None
                     if msg_text:
@@ -251,28 +294,38 @@ async def send_a2a_stream(
                     progress_events.append(ev)
                     if first_progress_ms is None:
                         first_progress_ms = elapsed_ms
-                    if "CANCELED" in state_str.upper():
-                        canceled = True
                     if on_progress is not None:
                         await on_progress(ev)
                     continue
 
                 artifact_update = result.get("artifactUpdate") or result.get("artifact_update")
                 if isinstance(artifact_update, dict):
-                    task_id = str(artifact_update.get("taskId") or artifact_update.get("task_id") or task_id or "") or task_id
+                    note_task(artifact_update.get("taskId") or artifact_update.get("task_id"))
                     art = artifact_update.get("artifact") or {}
-                    text = _first_part_text(art.get("parts"))
-                    if text:
-                        final_text = text
+                    artifact_id = str(art.get("artifactId") or art.get("artifact_id") or "")
+                    text = "".join(str(part["text"]) for part in (art.get("parts") or []) if part.get("text"))
+                    if artifact_update.get("append") is True:
+                        text = artifact_parts.get(artifact_id, "") + text
+                    artifact_parts[artifact_id] = text
+                    if text and (artifact_update.get("lastChunk") or artifact_update.get("last_chunk")):
+                        final_text = artifact_parts.pop(artifact_id)
                         final_artifact_ms = elapsed_ms
                     continue
 
-                direct_text = _extract_text_from_a2a_result(result)
-                if direct_text:
-                    final_text = direct_text
-                    final_artifact_ms = elapsed_ms
+                task = result.get("task")
+                if isinstance(task, dict):
+                    note_task(task.get("id"))
+                    record_status((task.get("status") or {}).get("state"))
+                    for artifact in task.get("artifacts") or []:
+                        if (text := _first_part_text(artifact.get("parts"))):
+                            final_text = text
+                            final_artifact_ms = elapsed_ms
+                            break
+                message = result.get("message")
+                if isinstance(message, dict):
+                    direct_message = _first_part_text(message.get("parts"))
 
-        if canceled and not final_text:
+        if terminal_state in {"CANCELED", "CANCELLED"}:
             return A2AStreamResult(
                 payload={"ok": False, "canceled": True},
                 task_id=task_id,
@@ -281,22 +334,28 @@ async def send_a2a_stream(
                 final_artifact_ms=final_artifact_ms,
                 canceled=True,
             )
-        if not final_text:
+        if direct_message and task_id is None:
+            final_text = direct_message
+        elif not final_text:
             raise RuntimeError("A2A 스트리밍 응답에 최종 산출물이 없습니다.")
+        elif terminal_state not in {"COMPLETED", "FAILED", "REJECTED"}:
+            raise RuntimeError("A2A 스트리밍 응답에 작업 종료 상태가 없습니다.")
+        parsed = json.loads(final_text)
+        if not isinstance(parsed, dict) or (terminal_state in {"FAILED", "REJECTED"} and parsed.get("ok") is not False):
+            raise RuntimeError("A2A 스트리밍 최종 산출물이 작업 상태와 일치하지 않습니다.")
 
         return A2AStreamResult(
-            payload=json.loads(final_text),
+            payload=parsed,
             task_id=task_id,
             progress_events=progress_events,
             first_progress_ms=first_progress_ms,
             final_artifact_ms=final_artifact_ms,
-            canceled=canceled,
         )
 
     async with traced_span(
         "a2a.send_streaming_message",
         run_type="chain",
-        inputs={"base_url": base_url, "context_id": context_id, "idempotencyKey": idempotency_key},
+        inputs={"base_url": base_url, "context_id": context_id, "payload": enriched_payload},
         tags=["a2a", "streaming"],
     ) as span:
         try:
