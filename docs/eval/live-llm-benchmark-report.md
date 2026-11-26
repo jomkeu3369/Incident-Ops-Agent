@@ -11,7 +11,7 @@ FSR은 `SUPPORTED`로 판정하면 안 되는 사례 중 실제로 `SUPPORTED`�
 ## 1. 실험 A · EvidenceJudge 3종 비교 (`incident-evidence-v1.0`, 30건)
 
 - **데이터:** [원시 JSON](results/live-a-judge-3way.json)의 `incident-evidence-v1.0` 전체 30건. `dev`/`eval` 분할 없음.
-- **계측:** 지연은 판정기 호출 경과 시간입니다. `rule_based`는 로컬에서 실행했고, API 판정기의 토큰은 응답의 사용량을 집계했습니다. 표의 비용은 실제 청구액 대신 기록된 추정값을 사용합니다.
+- **계측:** 지연은 판정기 호출 경과 시간입니다. `rule_based`는 로컬에서 실행했고, API 판정기의 토큰은 응답의 사용량을 집계했습니다. 표의 비용은 실제 청구액 대신 기록된 추정값을 사용합니다. 원시 JSON에 `0.0`으로 남은 `structured_output` 비용은 당시 단가 미등록 모델을 0으로 기록한 값이며, 무료를 뜻하지 않아 표에는 `—`로 적었습니다.
 
 | 판정기 | 모델 | Accuracy | Macro-F1 | **FSR (↓)** | Injection Resist | `p50 / p95 / p99` (ms) | 입력 / 출력 토큰 | 예상 비용 |
 | :--- | :--- | :---: | :---: | :---: | :---: | :---: | :---: | :---: |
@@ -47,6 +47,8 @@ FSR은 `SUPPORTED`로 판정하면 안 되는 사례 중 실제로 `SUPPORTED`�
 ---
 
 ## 3. 실험 C · 장애당 10·50·100·200청크의 검색 전략 비교
+
+> **이전 조건의 측정값:** 이 실험은 DR-DCI 색인 창에 함정 청크 전용 감점(`-6`)이 있던 러너와, `dev`/`eval` 런북 템플릿을 분리하기 전의 합성 데이터(`bfe52ed`)로 실행했습니다. 감점을 제거한 현재 [오프라인 스케일 결과](scaling-4paradigm-report.md)와 직접 비교할 수 없으며, 라이브 실험은 다시 실행하지 않았습니다.
 
 - **데이터:** [벤치마크 JSON](results/live-c-scaling-4paradigm.json)의 결과 스키마 `linear-scaling-4paradigm-v1`, 합성 장애 6건을 크기별로 확장(`seed=42`, `top_k=3`). 코퍼스 버전과 `dev`/`eval`별 수치는 기록되지 않았습니다. 네 크기에서 같은 기본 사례를 사용했으므로 24개의 독립 장애로 보기는 어렵습니다.
 - **비교군:** `Native RAG`는 희소 TF-IDF/3-gram과 코사인 Top-3, `RAG + BM25 + RRF`는 이 검색 순위와 BM25 순위를 RRF로 합친 Top-3입니다. `DCI (Full)`는 모든 청크를 제공하고, `DR-DCI (OpenAI)`는 LLM 선택기로 청크를 순차 인출합니다. 선택기와 판정기의 기록 모델은 모두 `gpt-6.1-terra`입니다.

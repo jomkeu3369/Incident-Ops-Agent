@@ -4,11 +4,12 @@ import argparse
 import asyncio
 from collections import Counter
 import csv
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, replace
 import json
 import math
 from pathlib import Path
 import random
+import re
 import time
 from typing import Any, Literal, Sequence
 
@@ -38,6 +39,8 @@ from log_agent.services import _extract_command, _summarize_chunk
 
 ParadigmName = Literal["native_rag", "hybrid_rag_rrf", "dci", "dr_dci"]
 ALL_PARADIGMS: tuple[ParadigmName, ...] = ("native_rag", "hybrid_rag_rrf", "dci", "dr_dci")
+# DR-DCI 색인 창 정렬에서 런북에 주는 가산점. 영향 측정 시 0으로 끈다
+RUNBOOK_INDEX_BONUS = 18
 
 # N이 커질수록 정적 RAG/BM25를 실제로 혼란시키는 현실적인 Hard Distractor 로그 템플릿
 _HARD_DISTRACTOR_TEMPLATES: tuple[tuple[str, str, str], ...] = (
@@ -56,9 +59,14 @@ _HARD_DISTRACTOR_TEMPLATES: tuple[tuple[str, str, str], ...] = (
 )
 
 
-def _tokenize_bm25(text: str) -> list[str]:
-    import re
+def _strip_chunk_refs(case: DrDciBenchmarkCase) -> DrDciBenchmarkCase:
+    """본문이 다른 청크를 ID로 직접 가리키는 단서를 일반 문구로 바꾼다(영향 측정용)."""
+    ids = sorted((re.escape(chunk.chunk_id) for chunk in case.chunks), key=len, reverse=True)
+    pattern = re.compile(r"(?<![A-Za-z0-9-])(?:" + "|".join(ids) + r")(?![A-Za-z0-9-])")
+    return replace(case, chunks=tuple(replace(chunk, content=pattern.sub("관련 진단 로그", chunk.content)) for chunk in case.chunks))
 
+
+def _tokenize_bm25(text: str) -> list[str]:
     return re.findall(r"[a-z0-9가-힣_.-]+", text.lower())
 
 
@@ -250,10 +258,11 @@ async def _run_hybrid_rag_rrf(
 class _IndexedWindowSelector:
     """대규모 코퍼스(N=10..500)에서 색인 검색 필터링으로 후보 창(top-M 메타데이터)만 읽고 동적 피벗하는 DR-DCI 선택기."""
 
-    def __init__(self, *, index_window: int = 12, inner_selector: DrDciSelector | None = None) -> None:
+    def __init__(self, *, index_window: int = 12, inner_selector: DrDciSelector | None = None, runbook_bonus: int = RUNBOOK_INDEX_BONUS) -> None:
         self._inner: DrDciSelector = inner_selector or AdaptiveEvidenceSelector()
         self.name = f"indexed_{self._inner.name}"
         self._index_window = index_window
+        self._runbook_bonus = runbook_bonus
         self.last_candidate_meta_chars: int = 0
 
     def _prefilter_index(
@@ -276,7 +285,7 @@ class _IndexedWindowSelector:
             if cid in direct_refs:
                 sc += 100
             if ctype == "RUNBOOK":
-                sc += 18
+                sc += self._runbook_bonus
             sc += sum(8 for tok in clue_tokens if tok in hay)
             sc += sum(5 for kw in kw_lower if kw in hay)
             scored.append((sc, -int(meta.get("sequenceOrder") or 0), meta))
@@ -435,6 +444,8 @@ async def run_linear_scaling_benchmark(
     context_limit_tokens: int = 32_000,
     judge: EvidenceJudge | None = None,
     inner_selector: DrDciSelector | None = None,
+    runbook_bonus: int = RUNBOOK_INDEX_BONUS,
+    strip_chunk_refs: bool = False,
 ) -> dict[str, Any]:
     """코퍼스 크기 N이 선형 증가할 때 Native RAG vs Hybrid RAG(BM25+RRF) vs DCI vs DR-DCI의 성능을 실측한다."""
     _, base_cases = generate_synthetic_incidents(count=incidents_per_scale, seed=seed, noise_chunks_per_incident=2)
@@ -448,6 +459,8 @@ async def run_linear_scaling_benchmark(
             _expand_case_to_scale(c, scale_n, seed=seed * 1000 + scale_n * 31 + idx)
             for idx, c in enumerate(base_cases)
         ]
+        if strip_chunk_refs:
+            scaled_cases = [_strip_chunk_refs(c) for c in scaled_cases]
         # 실제 운영 Vector DB / BM25 엔진과 동일하게 문서 인덱스는 쿼리 타이머 바깥에서 사전 구축한다
         prebuilt_indices = {c.case_id: _build_prebuilt_search_index(c) for c in scaled_cases}
 
@@ -474,7 +487,7 @@ async def run_linear_scaling_benchmark(
                     inv_res, _, _ = await _run_full_context(case, max_chunk_chars)
                 else:  # dr_dci
                     backend = InMemoryCorpusBackend(case.chunks)
-                    selector = _IndexedWindowSelector(index_window=12, inner_selector=active_inner)
+                    selector = _IndexedWindowSelector(index_window=12, inner_selector=active_inner, runbook_bonus=runbook_bonus)
                     req = LogInvestigationRequest(
                         incidentCode=case.incident_code,
                         keywords=list(case.query_keywords),
@@ -586,6 +599,8 @@ async def run_linear_scaling_benchmark(
         "context_limit_tokens": context_limit_tokens,
         "judge": type(active_judge).__name__,
         "selector": active_inner.name,
+        "dr_dci_runbook_index_bonus": runbook_bonus,
+        "chunk_id_refs_stripped": strip_chunk_refs,
         "latency_scope": "live_llm_api_inclusive" if is_live_llm else "offline_in_memory_preindexed_no_llm_mcp_rtt",
         "points": [asdict(p) for p in points],
     }
@@ -639,6 +654,8 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser.add_argument("--top-k", type=int, default=3)
     parser.add_argument("--judge", choices=("rule_based", "structured_output", "decisions_api"), default="rule_based")
     parser.add_argument("--selector", choices=("adaptive", "openai"), default="adaptive")
+    parser.add_argument("--runbook-bonus", type=int, default=RUNBOOK_INDEX_BONUS, help="DR-DCI index window bonus for runbooks (ablation: 0)")
+    parser.add_argument("--strip-chunk-refs", action="store_true", help="Replace literal chunk-id references in chunk bodies (ablation)")
     parser.add_argument("--env-file", default=None)
     parser.add_argument("--openai-model", default=None)
     parser.add_argument("--decisions-model", default=None)
@@ -681,6 +698,8 @@ def main(argv: Sequence[str] | None = None) -> int:
                 top_k=args.top_k,
                 judge=judge,
                 inner_selector=inner_selector,
+                runbook_bonus=args.runbook_bonus,
+                strip_chunk_refs=args.strip_chunk_refs,
             ))
     finally:
         flush_langsmith_client(ls_client)

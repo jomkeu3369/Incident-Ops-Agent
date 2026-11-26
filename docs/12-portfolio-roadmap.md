@@ -21,6 +21,8 @@ MVP(Phase 1–4)에서 이미 AG-UI · A2A · MCP 연결과 승인 원장 통제
 
 ## 2. 현재 위치 (Baseline)와 공백
 
+> 아래 표는 **Phase 5 착수 시점**의 기준선입니다. 표의 공백 중 일부(체크포인터, A2A 스트리밍, MCP 리소스, 에이전틱 DR-DCI, 시각화 등)는 이후 페이즈에서 구현했습니다. 현재 구현·검증 상태는 [검증 결과서](10-verification.md)를 기준으로 합니다.
+
 | 영역 | 현재 확인된 구현·검증 | 포트폴리오 관점의 공백 |
 | :--- | :--- | :--- |
 | **MVP (Phase 1–4)** | Spring REST/MyBatis/Flyway/MCP, Agent 3종(`supervisor`·`log_agent`·`remediation_agent`), Next.js 워크스페이스·로그/계획 관리 구현 완료. 대표 시나리오 5종 검증([검증 결과서](10-verification.md)). | 결제 서비스 502 시나리오 1종 중심, 복구 실행 시뮬레이션, 템플릿 포스트모템. |

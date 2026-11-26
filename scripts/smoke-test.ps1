@@ -59,9 +59,8 @@ function Invoke-Api {
             throw
         }
         $statusCode = [int]$webResp.StatusCode
-        $reader = New-Object System.IO.StreamReader($webResp.GetResponseStream())
-        $content = $reader.ReadToEnd()
-        $reader.Close()
+        # Windows PowerShell 5.1과 PowerShell 7 모두 오류 응답 본문을 ErrorDetails에 담는다
+        $content = if ($_.ErrorDetails) { [string]$_.ErrorDetails.Message } else { "" }
         return @{ Status = $statusCode; Content = $content }
     }
 }
@@ -205,6 +204,14 @@ if ($workerFailedObj.incidentStatus -eq "RESOLVED" -or $null -ne $workerFailedOb
 }
 $noPostMortem = Invoke-Api -Method "GET" -Url "$BaseUrl/api/incidents/$smokeIncident/postmortem" -Headers $authHeaders
 Assert-Status -Name "Postmortem absent while worker failure is held (404)" -Actual $noPostMortem.Status -Expected 404
+# 응답값이 아니라 원장에 저장된 상태를 다시 읽어 확인한다
+$heldRes = Invoke-Api -Method "GET" -Url "$BaseUrl/api/incidents/$smokeIncident" -Headers $authHeaders
+Assert-Status -Name "Fetch incident after worker failure" -Actual $heldRes.Status -Expected 200
+$held = $heldRes.Content | ConvertFrom-Json
+$failedRows = @($held.executions | Where-Object { $_.approvalId -eq $failApprovalId -and $_.executionStatus -eq "FAILED" })
+if ($held.incident.status -eq "RESOLVED" -or $failedRows.Count -ne 1) {
+    throw "[FAIL] Ledger must keep the incident unresolved with one FAILED execution (status=$($held.incident.status), rows=$($failedRows.Count))"
+}
 Write-Host "[PASS] Worker FAILED execution held incident at $($workerFailedObj.incidentStatus) with no postmortem" -ForegroundColor Green
 
 # 4c. Approved command mismatch blocked (409) -> Approved SUCCESS resolves incident with postmortem
@@ -252,6 +259,13 @@ Assert-Status -Name "Approved completion resolves incident" -Actual $completed.S
 $completedObj = $completed.Content | ConvertFrom-Json
 if ($completedObj.incidentStatus -ne "RESOLVED" -or $null -eq $completedObj.postMortem) {
     throw "[FAIL] Expected incidentStatus=RESOLVED with postMortem, got $($completedObj.incidentStatus)"
+}
+$resolvedRes = Invoke-Api -Method "GET" -Url "$BaseUrl/api/incidents/$smokeIncident" -Headers $authHeaders
+Assert-Status -Name "Fetch incident after completion" -Actual $resolvedRes.Status -Expected 200
+$resolved = $resolvedRes.Content | ConvertFrom-Json
+$successRows = @($resolved.executions | Where-Object { $_.approvalId -eq $approvalId -and $_.executionStatus -eq "SUCCESS" })
+if ($resolved.incident.status -ne "RESOLVED" -or $null -eq $resolved.postMortem -or $successRows.Count -ne 1) {
+    throw "[FAIL] Ledger must record RESOLVED, postmortem and one SUCCESS execution (status=$($resolved.incident.status), rows=$($successRows.Count))"
 }
 Write-Host "[PASS] Incident transitioned to RESOLVED with postmortem" -ForegroundColor Green
 

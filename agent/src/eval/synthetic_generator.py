@@ -286,7 +286,7 @@ def generate_synthetic_incidents(
                 CorpusChunkFixture(c_root, "LOG", inc, svc, "컨테이너 커널 힙 프로파일", "kernel,profile,heap",
                                    f"ERROR reason=OOMKilled exitCode=137 after deploy of {cur_v}. 이전 버전 {prev_v} 힙 39% 정상.", seq + 1),
                 CorpusChunkFixture(rb_main, "RUNBOOK", None, svc, "컨테이너 OOMKilled 힙 급증 롤백 런북", "OOMKilled,memory,rollback,kubectl",
-                                   f"1. 배포 직후 OOMKilled 및 이전 버전 정상 확인 시 즉시 롤백\nkubectl rollout undo deployment/{svc}", 1),
+                                   f"1. 커널 종료 사유가 배포 이후 OOMKilled이고 직전 버전의 힙 지표가 정상이면 롤백한다.\n2. 롤아웃 완료 후 파드 재시작 횟수를 다시 확인한다.\nkubectl rollout undo deployment/{svc}", 1),
                 _distractor_rb(idx, svc),
             ])
             req_ids = (c_sym, c_root, rb_main)

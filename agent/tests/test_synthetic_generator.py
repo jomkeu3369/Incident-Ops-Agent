@@ -153,6 +153,14 @@ def test_synthetic_dev_and_eval_have_zero_template_title_and_body_overlap():
     assert dev_rb_templates.isdisjoint(eval_rb_templates), (
         f"dev/eval RUNBOOK template leak: {dev_rb_templates & eval_rb_templates}"
     )
+    # 제목만 다르고 본문이 같은(또는 그 반대인) 템플릿도 누출이다
+    for kind, dev_pairs, eval_pairs in (
+        ("LOG", dev_log_templates, eval_log_templates),
+        ("RUNBOOK", dev_rb_templates, eval_rb_templates),
+    ):
+        for index, field in enumerate(("title", "content")):
+            shared = {p[index] for p in dev_pairs} & {p[index] for p in eval_pairs}
+            assert not shared, f"dev/eval {kind} {field} leak: {shared}"
 
 
 def test_synthetic_cli_runs_end_to_end_with_benchmark_summary(tmp_path: Path):
