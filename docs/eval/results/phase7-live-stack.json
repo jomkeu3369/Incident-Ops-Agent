@@ -1,8 +1,8 @@
 {
   "schemaVersion": "phase7-live-stack-v1",
   "metadata": {
-    "recordedAt": "2026-11-26T06:20:07+00:00",
-    "commit": "5f2af2fc24b7fffdb25870956cb34308c0b70b2b",
+    "recordedAt": "2026-11-26T07:00:58+00:00",
+    "commit": "8bb874f4fa5d7f2f53456eb507212d8110cc8b9a",
     "workingTreeDirty": false,
     "host": {
       "os": "Windows-11-10.0.26200-SP0",
@@ -32,7 +32,9 @@
       ],
       "judge": "rule_based (no LLM calls)",
       "execution": "simulated rollback",
-      "processKill": "docker kill (SIGKILL) of the supervisor only, while the SSE stream is open when a run is active",
+      "processKill": "docker kill (SIGKILL) of the supervisor only, while the SSE stream is still open",
+      "preCommitControl": "remediation_agent is paused (docker pause) so the supervisor cannot commit before the interruption",
+      "clientConnectRetries": 5,
       "verificationFixtures": "per-incident deploy-correlation log chunk and one shared verification runbook (seed demo data alone ends BLOCKED under rule_based)"
     }
   },
@@ -56,8 +58,11 @@
           "title"
         ],
         "readOk": true,
+        "ownChunkPulled": true,
         "crossIncidentRejected": true,
-        "unapprovedCompletionRejected": true
+        "crossIncidentError": "해당 장애에서 조회할 수 있는 청크를 찾지 못했습니다.",
+        "unapprovedCompletionRejected": true,
+        "unapprovedCompletionError": "승인(APPROVED)되지 않은 요청입니다. 현재 상태: PENDING"
       },
       "investigator": {
         "tools": [
@@ -77,7 +82,9 @@
           "title"
         ],
         "readOk": true,
-        "crossIncidentRejected": true
+        "ownChunkPulled": true,
+        "crossIncidentRejected": true,
+        "crossIncidentError": "해당 장애에서 조회할 수 있는 청크를 찾지 못했습니다."
       },
       "negative": {
         "invalidTokenStatus": 401,
@@ -113,8 +120,11 @@
           "title"
         ],
         "readOk": true,
+        "ownChunkPulled": true,
         "crossIncidentRejected": true,
-        "unapprovedCompletionRejected": true
+        "crossIncidentError": "해당 장애에서 조회할 수 있는 청크를 찾지 못했습니다.",
+        "unapprovedCompletionRejected": true,
+        "unapprovedCompletionError": "승인(APPROVED)되지 않은 요청입니다. 현재 상태: PENDING"
       },
       "investigator": {
         "tools": [
@@ -134,7 +144,9 @@
           "title"
         ],
         "readOk": true,
-        "crossIncidentRejected": true
+        "ownChunkPulled": true,
+        "crossIncidentRejected": true,
+        "crossIncidentError": "해당 장애에서 조회할 수 있는 청크를 찾지 못했습니다."
       },
       "negative": {
         "invalidTokenStatus": 401,
@@ -158,14 +170,14 @@
       "passed": true,
       "transport": "loopback HTTP -> log_agent container (client-side timing)",
       "firstProgressMs": {
-        "p50": 14.17,
-        "p95": 17.17,
-        "p99": 17.2
+        "p50": 13.13,
+        "p95": 16.16,
+        "p99": 17.69
       },
       "finalArtifactMs": {
-        "p50": 249.3,
-        "p95": 286.75,
-        "p99": 300.57
+        "p50": 262.58,
+        "p95": 317.65,
+        "p99": 320.81
       }
     },
     "timeout": {
@@ -191,6 +203,7 @@
       "passed": true
     },
     "workerSwapViaSupervisor": {
+      "originalWorkerPaused": true,
       "finalUiStatus": "AWAITING_APPROVAL",
       "passed": true
     }
@@ -217,7 +230,7 @@
     "runs": {
       "during_investigation": [
         {
-          "incident": "INC-LV-26152007-005",
+          "incident": "INC-LV-26160058-005",
           "interruptObserved": true,
           "ledgerBeforeResume": {
             "incidentStatus": "OPEN",
@@ -235,6 +248,7 @@
           },
           "finalUiStatus": "AWAITING_APPROVAL",
           "completedInvestigationCalls": 1,
+          "supervisorRecreated": false,
           "passed": true,
           "attempt": 1,
           "transport": "direct",
@@ -242,7 +256,7 @@
           "seconds": 1.56
         },
         {
-          "incident": "INC-LV-26152007-008",
+          "incident": "INC-LV-26160058-008",
           "interruptObserved": true,
           "ledgerBeforeResume": {
             "incidentStatus": "OPEN",
@@ -260,14 +274,15 @@
           },
           "finalUiStatus": "AWAITING_APPROVAL",
           "completedInvestigationCalls": 1,
+          "supervisorRecreated": false,
           "passed": true,
           "attempt": 2,
           "transport": "caddy",
           "processKilled": false,
-          "seconds": 1.58
+          "seconds": 2.1
         },
         {
-          "incident": "INC-LV-26152007-011",
+          "incident": "INC-LV-26160058-011",
           "interruptObserved": true,
           "ledgerBeforeResume": {
             "incidentStatus": "OPEN",
@@ -285,14 +300,15 @@
           },
           "finalUiStatus": "AWAITING_APPROVAL",
           "completedInvestigationCalls": 1,
+          "supervisorRecreated": false,
           "passed": true,
           "attempt": 3,
           "transport": "direct",
           "processKilled": false,
-          "seconds": 1.55
+          "seconds": 1.9
         },
         {
-          "incident": "INC-LV-26152007-014",
+          "incident": "INC-LV-26160058-014",
           "interruptObserved": true,
           "ledgerBeforeResume": {
             "incidentStatus": "OPEN",
@@ -310,14 +326,41 @@
           },
           "finalUiStatus": "AWAITING_APPROVAL",
           "completedInvestigationCalls": 1,
+          "supervisorRecreated": false,
           "passed": true,
           "attempt": 4,
           "transport": "caddy",
+          "processKilled": false,
+          "seconds": 1.6
+        },
+        {
+          "incident": "INC-LV-26160058-017",
+          "interruptObserved": true,
+          "ledgerBeforeResume": {
+            "incidentStatus": "OPEN",
+            "plans": 0,
+            "approvals": 0,
+            "executions": 0,
+            "postMortem": false
+          },
+          "ledgerAfter": {
+            "incidentStatus": "WAITING_APPROVAL",
+            "plans": 1,
+            "approvals": 1,
+            "executions": 0,
+            "postMortem": false
+          },
+          "finalUiStatus": "AWAITING_APPROVAL",
+          "completedInvestigationCalls": 1,
+          "supervisorRecreated": false,
+          "passed": true,
+          "attempt": 5,
+          "transport": "direct",
           "processKilled": false,
           "seconds": 1.53
         },
         {
-          "incident": "INC-LV-26152007-017",
+          "incident": "INC-LV-26160058-020",
           "interruptObserved": true,
           "ledgerBeforeResume": {
             "incidentStatus": "OPEN",
@@ -335,39 +378,15 @@
           },
           "finalUiStatus": "AWAITING_APPROVAL",
           "completedInvestigationCalls": 1,
-          "passed": true,
-          "attempt": 5,
-          "transport": "direct",
-          "processKilled": false,
-          "seconds": 1.34
-        },
-        {
-          "incident": "INC-LV-26152007-020",
-          "interruptObserved": true,
-          "ledgerBeforeResume": {
-            "incidentStatus": "OPEN",
-            "plans": 0,
-            "approvals": 0,
-            "executions": 0,
-            "postMortem": false
-          },
-          "ledgerAfter": {
-            "incidentStatus": "WAITING_APPROVAL",
-            "plans": 1,
-            "approvals": 1,
-            "executions": 0,
-            "postMortem": false
-          },
-          "finalUiStatus": "AWAITING_APPROVAL",
-          "completedInvestigationCalls": 1,
+          "supervisorRecreated": true,
           "passed": true,
           "attempt": 6,
           "transport": "caddy",
           "processKilled": true,
-          "seconds": 35.25
+          "seconds": 40.71
         },
         {
-          "incident": "INC-LV-26152007-023",
+          "incident": "INC-LV-26160058-023",
           "interruptObserved": true,
           "ledgerBeforeResume": {
             "incidentStatus": "OPEN",
@@ -385,14 +404,15 @@
           },
           "finalUiStatus": "AWAITING_APPROVAL",
           "completedInvestigationCalls": 1,
+          "supervisorRecreated": false,
           "passed": true,
           "attempt": 7,
           "transport": "direct",
           "processKilled": true,
-          "seconds": 4.61
+          "seconds": 4.67
         },
         {
-          "incident": "INC-LV-26152007-026",
+          "incident": "INC-LV-26160058-026",
           "interruptObserved": true,
           "ledgerBeforeResume": {
             "incidentStatus": "OPEN",
@@ -410,14 +430,15 @@
           },
           "finalUiStatus": "AWAITING_APPROVAL",
           "completedInvestigationCalls": 1,
+          "supervisorRecreated": true,
           "passed": true,
           "attempt": 8,
           "transport": "caddy",
           "processKilled": true,
-          "seconds": 35.21
+          "seconds": 68.1
         },
         {
-          "incident": "INC-LV-26152007-029",
+          "incident": "INC-LV-26160058-029",
           "interruptObserved": true,
           "ledgerBeforeResume": {
             "incidentStatus": "OPEN",
@@ -435,14 +456,15 @@
           },
           "finalUiStatus": "AWAITING_APPROVAL",
           "completedInvestigationCalls": 1,
+          "supervisorRecreated": false,
           "passed": true,
           "attempt": 9,
           "transport": "direct",
           "processKilled": true,
-          "seconds": 4.7
+          "seconds": 4.64
         },
         {
-          "incident": "INC-LV-26152007-032",
+          "incident": "INC-LV-26160058-032",
           "interruptObserved": true,
           "ledgerBeforeResume": {
             "incidentStatus": "OPEN",
@@ -460,16 +482,17 @@
           },
           "finalUiStatus": "AWAITING_APPROVAL",
           "completedInvestigationCalls": 1,
+          "supervisorRecreated": true,
           "passed": true,
           "attempt": 10,
           "transport": "caddy",
           "processKilled": true,
-          "seconds": 4.69
+          "seconds": 40.6
         }
       ],
       "awaiting_approval": [
         {
-          "incident": "INC-LV-26152007-006",
+          "incident": "INC-LV-26160058-006",
           "interruptObserved": true,
           "ledgerBeforeRestore": {
             "incidentStatus": "WAITING_APPROVAL",
@@ -490,14 +513,15 @@
             1,
             1
           ],
+          "supervisorRecreated": false,
           "passed": true,
           "attempt": 1,
           "transport": "direct",
           "processKilled": false,
-          "seconds": 2.13
+          "seconds": 2.02
         },
         {
-          "incident": "INC-LV-26152007-009",
+          "incident": "INC-LV-26160058-009",
           "interruptObserved": true,
           "ledgerBeforeRestore": {
             "incidentStatus": "WAITING_APPROVAL",
@@ -518,14 +542,15 @@
             1,
             1
           ],
+          "supervisorRecreated": false,
           "passed": true,
           "attempt": 2,
           "transport": "caddy",
           "processKilled": false,
-          "seconds": 2.01
+          "seconds": 2.6
         },
         {
-          "incident": "INC-LV-26152007-012",
+          "incident": "INC-LV-26160058-012",
           "interruptObserved": true,
           "ledgerBeforeRestore": {
             "incidentStatus": "WAITING_APPROVAL",
@@ -546,14 +571,15 @@
             1,
             1
           ],
+          "supervisorRecreated": false,
           "passed": true,
           "attempt": 3,
           "transport": "direct",
           "processKilled": false,
-          "seconds": 2.0
+          "seconds": 2.27
         },
         {
-          "incident": "INC-LV-26152007-015",
+          "incident": "INC-LV-26160058-015",
           "interruptObserved": true,
           "ledgerBeforeRestore": {
             "incidentStatus": "WAITING_APPROVAL",
@@ -574,14 +600,15 @@
             1,
             1
           ],
+          "supervisorRecreated": false,
           "passed": true,
           "attempt": 4,
           "transport": "caddy",
           "processKilled": false,
-          "seconds": 2.08
+          "seconds": 2.04
         },
         {
-          "incident": "INC-LV-26152007-018",
+          "incident": "INC-LV-26160058-018",
           "interruptObserved": true,
           "ledgerBeforeRestore": {
             "incidentStatus": "WAITING_APPROVAL",
@@ -602,14 +629,15 @@
             1,
             1
           ],
+          "supervisorRecreated": false,
           "passed": true,
           "attempt": 5,
           "transport": "direct",
           "processKilled": false,
-          "seconds": 1.74
+          "seconds": 1.99
         },
         {
-          "incident": "INC-LV-26152007-021",
+          "incident": "INC-LV-26160058-021",
           "interruptObserved": true,
           "ledgerBeforeRestore": {
             "incidentStatus": "WAITING_APPROVAL",
@@ -630,373 +658,227 @@
             1,
             1
           ],
+          "supervisorRecreated": false,
           "passed": true,
           "attempt": 6,
-          "transport": "caddy",
-          "processKilled": true,
-          "seconds": 35.64
-        },
-        {
-          "incident": "INC-LV-26152007-024",
-          "interruptObserved": true,
-          "ledgerBeforeRestore": {
-            "incidentStatus": "WAITING_APPROVAL",
-            "plans": 1,
-            "approvals": 1,
-            "executions": 0,
-            "postMortem": false
-          },
-          "ledgerAfter": {
-            "incidentStatus": "WAITING_APPROVAL",
-            "plans": 1,
-            "approvals": 1,
-            "executions": 0,
-            "postMortem": false
-          },
-          "finalUiStatus": "AWAITING_APPROVAL",
-          "completedInvestigationCalls": [
-            1,
-            1
-          ],
-          "passed": true,
-          "attempt": 7,
-          "transport": "direct",
-          "processKilled": true,
-          "seconds": 36.57
-        },
-        {
-          "incident": "INC-LV-26152007-027",
-          "interruptObserved": true,
-          "ledgerBeforeRestore": {
-            "incidentStatus": "WAITING_APPROVAL",
-            "plans": 1,
-            "approvals": 1,
-            "executions": 0,
-            "postMortem": false
-          },
-          "ledgerAfter": {
-            "incidentStatus": "WAITING_APPROVAL",
-            "plans": 1,
-            "approvals": 1,
-            "executions": 0,
-            "postMortem": false
-          },
-          "finalUiStatus": "AWAITING_APPROVAL",
-          "completedInvestigationCalls": [
-            1,
-            1
-          ],
-          "passed": true,
-          "attempt": 8,
-          "transport": "caddy",
-          "processKilled": true,
-          "seconds": 5.21
-        },
-        {
-          "incident": "INC-LV-26152007-030",
-          "interruptObserved": true,
-          "ledgerBeforeRestore": {
-            "incidentStatus": "WAITING_APPROVAL",
-            "plans": 1,
-            "approvals": 1,
-            "executions": 0,
-            "postMortem": false
-          },
-          "ledgerAfter": {
-            "incidentStatus": "WAITING_APPROVAL",
-            "plans": 1,
-            "approvals": 1,
-            "executions": 0,
-            "postMortem": false
-          },
-          "finalUiStatus": "AWAITING_APPROVAL",
-          "completedInvestigationCalls": [
-            1,
-            1
-          ],
-          "passed": true,
-          "attempt": 9,
-          "transport": "direct",
-          "processKilled": true,
-          "seconds": 41.01
-        },
-        {
-          "incident": "INC-LV-26152007-033",
-          "interruptObserved": true,
-          "ledgerBeforeRestore": {
-            "incidentStatus": "WAITING_APPROVAL",
-            "plans": 1,
-            "approvals": 1,
-            "executions": 0,
-            "postMortem": false
-          },
-          "ledgerAfter": {
-            "incidentStatus": "WAITING_APPROVAL",
-            "plans": 1,
-            "approvals": 1,
-            "executions": 0,
-            "postMortem": false
-          },
-          "finalUiStatus": "AWAITING_APPROVAL",
-          "completedInvestigationCalls": [
-            1,
-            1
-          ],
-          "passed": true,
-          "attempt": 10,
           "transport": "caddy",
           "processKilled": true,
           "seconds": 5.02
-        }
-      ],
-      "during_completion": [
+        },
         {
-          "incident": "INC-LV-26152007-007",
+          "incident": "INC-LV-26160058-024",
           "interruptObserved": true,
-          "disconnectAfterCommit": false,
-          "ledgerBeforeRecovery": {
+          "ledgerBeforeRestore": {
             "incidentStatus": "WAITING_APPROVAL",
             "plans": 1,
             "approvals": 1,
             "executions": 0,
             "postMortem": false
           },
-          "restoredUiStatus": "AWAITING_EXECUTION_RESULT",
-          "retriedSameApproval": true,
-          "finalUiStatus": "RESOLVED",
           "ledgerAfter": {
-            "incidentStatus": "RESOLVED",
-            "plans": 1,
-            "approvals": 1,
-            "executions": 1,
-            "postMortem": true
-          },
-          "passed": true,
-          "attempt": 1,
-          "transport": "direct",
-          "processKilled": false,
-          "seconds": 2.22
-        },
-        {
-          "incident": "INC-LV-26152007-010",
-          "interruptObserved": true,
-          "disconnectAfterCommit": false,
-          "ledgerBeforeRecovery": {
             "incidentStatus": "WAITING_APPROVAL",
             "plans": 1,
             "approvals": 1,
             "executions": 0,
             "postMortem": false
           },
-          "restoredUiStatus": "AWAITING_EXECUTION_RESULT",
-          "retriedSameApproval": true,
-          "finalUiStatus": "RESOLVED",
-          "ledgerAfter": {
-            "incidentStatus": "RESOLVED",
-            "plans": 1,
-            "approvals": 1,
-            "executions": 1,
-            "postMortem": true
-          },
-          "passed": true,
-          "attempt": 2,
-          "transport": "caddy",
-          "processKilled": false,
-          "seconds": 2.23
-        },
-        {
-          "incident": "INC-LV-26152007-013",
-          "interruptObserved": true,
-          "disconnectAfterCommit": true,
-          "ledgerBeforeRecovery": {
-            "incidentStatus": "RESOLVED",
-            "plans": 1,
-            "approvals": 1,
-            "executions": 1,
-            "postMortem": true
-          },
-          "restoredUiStatus": "RESOLVED",
-          "retriedSameApproval": false,
-          "finalUiStatus": "RESOLVED",
-          "ledgerAfter": {
-            "incidentStatus": "RESOLVED",
-            "plans": 1,
-            "approvals": 1,
-            "executions": 1,
-            "postMortem": true
-          },
-          "passed": true,
-          "attempt": 3,
-          "transport": "direct",
-          "processKilled": false,
-          "seconds": 2.03
-        },
-        {
-          "incident": "INC-LV-26152007-016",
-          "interruptObserved": true,
-          "disconnectAfterCommit": true,
-          "ledgerBeforeRecovery": {
-            "incidentStatus": "RESOLVED",
-            "plans": 1,
-            "approvals": 1,
-            "executions": 1,
-            "postMortem": true
-          },
-          "restoredUiStatus": "RESOLVED",
-          "retriedSameApproval": false,
-          "finalUiStatus": "RESOLVED",
-          "ledgerAfter": {
-            "incidentStatus": "RESOLVED",
-            "plans": 1,
-            "approvals": 1,
-            "executions": 1,
-            "postMortem": true
-          },
-          "passed": true,
-          "attempt": 4,
-          "transport": "caddy",
-          "processKilled": false,
-          "seconds": 1.83
-        },
-        {
-          "incident": "INC-LV-26152007-019",
-          "interruptObserved": true,
-          "disconnectAfterCommit": false,
-          "ledgerBeforeRecovery": {
-            "incidentStatus": "WAITING_APPROVAL",
-            "plans": 1,
-            "approvals": 1,
-            "executions": 0,
-            "postMortem": false
-          },
-          "restoredUiStatus": "AWAITING_EXECUTION_RESULT",
-          "retriedSameApproval": true,
-          "finalUiStatus": "RESOLVED",
-          "ledgerAfter": {
-            "incidentStatus": "RESOLVED",
-            "plans": 1,
-            "approvals": 1,
-            "executions": 1,
-            "postMortem": true
-          },
-          "passed": true,
-          "attempt": 5,
-          "transport": "direct",
-          "processKilled": false,
-          "seconds": 1.85
-        },
-        {
-          "incident": "INC-LV-26152007-022",
-          "interruptObserved": true,
-          "disconnectAfterCommit": false,
-          "ledgerBeforeRecovery": {
-            "incidentStatus": "RESOLVED",
-            "plans": 1,
-            "approvals": 1,
-            "executions": 1,
-            "postMortem": true
-          },
-          "restoredUiStatus": "RESOLVED",
-          "retriedSameApproval": false,
-          "finalUiStatus": "RESOLVED",
-          "ledgerAfter": {
-            "incidentStatus": "RESOLVED",
-            "plans": 1,
-            "approvals": 1,
-            "executions": 1,
-            "postMortem": true
-          },
-          "passed": true,
-          "attempt": 6,
-          "transport": "caddy",
-          "processKilled": true,
-          "seconds": 4.97
-        },
-        {
-          "incident": "INC-LV-26152007-025",
-          "interruptObserved": true,
-          "disconnectAfterCommit": true,
-          "ledgerBeforeRecovery": {
-            "incidentStatus": "RESOLVED",
-            "plans": 1,
-            "approvals": 1,
-            "executions": 1,
-            "postMortem": true
-          },
-          "restoredUiStatus": "RESOLVED",
-          "retriedSameApproval": false,
-          "finalUiStatus": "RESOLVED",
-          "ledgerAfter": {
-            "incidentStatus": "RESOLVED",
-            "plans": 1,
-            "approvals": 1,
-            "executions": 1,
-            "postMortem": true
-          },
+          "finalUiStatus": "AWAITING_APPROVAL",
+          "completedInvestigationCalls": [
+            1,
+            1
+          ],
+          "supervisorRecreated": false,
           "passed": true,
           "attempt": 7,
           "transport": "direct",
-          "processKilled": true,
-          "seconds": 5.3
-        },
-        {
-          "incident": "INC-LV-26152007-028",
-          "interruptObserved": true,
-          "disconnectAfterCommit": true,
-          "ledgerBeforeRecovery": {
-            "incidentStatus": "RESOLVED",
-            "plans": 1,
-            "approvals": 1,
-            "executions": 1,
-            "postMortem": true
-          },
-          "restoredUiStatus": "RESOLVED",
-          "retriedSameApproval": false,
-          "finalUiStatus": "RESOLVED",
-          "ledgerAfter": {
-            "incidentStatus": "RESOLVED",
-            "plans": 1,
-            "approvals": 1,
-            "executions": 1,
-            "postMortem": true
-          },
-          "passed": true,
-          "attempt": 8,
-          "transport": "caddy",
           "processKilled": true,
           "seconds": 5.23
         },
         {
-          "incident": "INC-LV-26152007-031",
+          "incident": "INC-LV-26160058-027",
           "interruptObserved": true,
-          "disconnectAfterCommit": false,
-          "ledgerBeforeRecovery": {
-            "incidentStatus": "RESOLVED",
+          "ledgerBeforeRestore": {
+            "incidentStatus": "WAITING_APPROVAL",
             "plans": 1,
             "approvals": 1,
-            "executions": 1,
-            "postMortem": true
+            "executions": 0,
+            "postMortem": false
           },
-          "restoredUiStatus": "RESOLVED",
-          "retriedSameApproval": false,
-          "finalUiStatus": "RESOLVED",
           "ledgerAfter": {
-            "incidentStatus": "RESOLVED",
+            "incidentStatus": "WAITING_APPROVAL",
             "plans": 1,
             "approvals": 1,
-            "executions": 1,
-            "postMortem": true
+            "executions": 0,
+            "postMortem": false
           },
+          "finalUiStatus": "AWAITING_APPROVAL",
+          "completedInvestigationCalls": [
+            1,
+            1
+          ],
+          "supervisorRecreated": false,
+          "passed": true,
+          "attempt": 8,
+          "transport": "caddy",
+          "processKilled": true,
+          "seconds": 5.13
+        },
+        {
+          "incident": "INC-LV-26160058-030",
+          "interruptObserved": true,
+          "ledgerBeforeRestore": {
+            "incidentStatus": "WAITING_APPROVAL",
+            "plans": 1,
+            "approvals": 1,
+            "executions": 0,
+            "postMortem": false
+          },
+          "ledgerAfter": {
+            "incidentStatus": "WAITING_APPROVAL",
+            "plans": 1,
+            "approvals": 1,
+            "executions": 0,
+            "postMortem": false
+          },
+          "finalUiStatus": "AWAITING_APPROVAL",
+          "completedInvestigationCalls": [
+            1,
+            1
+          ],
+          "supervisorRecreated": true,
           "passed": true,
           "attempt": 9,
           "transport": "direct",
           "processKilled": true,
-          "seconds": 4.91
+          "seconds": 83.16
         },
         {
-          "incident": "INC-LV-26152007-034",
+          "incident": "INC-LV-26160058-033",
+          "interruptObserved": true,
+          "ledgerBeforeRestore": {
+            "incidentStatus": "WAITING_APPROVAL",
+            "plans": 1,
+            "approvals": 1,
+            "executions": 0,
+            "postMortem": false
+          },
+          "ledgerAfter": {
+            "incidentStatus": "WAITING_APPROVAL",
+            "plans": 1,
+            "approvals": 1,
+            "executions": 0,
+            "postMortem": false
+          },
+          "finalUiStatus": "AWAITING_APPROVAL",
+          "completedInvestigationCalls": [
+            1,
+            1
+          ],
+          "supervisorRecreated": true,
+          "passed": true,
+          "attempt": 10,
+          "transport": "caddy",
+          "processKilled": true,
+          "seconds": 122.39
+        }
+      ],
+      "during_completion": [
+        {
+          "incident": "INC-LV-26160058-007",
           "interruptObserved": true,
           "disconnectAfterCommit": false,
+          "rowsAtInterrupt": {
+            "executions": 0,
+            "postMortems": 0
+          },
+          "ledgerBeforeRecovery": {
+            "incidentStatus": "WAITING_APPROVAL",
+            "plans": 1,
+            "approvals": 1,
+            "executions": 0,
+            "postMortem": false
+          },
+          "restoredUiStatus": "AWAITING_EXECUTION_RESULT",
+          "retriedSameApproval": true,
+          "finalUiStatus": "RESOLVED",
+          "resendAfterResolved": {
+            "http": 409,
+            "finalUiStatus": null
+          },
+          "completedInvestigationCalls": [
+            1,
+            1
+          ],
+          "ledgerAfter": {
+            "incidentStatus": "RESOLVED",
+            "plans": 1,
+            "approvals": 1,
+            "executions": 1,
+            "postMortem": true
+          },
+          "rowsAfter": {
+            "executions": 1,
+            "postMortems": 1
+          },
+          "supervisorRecreated": false,
+          "passed": true,
+          "attempt": 1,
+          "transport": "direct",
+          "processKilled": false,
+          "seconds": 4.33
+        },
+        {
+          "incident": "INC-LV-26160058-010",
+          "interruptObserved": true,
+          "disconnectAfterCommit": false,
+          "rowsAtInterrupt": {
+            "executions": 0,
+            "postMortems": 0
+          },
+          "ledgerBeforeRecovery": {
+            "incidentStatus": "WAITING_APPROVAL",
+            "plans": 1,
+            "approvals": 1,
+            "executions": 0,
+            "postMortem": false
+          },
+          "restoredUiStatus": "AWAITING_EXECUTION_RESULT",
+          "retriedSameApproval": true,
+          "finalUiStatus": "RESOLVED",
+          "resendAfterResolved": {
+            "http": 409,
+            "finalUiStatus": null
+          },
+          "completedInvestigationCalls": [
+            1,
+            1
+          ],
+          "ledgerAfter": {
+            "incidentStatus": "RESOLVED",
+            "plans": 1,
+            "approvals": 1,
+            "executions": 1,
+            "postMortem": true
+          },
+          "rowsAfter": {
+            "executions": 1,
+            "postMortems": 1
+          },
+          "supervisorRecreated": false,
+          "passed": true,
+          "attempt": 2,
+          "transport": "caddy",
+          "processKilled": false,
+          "seconds": 4.97
+        },
+        {
+          "incident": "INC-LV-26160058-013",
+          "interruptObserved": true,
+          "disconnectAfterCommit": true,
+          "rowsAtInterrupt": {
+            "executions": 1,
+            "postMortems": 1
+          },
           "ledgerBeforeRecovery": {
             "incidentStatus": "RESOLVED",
             "plans": 1,
@@ -1007,6 +889,14 @@
           "restoredUiStatus": "RESOLVED",
           "retriedSameApproval": false,
           "finalUiStatus": "RESOLVED",
+          "resendAfterResolved": {
+            "http": 409,
+            "finalUiStatus": null
+          },
+          "completedInvestigationCalls": [
+            1,
+            1
+          ],
           "ledgerAfter": {
             "incidentStatus": "RESOLVED",
             "plans": 1,
@@ -1014,16 +904,329 @@
             "executions": 1,
             "postMortem": true
           },
+          "rowsAfter": {
+            "executions": 1,
+            "postMortems": 1
+          },
+          "supervisorRecreated": false,
+          "passed": true,
+          "attempt": 3,
+          "transport": "direct",
+          "processKilled": false,
+          "seconds": 3.0
+        },
+        {
+          "incident": "INC-LV-26160058-016",
+          "interruptObserved": true,
+          "disconnectAfterCommit": true,
+          "rowsAtInterrupt": {
+            "executions": 1,
+            "postMortems": 1
+          },
+          "ledgerBeforeRecovery": {
+            "incidentStatus": "RESOLVED",
+            "plans": 1,
+            "approvals": 1,
+            "executions": 1,
+            "postMortem": true
+          },
+          "restoredUiStatus": "RESOLVED",
+          "retriedSameApproval": false,
+          "finalUiStatus": "RESOLVED",
+          "resendAfterResolved": {
+            "http": 409,
+            "finalUiStatus": null
+          },
+          "completedInvestigationCalls": [
+            1,
+            1
+          ],
+          "ledgerAfter": {
+            "incidentStatus": "RESOLVED",
+            "plans": 1,
+            "approvals": 1,
+            "executions": 1,
+            "postMortem": true
+          },
+          "rowsAfter": {
+            "executions": 1,
+            "postMortems": 1
+          },
+          "supervisorRecreated": false,
+          "passed": true,
+          "attempt": 4,
+          "transport": "caddy",
+          "processKilled": false,
+          "seconds": 3.16
+        },
+        {
+          "incident": "INC-LV-26160058-019",
+          "interruptObserved": true,
+          "disconnectAfterCommit": false,
+          "rowsAtInterrupt": {
+            "executions": 0,
+            "postMortems": 0
+          },
+          "ledgerBeforeRecovery": {
+            "incidentStatus": "WAITING_APPROVAL",
+            "plans": 1,
+            "approvals": 1,
+            "executions": 0,
+            "postMortem": false
+          },
+          "restoredUiStatus": "AWAITING_EXECUTION_RESULT",
+          "retriedSameApproval": true,
+          "finalUiStatus": "RESOLVED",
+          "resendAfterResolved": {
+            "http": 409,
+            "finalUiStatus": null
+          },
+          "completedInvestigationCalls": [
+            1,
+            1
+          ],
+          "ledgerAfter": {
+            "incidentStatus": "RESOLVED",
+            "plans": 1,
+            "approvals": 1,
+            "executions": 1,
+            "postMortem": true
+          },
+          "rowsAfter": {
+            "executions": 1,
+            "postMortems": 1
+          },
+          "supervisorRecreated": false,
+          "passed": true,
+          "attempt": 5,
+          "transport": "direct",
+          "processKilled": false,
+          "seconds": 4.18
+        },
+        {
+          "incident": "INC-LV-26160058-022",
+          "interruptObserved": true,
+          "disconnectAfterCommit": false,
+          "rowsAtInterrupt": {
+            "executions": 0,
+            "postMortems": 0
+          },
+          "ledgerBeforeRecovery": {
+            "incidentStatus": "WAITING_APPROVAL",
+            "plans": 1,
+            "approvals": 1,
+            "executions": 0,
+            "postMortem": false
+          },
+          "restoredUiStatus": "AWAITING_EXECUTION_RESULT",
+          "retriedSameApproval": true,
+          "finalUiStatus": "RESOLVED",
+          "resendAfterResolved": {
+            "http": 409,
+            "finalUiStatus": null
+          },
+          "completedInvestigationCalls": [
+            1,
+            1
+          ],
+          "ledgerAfter": {
+            "incidentStatus": "RESOLVED",
+            "plans": 1,
+            "approvals": 1,
+            "executions": 1,
+            "postMortem": true
+          },
+          "rowsAfter": {
+            "executions": 1,
+            "postMortems": 1
+          },
+          "supervisorRecreated": true,
+          "passed": true,
+          "attempt": 6,
+          "transport": "caddy",
+          "processKilled": true,
+          "seconds": 79.98
+        },
+        {
+          "incident": "INC-LV-26160058-025",
+          "interruptObserved": true,
+          "disconnectAfterCommit": true,
+          "rowsAtInterrupt": {
+            "executions": 1,
+            "postMortems": 1
+          },
+          "ledgerBeforeRecovery": {
+            "incidentStatus": "RESOLVED",
+            "plans": 1,
+            "approvals": 1,
+            "executions": 1,
+            "postMortem": true
+          },
+          "restoredUiStatus": "RESOLVED",
+          "retriedSameApproval": false,
+          "finalUiStatus": "RESOLVED",
+          "resendAfterResolved": {
+            "http": 409,
+            "finalUiStatus": null
+          },
+          "completedInvestigationCalls": [
+            1,
+            1
+          ],
+          "ledgerAfter": {
+            "incidentStatus": "RESOLVED",
+            "plans": 1,
+            "approvals": 1,
+            "executions": 1,
+            "postMortem": true
+          },
+          "rowsAfter": {
+            "executions": 1,
+            "postMortems": 1
+          },
+          "supervisorRecreated": true,
+          "passed": true,
+          "attempt": 7,
+          "transport": "direct",
+          "processKilled": true,
+          "seconds": 47.65
+        },
+        {
+          "incident": "INC-LV-26160058-028",
+          "interruptObserved": true,
+          "disconnectAfterCommit": true,
+          "rowsAtInterrupt": {
+            "executions": 1,
+            "postMortems": 1
+          },
+          "ledgerBeforeRecovery": {
+            "incidentStatus": "RESOLVED",
+            "plans": 1,
+            "approvals": 1,
+            "executions": 1,
+            "postMortem": true
+          },
+          "restoredUiStatus": "RESOLVED",
+          "retriedSameApproval": false,
+          "finalUiStatus": "RESOLVED",
+          "resendAfterResolved": {
+            "http": 409,
+            "finalUiStatus": null
+          },
+          "completedInvestigationCalls": [
+            1,
+            1
+          ],
+          "ledgerAfter": {
+            "incidentStatus": "RESOLVED",
+            "plans": 1,
+            "approvals": 1,
+            "executions": 1,
+            "postMortem": true
+          },
+          "rowsAfter": {
+            "executions": 1,
+            "postMortems": 1
+          },
+          "supervisorRecreated": false,
+          "passed": true,
+          "attempt": 8,
+          "transport": "caddy",
+          "processKilled": true,
+          "seconds": 6.08
+        },
+        {
+          "incident": "INC-LV-26160058-031",
+          "interruptObserved": true,
+          "disconnectAfterCommit": false,
+          "rowsAtInterrupt": {
+            "executions": 0,
+            "postMortems": 0
+          },
+          "ledgerBeforeRecovery": {
+            "incidentStatus": "WAITING_APPROVAL",
+            "plans": 1,
+            "approvals": 1,
+            "executions": 0,
+            "postMortem": false
+          },
+          "restoredUiStatus": "AWAITING_EXECUTION_RESULT",
+          "retriedSameApproval": true,
+          "finalUiStatus": "RESOLVED",
+          "resendAfterResolved": {
+            "http": 409,
+            "finalUiStatus": null
+          },
+          "completedInvestigationCalls": [
+            1,
+            1
+          ],
+          "ledgerAfter": {
+            "incidentStatus": "RESOLVED",
+            "plans": 1,
+            "approvals": 1,
+            "executions": 1,
+            "postMortem": true
+          },
+          "rowsAfter": {
+            "executions": 1,
+            "postMortems": 1
+          },
+          "supervisorRecreated": true,
+          "passed": true,
+          "attempt": 9,
+          "transport": "direct",
+          "processKilled": true,
+          "seconds": 54.48
+        },
+        {
+          "incident": "INC-LV-26160058-034",
+          "interruptObserved": true,
+          "disconnectAfterCommit": false,
+          "rowsAtInterrupt": {
+            "executions": 0,
+            "postMortems": 0
+          },
+          "ledgerBeforeRecovery": {
+            "incidentStatus": "WAITING_APPROVAL",
+            "plans": 1,
+            "approvals": 1,
+            "executions": 0,
+            "postMortem": false
+          },
+          "restoredUiStatus": "AWAITING_EXECUTION_RESULT",
+          "retriedSameApproval": true,
+          "finalUiStatus": "RESOLVED",
+          "resendAfterResolved": {
+            "http": 409,
+            "finalUiStatus": null
+          },
+          "completedInvestigationCalls": [
+            1,
+            1
+          ],
+          "ledgerAfter": {
+            "incidentStatus": "RESOLVED",
+            "plans": 1,
+            "approvals": 1,
+            "executions": 1,
+            "postMortem": true
+          },
+          "rowsAfter": {
+            "executions": 1,
+            "postMortems": 1
+          },
+          "supervisorRecreated": false,
           "passed": true,
           "attempt": 10,
           "transport": "caddy",
           "processKilled": true,
-          "seconds": 35.39
+          "seconds": 7.38
         }
       ],
       "explicit_cancel": [
         {
-          "incident": "INC-LV-26152007-035",
+          "incident": "INC-LV-26160058-035",
           "cancelSent": true,
           "finalUiStatus": "CANCELLED",
           "ledgerAfter": {
@@ -1038,7 +1241,7 @@
           "transport": "direct"
         },
         {
-          "incident": "INC-LV-26152007-036",
+          "incident": "INC-LV-26160058-036",
           "cancelSent": true,
           "finalUiStatus": "CANCELLED",
           "ledgerAfter": {
@@ -1053,7 +1256,7 @@
           "transport": "caddy"
         },
         {
-          "incident": "INC-LV-26152007-037",
+          "incident": "INC-LV-26160058-037",
           "cancelSent": true,
           "finalUiStatus": "CANCELLED",
           "ledgerAfter": {
@@ -1068,7 +1271,7 @@
           "transport": "direct"
         },
         {
-          "incident": "INC-LV-26152007-038",
+          "incident": "INC-LV-26160058-038",
           "cancelSent": true,
           "finalUiStatus": "CANCELLED",
           "ledgerAfter": {
@@ -1083,7 +1286,7 @@
           "transport": "caddy"
         },
         {
-          "incident": "INC-LV-26152007-039",
+          "incident": "INC-LV-26160058-039",
           "cancelSent": true,
           "finalUiStatus": "CANCELLED",
           "ledgerAfter": {

@@ -1,0 +1,27 @@
+=== Incident-Ops-Agent Phase 5 Smoke Test (http://127.0.0.1:18088) ===
+[PASS] Spring fail-closed without X-Internal-Token (HTTP 401)
+[PASS] Seeded demo incident detail (INC-2026-001) (HTTP 200)
+[PASS] Supervisor AG-UI status (HTTP 200)
+[PASS] Create isolated smoke incident (INC-SMOKE-20261126160055) (HTTP 201)
+[PASS] Register remediation plan (PLAN-SMOKE-20261126160055) (HTTP 201)
+[PASS] Create PENDING approval for rejection test (APR-REJ-20261126160055) (HTTP 201)
+[PASS] Unapproved PENDING completion blocked (409) (HTTP 409)
+[PASS] Reject remediation approval (APR-REJ-20261126160055) (HTTP 200)
+[PASS] Fetch incident after rejection (HTTP 200)
+[PASS] Rejected approval reverted incident status to OPEN
+[PASS] Rejected approval completion blocked (409) (HTTP 409)
+[PASS] Create PENDING approval for worker failure hold test (APR-FAIL-20261126160055) (HTTP 201)
+[PASS] Approve remediation for worker failure test (APR-FAIL-20261126160055) (HTTP 200)
+[PASS] Worker failure recorded without resolving incident (HTTP 200)
+[PASS] Postmortem absent while worker failure is held (404) (HTTP 404)
+[PASS] Fetch incident after worker failure (HTTP 200)
+[PASS] Worker FAILED execution held incident at WAITING_APPROVAL with no postmortem
+[PASS] Create PENDING approval for completion test (APR-OK-20261126160055) (HTTP 201)
+[PASS] Approve remediation (APR-OK-20261126160055) (HTTP 200)
+[PASS] Approved command mismatch blocked (409) (HTTP 409)
+[PASS] Approved completion resolves incident (HTTP 200)
+[PASS] Fetch incident after completion (HTTP 200)
+[PASS] Incident transitioned to RESOLVED with postmortem
+[PASS] Next.js BFF incident proxy (HTTP 200)
+[PASS] BFF response does not leak INTERNAL_SERVICE_TOKEN
+=== ALL PHASE 5 SMOKE CHECKS PASSED ===

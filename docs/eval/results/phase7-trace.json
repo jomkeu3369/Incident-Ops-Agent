@@ -1,0 +1,16 @@
+{
+  "runId": "lv-p3-26160058-0-plan",
+  "traceId": "tr-lv-p3-26160058-0-plan",
+  "a2aTaskIds": [
+    "51854f79-577d-4326-bf81-dc7641bebcd8",
+    "a2a-rem-lv-p3-26160058-0-plan-r0"
+  ],
+  "evidenceChunkIds": [
+    "LOG-LV-160058007",
+    "LOG-106-160058007",
+    "LOG-102-160058007",
+    "LOG-104-160058007",
+    "RUNBOOK-LV-01"
+  ],
+  "approvalId": "APR-INC-LV-26160058-007-C55342E8"
+}
