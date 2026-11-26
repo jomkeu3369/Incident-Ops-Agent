@@ -45,7 +45,11 @@ class BackendClient:
 
     def _auth_headers(self) -> dict[str, str]:
         """백엔드 내부 토큰 및 에이전트 역할 헤더를 구성한다 (토큰 미설정 시 fail-closed)."""
-        token = self._settings.internal_service_token.get_secret_value().strip()
+        token = (
+            self._settings.internal_investigator_token.get_secret_value().strip()
+            if self.agent_role in READ_ONLY_AGENT_ROLES
+            else ""
+        ) or self._settings.internal_service_token.get_secret_value().strip()
         if not token:
             raise BackendApiError(401, "INTERNAL_SERVICE_TOKEN이 설정되지 않았습니다.")
         return {INTERNAL_TOKEN_HEADER: token, AGENT_ROLE_HEADER: self.agent_role}

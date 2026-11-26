@@ -13,12 +13,15 @@ import pytest
 import uvicorn
 from ag_ui.core import RunAgentInput, UserMessage
 from fastapi import FastAPI, Request
+from fastapi.testclient import TestClient
+from pydantic import SecretStr
 
 from common.a2a_utils import cancel_a2a_task, send_a2a_stream
 from common.backend_client import BackendClient
 from log_agent import routers as log_routers
 from log_agent.main import create_log_agent_app
 from log_agent.schemas import LogInvestigationResponse
+from remediation_agent.main import create_remediation_agent_app
 from supervisor.checkpointer import RedisCheckpointSaver
 from supervisor.cruds import SupervisorRedisStore
 from supervisor.services import SupervisorService
@@ -83,9 +86,11 @@ async def _serve(app: FastAPI) -> AsyncIterator[str]:
 
 @asynccontextmanager
 async def _stack(
-    corpus: _Corpus, *, http_timeout: float = 10.0, worker_delay: float = 0.0, received: asyncio.Event | None = None
+    corpus: _Corpus, *, http_timeout: float = 10.0, worker_delay: float = 0.0, received: asyncio.Event | None = None,
+    investigator_token: str = "",
 ) -> AsyncIterator[tuple[Any, httpx.AsyncClient, str]]:
-    log_app = create_log_agent_app(_settings())
+    tokens = {"internal_investigator_token": SecretStr(investigator_token)}
+    log_app = create_log_agent_app(_settings(**tokens))
     if worker_delay:
         @log_app.middleware("http")
         async def slow_first_response(request: Request, call_next):
@@ -96,7 +101,7 @@ async def _stack(
             return await call_next(request)
 
     async with _serve(log_app) as log_url, _serve(_blocked_remediation_app()) as rem_url:
-        cfg = _settings(log_agent_a2a_url=log_url, remediation_agent_a2a_url=rem_url, http_timeout_seconds=http_timeout)
+        cfg = _settings(log_agent_a2a_url=log_url, remediation_agent_a2a_url=rem_url, http_timeout_seconds=http_timeout, **tokens)
         log_app.state.container.backend_client = BackendClient(cfg, log_app.state.container.http_client, mcp_caller=corpus, agent_role="investigator")
 
         def ledger(request: httpx.Request) -> httpx.Response:
@@ -298,6 +303,24 @@ async def test_unrequested_cancellation_marks_the_task_failed(monkeypatch: pytes
     assert state["result"]["status"]["state"] == "TASK_STATE_FAILED"
 
 
+async def test_dedicated_investigator_token_is_the_only_log_agent_credential() -> None:
+    corpus = _Corpus()
+    events: list[dict[str, Any]] = []
+    async with _stack(corpus, investigator_token="read-only-token") as (service, http, log_url):
+        with pytest.raises(RuntimeError, match="401"):
+            await send_a2a_stream(
+                http, base_url=log_url, internal_token=_settings().internal_service_token.get_secret_value(),
+                payload={"incidentCode": INCIDENT, "keywords": ["HikariPool"]},
+            )
+        running = asyncio.create_task(_consume(service, _input("r1", {}, "14:28~14:50 5분 롤백 계획"), events))
+        await asyncio.wait_for(corpus.pull_started.wait(), 10)
+        await asyncio.wait_for(_consume(service, _input("r2", {"explicitCancel": True}), []), 10)
+        await asyncio.wait_for(running, 10)
+        await asyncio.wait_for(corpus.cancelled.wait(), 5)
+
+    assert _progress(events), "Supervisor는 전용 토큰으로 조사 워커를 호출한다"
+
+
 @pytest.mark.parametrize(("error_code", "retried"), [(None, True), (-32001, False), (-32002, False)])
 async def test_failed_remote_cancel_is_kept_for_retry_unless_the_task_is_gone(error_code: int | None, retried: bool) -> None:
     attempts = 0
@@ -349,3 +372,17 @@ async def test_cancel_one_of_two_shared_waiters_keeps_the_other_running() -> Non
     assert cancelled.canceled is True
     assert completed.payload["ok"] is True
     assert corpus.calls["search"] == 2
+
+
+@pytest.mark.parametrize(("create_app_under_test", "accepted", "rejected"), [
+    (create_log_agent_app, "read-only-token", "phase7-secret-token"),
+    (create_remediation_agent_app, "phase7-secret-token", "read-only-token"),
+])
+def test_internal_routes_use_the_same_credential_as_each_workers_rpc(create_app_under_test, accepted: str, rejected: str) -> None:
+    """호스트 실행처럼 두 토큰이 서로 다른 값으로 함께 설정돼도 워커마다 한 자격증명만 받는다."""
+    app = create_app_under_test(_settings(internal_investigator_token=SecretStr("read-only-token")))
+    with TestClient(app) as client:
+        assert client.get("/internal/ping", headers={"X-Internal-Token": accepted}).status_code == 200
+        assert client.get("/internal/ping", headers={"X-Internal-Token": rejected}).status_code == 401
+        assert client.get("/internal/ping").status_code == 401
+

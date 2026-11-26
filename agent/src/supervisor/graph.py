@@ -266,7 +266,7 @@ def build_supervisor_graph(settings: Settings, http_client: httpx.AsyncClient, b
             }})
 
         stream = asyncio.ensure_future(send_a2a_stream(
-            http_client, base_url=url, internal_token=settings.internal_service_token.get_secret_value(),
+            http_client, base_url=url, internal_token=settings.log_agent_token,
             payload=request, context_id=sid, on_progress=on_progress, on_task_id=on_task_id,
         ))
         try:

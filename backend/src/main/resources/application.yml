@@ -51,3 +51,4 @@ management:
 
 app:
   internal-service-token: ${INTERNAL_SERVICE_TOKEN:}
+  internal-investigator-token: ${INTERNAL_INVESTIGATOR_TOKEN:}

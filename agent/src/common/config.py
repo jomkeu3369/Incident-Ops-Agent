@@ -49,6 +49,14 @@ class Settings(BaseSettings):
     langsmith_endpoint: str = "https://api.smith.langchain.com"
 
     @property
+    def log_agent_token(self) -> str:
+        """조사 워커의 자격증명: 전용 읽기 토큰이 있으면 그것만, 없으면 공유 토큰."""
+        return (
+            self.internal_investigator_token.get_secret_value().strip()
+            or self.internal_service_token.get_secret_value()
+        )
+
+    @property
     def langsmith_enabled(self) -> bool:
         """LANGSMITH_TRACING=true이고 유효한 API 키가 설정된 경우에만 트레이싱을 활성화한다."""
         key = self.langsmith_api_key.get_secret_value().strip()
@@ -65,6 +73,7 @@ class Settings(BaseSettings):
 
     # 보안 및 운영자 식별 설정
     internal_service_token: SecretStr = SecretStr("")
+    internal_investigator_token: SecretStr = SecretStr("")
     default_operator_id: str = "oncall-operator"
     trust_operator_header: bool = False
     cors_allowed_origins: list[str] = Field(default_factory=lambda: ["http://localhost", "http://localhost:3000"])

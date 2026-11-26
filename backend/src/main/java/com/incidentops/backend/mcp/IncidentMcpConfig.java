@@ -18,6 +18,7 @@ import org.springframework.context.annotation.Configuration;
 class IncidentMcpConfig {
 
     static final String EVIDENCE_SUMMARY_URI = "incident://evidence-summary/v1";
+    private static final int MAX_TITLE_CODE_POINTS = 120;
 
     @Bean
     ToolCallbackProvider incidentToolCallbacks(IncidentMcpTools tools) {
@@ -44,11 +45,10 @@ class IncidentMcpConfig {
                     List<Map<String, Object>> items = incidents.stream().map(inc -> {
                         Map<String, Object> row = new LinkedHashMap<>();
                         row.put("incidentCode", inc.getIncidentCode());
-                        row.put("title", inc.getTitle());
+                        row.put("title", sanitizeTitle(inc.getTitle()));
                         row.put("serviceName", inc.getServiceName());
                         row.put("severity", inc.getSeverity());
                         row.put("status", inc.getStatus());
-                        row.put("summary", inc.getSummary());
                         return row;
                     }).toList();
 
@@ -71,5 +71,14 @@ class IncidentMcpConfig {
         );
 
         return List.of(spec);
+    }
+
+    private static String sanitizeTitle(String title) {
+        if (title == null) {
+            return "";
+        }
+        String clean = title.replaceAll("[\\p{Cc}\\p{Cf}]", "").strip();
+        int length = Math.min(MAX_TITLE_CODE_POINTS, clean.codePointCount(0, clean.length()));
+        return clean.substring(0, clean.offsetByCodePoints(0, length));
     }
 }

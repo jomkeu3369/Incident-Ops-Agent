@@ -18,7 +18,7 @@ from a2a.types import AgentCard, Message, Part, Role
 from a2a.utils.constants import AGENT_CARD_WELL_KNOWN_PATH, PROTOCOL_VERSION_CURRENT, VERSION_HEADER
 
 from common.app_factory import SECURITY_HEADERS
-from common.config import INTERNAL_TOKEN_HEADER
+from common.config import INTERNAL_TOKEN_HEADER, Settings
 from common.observability import (
     end_span,
     extract_incoming_trace_headers,
@@ -28,7 +28,7 @@ from common.observability import (
 )
 
 
-def mount_a2a_agent(app: FastAPI, *, agent_card: AgentCard, executor: AgentExecutor) -> None:
+def mount_a2a_agent(app: FastAPI, *, agent_card: AgentCard, executor: AgentExecutor, expected_token: Callable[[Settings], str] | None = None) -> None:
     """FastAPI 앱에 A2A v1.0 AgentCard·JSON-RPC 라우트와 내부 토큰 검증·분산 트레이싱 미들웨어를 마운트한다."""
 
     @app.middleware("http")
@@ -38,7 +38,7 @@ def mount_a2a_agent(app: FastAPI, *, agent_card: AgentCard, executor: AgentExecu
         if path in ("/health", AGENT_CARD_WELL_KNOWN_PATH) or path.startswith("/internal/"):
             return await call_next(request)
         container = request.app.state.container
-        expected = container.settings.internal_service_token.get_secret_value()
+        expected = expected_token(container.settings) if expected_token else container.settings.internal_service_token.get_secret_value()
         provided = request.headers.get(INTERNAL_TOKEN_HEADER)
         if not expected or not provided or not hmac.compare_digest(expected, provided):
             return JSONResponse(status_code=status.HTTP_401_UNAUTHORIZED, content={"status": 401, "error": "Unauthorized", "message": "유효하지 않은 내부 서비스 토큰입니다."}, headers=SECURITY_HEADERS)
