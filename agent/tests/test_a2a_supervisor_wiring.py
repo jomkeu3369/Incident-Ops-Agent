@@ -319,6 +319,32 @@ async def test_dedicated_investigator_token_is_the_only_log_agent_credential() -
     assert _progress(events), "Supervisor는 전용 토큰으로 조사 워커를 호출한다"
 
 
+@pytest.mark.parametrize(("error_code", "retried"), [(None, True), (-32001, False), (-32002, False)])
+async def test_failed_remote_cancel_is_kept_for_retry_unless_the_task_is_gone(error_code: int | None, retried: bool) -> None:
+    attempts = 0
+
+    def worker(request: httpx.Request) -> httpx.Response:
+        nonlocal attempts
+        attempts += 1
+        if attempts == 1:
+            if error_code is None:
+                raise httpx.ConnectError("transient", request=request)
+            return httpx.Response(200, json={"jsonrpc": "2.0", "id": "1", "error": {"code": error_code, "message": "gone"}})
+        return httpx.Response(200, json={"jsonrpc": "2.0", "id": "1", "result": {"id": "task-1"}})
+
+    cfg = _settings()
+    async with httpx.AsyncClient(transport=httpx.MockTransport(worker)) as http:
+        store = SupervisorRedisStore(_SharedInMemoryRedis())
+        service = SupervisorService(cfg, http, BackendClient(cfg, http), store)
+        store.remote_tasks("thread-a2a", INCIDENT)["task-1"] = ("http://worker", "key")
+        first = await service._cancel_remote_tasks("thread-a2a", INCIDENT)
+        await service._cancel_remote_tasks("thread-a2a", INCIDENT)
+
+    assert first == (1 if retried else 0)
+    assert attempts == (2 if retried else 1)
+    assert store.remote_tasks("thread-a2a", INCIDENT) == {}
+
+
 async def test_cancel_one_of_two_shared_waiters_keeps_the_other_running() -> None:
     corpus = _Corpus()
     cfg = _settings()

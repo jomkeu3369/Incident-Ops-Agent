@@ -135,6 +135,14 @@ class A2AStreamResult:
     canceled: bool = False
 
 
+# 작업이 없거나 이미 끝나 취소 대상이 아니라는 A2A 오류 코드(TaskNotFound, TaskNotCancelable)
+_A2A_TASK_GONE_CODES = frozenset({-32001, -32002})
+
+
+class A2ATaskNotActiveError(RuntimeError):
+    """원격에 취소할 작업이 남아 있지 않아 다시 시도할 필요가 없는 응답."""
+
+
 async def cancel_a2a_task(
     http_client: httpx.AsyncClient,
     *,
@@ -159,6 +167,9 @@ async def cancel_a2a_task(
     if resp.status_code != 200:
         raise RuntimeError(f"A2A CancelTask 실패 (HTTP {resp.status_code})")
     body = resp.json()
+    error = body.get("error") if isinstance(body, dict) else None
+    if isinstance(error, dict) and error.get("code") in _A2A_TASK_GONE_CODES:
+        raise A2ATaskNotActiveError("A2A CancelTask 대상 작업이 남아 있지 않습니다.")
     if not isinstance(body, dict) or "error" in body or not isinstance(body.get("result"), dict):
         raise RuntimeError("A2A CancelTask JSON-RPC 오류")
     return body
