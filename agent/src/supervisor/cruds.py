@@ -84,6 +84,7 @@ class SupervisorRedisStore:
         self._reconcile_lock = asyncio.Lock()
         self._thread_locks: dict[str, list[Any]] = {}
         self._active_runs: dict[str, set[ActiveRun]] = {}
+        self._cancel_epochs: dict[tuple[str, str], int] = {}
         # 로컬 테스트나 Redis 일시 단절 시 사용하는 프로세스 메모리 폴백 저장소 및 복구 재반영 큐
         self._mem_threads: OrderedDict[str, dict[str, Any]] = OrderedDict()
         self._mem_logs: dict[str, list[dict[str, Any]]] = {}
@@ -129,6 +130,13 @@ class SupervisorRedisStore:
 
     def active_runs(self, thread_id: str) -> list[ActiveRun]:
         return list(self._active_runs.get(thread_id, ()))
+
+    def cancel_epoch(self, thread_id: str, incident_code: str) -> int:
+        """아직 등록되지 않은 요청(승인 저장 중)이 그 사이의 취소를 알아챌 수 있는 카운터."""
+        return self._cancel_epochs.get((thread_id, incident_code), 0)
+
+    def bump_cancel_epoch(self, thread_id: str, incident_code: str) -> None:
+        self._cancel_epochs[(thread_id, incident_code)] = self.cancel_epoch(thread_id, incident_code) + 1
 
     def _trim_thread_cache(self, keep: str | None = None) -> None:
         """LRU 상한을 초과한 clean·비잠금 스레드 캐시 항목을 오래된 순으로 제거한다."""

@@ -22,6 +22,14 @@ def find_approval(detail: dict[str, Any] | None, approval_id: str) -> dict[str, 
     return next((a for a in _items(detail, "approvals") if a.get("approvalId") == approval_id), None)
 
 
+def latest_approval(detail: dict[str, Any] | None) -> dict[str, Any] | None:
+    """가장 최근에 생성된 승인. 생성 시각·ID가 없으면 응답의 마지막 항목을 사용한다."""
+    approvals = _items(detail, "approvals")
+    if not approvals:
+        return None
+    return max(enumerate(approvals), key=lambda item: (str(item[1].get("createdAt") or ""), item[1].get("id") or 0, item[0]))[1]
+
+
 def find_execution(detail: dict[str, Any] | None, approval_id: str) -> dict[str, Any] | None:
     return next((e for e in _items(detail, "executions") if e.get("approvalId") == approval_id), None)
 
@@ -30,6 +38,18 @@ def find_plan(detail: dict[str, Any] | None, plan_id: str | None) -> dict[str, A
     if not plan_id:
         return None
     return next((p for p in _items(detail, "plans") if p.get("planId") == plan_id), None)
+
+
+def find_open_approval(detail: dict[str, Any] | None) -> dict[str, Any] | None:
+    """아직 실행 결과가 없는 계획 연결 승인(PENDING/APPROVED)을 찾는다."""
+    executed = {str(e.get("approvalId")) for e in _items(detail, "executions") if e.get("approvalId")}
+    for approval in _items(detail, "approvals"):
+        if not approval.get("planId") or approval.get("decision") not in ("PENDING", "APPROVED"):
+            continue
+        approval_id = str(approval.get("approvalId") or "")
+        if approval_id and approval_id not in executed:
+            return approval
+    return None
 
 
 def approval_status(detail: dict[str, Any] | None, approval_id: str) -> str | None:
@@ -70,6 +90,14 @@ def reconcile_snapshot(snapshot: dict[str, Any], detail: dict[str, Any] | None) 
         status = approval_status(detail, approval_id)
         if status is not None:
             updated["workflowStatus"] = status
+    # 저장하지 못한 실행이 남긴 미처리 승인은 운영자가 볼 수 있어야 한다.
+    pending = find_open_approval(detail)
+    if pending is not None and pending.get("approvalId") != approval_id:
+        plan_id = pending.get("planId")
+        shown = updated.get("plan")
+        updated["plan"] = shown if isinstance(shown, dict) and shown.get("planId") == plan_id else find_plan(detail, plan_id)
+        updated["approval"] = approval_view(pending)
+        updated["workflowStatus"] = approval_status(detail, str(pending.get("approvalId")))
     # 장애가 이미 해결됐다면 어떤 스냅샷도 그 아래 상태로 남기지 않는다.
     if is_resolved(detail):
         updated["workflowStatus"] = "RESOLVED"

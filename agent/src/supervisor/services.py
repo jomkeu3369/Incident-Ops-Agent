@@ -1,11 +1,12 @@
 from __future__ import annotations
 
 import asyncio
-from contextlib import aclosing, suppress
+from contextlib import aclosing
 import json
 import time
 import uuid
 from typing import Any, AsyncIterator
+import anyio
 import httpx
 from fastapi import HTTPException, status
 from pydantic import ValidationError
@@ -36,18 +37,21 @@ from common.event_log import EventBus, publish_safe
 from common.observability import end_span, langsmith_tracing_scope, traced_span
 from supervisor.active_runs import ActiveRun, was_cancelled_by_request
 from supervisor.cruds import SupervisorRedisStore
-from supervisor.graph import A2ACaller, _find_unfinished_plan_approval, build_supervisor_graph
+from supervisor.graph import A2ACaller, build_supervisor_graph
 from supervisor.ledger import (
     OPEN_APPROVAL_STATUSES,
     approval_status,
     approval_view,
     find_approval,
     find_execution,
+    find_open_approval,
     find_plan,
     is_resolved,
+    latest_approval,
     reconcile_snapshot,
 )
 from supervisor.schemas import ForwardedPropsInput
+from supervisor.streaming import settle
 
 
 def _extract_last_user_text(run_input: RunAgentInput) -> str:
@@ -109,6 +113,7 @@ class SupervisorService:
         self._a2a_caller = a2a_caller
         self._langsmith_client = langsmith_client
         self._checkpointer = checkpointer
+        self._decision_epoch: int | None = None
 
     def parse_forwarded_props(self, run_input: RunAgentInput) -> ForwardedPropsInput:
         """스트림을 열기 전에 forwardedProps 계약을 검증한다(위반 시 HTTP 400)."""
@@ -123,6 +128,8 @@ class SupervisorService:
         """승인·반려 요청이면 스트림 오픈 전에 Spring 원장에 결정을 반영하며, 스레드에 반영되지 못한 기존 결정은 이어서 처리한다."""
         if props.approvalDecision is None:
             return None
+        # 승인 저장 중에 들어온 취소를 놓치지 않도록 저장 전 값을 기억한다
+        self._decision_epoch = None if thread_id is None else self._store.cancel_epoch(thread_id, props.incidentCode)
         try:
             return await self._backend.decide_approval(
                 props.incidentCode,
@@ -139,20 +146,25 @@ class SupervisorService:
             raise HTTPException(status_code=exc.status_code, detail=exc.message)
 
     async def _unfinished_decision(self, props: ForwardedPropsInput, thread_id: str | None) -> dict[str, Any] | None:
-        """원장에 같은 결정이 있고 이 스레드가 그 결과를 아직 확정하지 못했을 때만 승인 행을 반환한다."""
+        """원장에 같은 결정이 있고 이어서 처리할 일이 남았을 때만 승인 행을 반환한다."""
         approval_id = props.approvalDecision.approvalId  # type: ignore[union-attr]
         detail = await self._ledger_detail(props.incidentCode)
         recorded = find_approval(detail, approval_id)
         if recorded is None or recorded.get("decision") != props.approvalDecision.decision:  # type: ignore[union-attr]
             return None
-        has_execution = find_execution(detail, approval_id) is not None
-        if recorded.get("decision") == "APPROVED" and is_resolved(detail) and not has_execution:
+        if recorded.get("decision") == "APPROVED" and find_execution(detail, approval_id) is None:
+            # 실행 기록이 없는 승인은 화면 상태와 무관하게 이어서 실행할 수 있다
+            return None if is_resolved(detail) else recorded
+        # 종결된 결정의 재전송: 더 새로운 승인을 덮지 않고, 아직 전달하지 못한 결과만 복구한다
+        if find_open_approval(detail) is not None:
             return None
         if thread_id is not None:
             memory = _isolate_incident_memory(await self._store.get_thread_memory(thread_id), thread_id, props.incidentCode)
             snapshot = memory.get("snapshot") or {}
-            known = (snapshot.get("approval") or {}).get("approvalId") == approval_id
-            if known and snapshot.get("workflowStatus") in ("RESOLVED", "EXECUTION_FAILED", "REJECTED"):
+            known_id = (snapshot.get("approval") or {}).get("approvalId")
+            if known_id and known_id != approval_id:
+                return None
+            if known_id and snapshot.get("workflowStatus") in ("RESOLVED", "EXECUTION_FAILED", "REJECTED"):
                 return None
         return recorded
 
@@ -200,8 +212,18 @@ class SupervisorService:
 
             # 락 대기 중인 실행도 취소할 수 있도록 락보다 먼저 등록한다
             with self._store.track_run(tid, ActiveRun(props.incidentCode)) as run:
+                if props.approvalDecision is not None and self._decision_epoch not in (None, self._store.cancel_epoch(tid, props.incidentCode)):
+                    run.request_cancel()
                 async with self._store.thread_lock(tid):
                     if run.cancel_requested:
+                        # 시작 전에 취소됨: 그 사이 커밋된 결정이 있으면 화면 상태만 원장에 맞춘다
+                        memory = _isolate_incident_memory(await self._store.get_thread_memory(tid), tid, props.incidentCode)
+                        stored = memory.get("snapshot")
+                        if stored:
+                            current = reconcile_snapshot(stored, await self._ledger_detail(props.incidentCode))
+                            if current is not stored:
+                                committed = await self._commit_snapshot(tid, memory, props, current, "ledger_reconciled")
+                                yield encoder.encode(StateSnapshotEvent(snapshot=committed))
                         yield encoder.encode(RunFinishedEvent(thread_id=tid, run_id=rid))
                         return
                     memory = _isolate_incident_memory(await self._store.get_thread_memory(tid), tid, props.incidentCode)
@@ -222,17 +244,14 @@ class SupervisorService:
     async def _handle_restore_stream(self, encoder: EventEncoder, tid: str, rid: str, props: ForwardedPropsInput) -> AsyncIterator[str]:
         """저장 스냅샷을 원장과 대조해 복원한다. 원장이 앞서 있으면 그 상태를 저장하고 보낸다."""
         memory = _isolate_incident_memory(await self._store.get_thread_memory(tid), tid, props.incidentCode)
-        snapshot = memory.get("snapshot")
-        if snapshot:
-            if reconcile_snapshot(snapshot, await self._ledger_detail(props.incidentCode)) is not snapshot:
-                # 진행 중인 실행의 저장과 직렬화해야 서로 다른 상태가 같은 순번을 갖지 않는다
-                async with self._store.thread_lock(tid):
-                    memory = _isolate_incident_memory(await self._store.get_thread_memory(tid), tid, props.incidentCode)
-                    latest = memory.get("snapshot") or snapshot
-                    current = reconcile_snapshot(latest, await self._ledger_detail(props.incidentCode))
-                    snapshot = latest if current is latest else await self._commit_snapshot(tid, memory, props, current, "ledger_reconciled")
-        else:
-            snapshot = _idle_snapshot(props.incidentCode, memory.get("replanHistory"))
+        snapshot = memory.get("snapshot") or _idle_snapshot(props.incidentCode, memory.get("replanHistory"))
+        # 진행 중인 실행이 있거나 원장이 앞서면, 실행의 저장과 직렬화한 뒤 다시 읽는다
+        if self._store.active_runs(tid) or reconcile_snapshot(snapshot, await self._ledger_detail(props.incidentCode)) is not snapshot:
+            async with self._store.thread_lock(tid):
+                memory = _isolate_incident_memory(await self._store.get_thread_memory(tid), tid, props.incidentCode)
+                latest = memory.get("snapshot") or _idle_snapshot(props.incidentCode, memory.get("replanHistory"))
+                current = reconcile_snapshot(latest, await self._ledger_detail(props.incidentCode))
+                snapshot = latest if current is latest else await self._commit_snapshot(tid, memory, props, current, "ledger_reconciled")
         yield encoder.encode(StateSnapshotEvent(snapshot=snapshot))
         yield encoder.encode(MessagesSnapshotEvent(messages=memory.get("messages") or []))
         yield encoder.encode(_checkpoint_sync(props.incidentCode, memory, snapshot))
@@ -245,6 +264,7 @@ class SupervisorService:
         if any(run.incident_code != props.incidentCode for run in runs):
             yield encoder.encode(scope_error)
             return
+        self._store.bump_cancel_epoch(tid, props.incidentCode)
         for run in runs:
             run.request_cancel()
 
@@ -298,9 +318,11 @@ class SupervisorService:
             memory, self._settings.tool_cache_ttl_seconds, time.time()
         )
         trace_id = str(memory.get("traceId") or f"tr-{rid}")
+        # 재개 요청은 원래 실행의 ID를 이어받아 계획·승인 식별자가 유지된다
+        logical_run_id = (props.resumeRunId if props.resume else None) or rid
         init_state = {
             "session_id": tid,
-            "run_id": rid,
+            "run_id": logical_run_id,
             "trace_id": trace_id,
             "a2a_task_ids": list(memory.get("a2aTaskIds") or []),
             "incident_code": props.incidentCode,
@@ -361,17 +383,19 @@ class SupervisorService:
                         saved_state = await live_graph.aget_state(graph_config)
                         saved_vals = dict(getattr(saved_state, "values", None) or {})
                         same_incident = saved_vals.get("incident_code") == props.incidentCode
+                        # 서버에 닿지 못한 새 요청을 이전 실행의 결과로 답하지 않는다
+                        identified = props.resumeRunId is not None and saved_vals.get("run_id") == props.resumeRunId
+                        same_request = (props.resumeRunId is None or identified) and (
+                            not user_text or saved_vals.get("user_message") == user_text
+                        )
                         if getattr(saved_state, "next", None):
-                            if same_incident:
+                            if same_incident and same_request:
                                 graph_input = None
-                            elif hasattr(self._checkpointer, "adelete_thread"):
+                            elif not same_incident and hasattr(self._checkpointer, "adelete_thread"):
                                 # 다른 장애의 체크포인트가 섞이지 않도록 격리 삭제하고 새 장애 입력으로 시작한다
                                 await self._checkpointer.adelete_thread(tid)
-                        elif (
-                            same_incident
-                            and saved_vals.get("last_completed_step") == "respond"
-                            and (not user_text or saved_vals.get("user_message") == user_text)
-                        ):
+                        elif same_incident and same_request and identified and saved_vals.get("last_completed_step") == "respond":
+                            # 끝난 실행의 재전송은 어떤 실행인지 명시한 요청에만 허용한다
                             # 이미 끝난 실행은 다시 돌리지 않고 저장된 결과를 재전송한다
                             replay = {**saved_vals, "_replayed": True}
                     if replay is not None:
@@ -408,14 +432,17 @@ class SupervisorService:
                     raise
         finally:
             run.detach()
-            # SSE 클라이언트가 중간에 연결을 끊으면 백그라운드 그래프 태스크를 즉시 정리한다
-            if not graph_task.done():
-                graph_task.cancel()
-                with suppress(asyncio.CancelledError):
-                    await graph_task
-            # 시작한 원장 쓰기는 결과가 확정된 뒤에 스레드 락을 놓는다 (wait는 재취소돼도 쓰기를 중단시키지 않는다)
-            if ledger_writes:
-                await asyncio.wait(ledger_writes)
+            # 단절 시 취소가 await마다 다시 전달되므로 정리 구간을 보호한다
+            with anyio.CancelScope(shield=True):
+                # SSE 클라이언트가 중간에 연결을 끊으면 백그라운드 그래프 태스크를 즉시 정리한다
+                if not graph_task.done():
+                    graph_task.cancel()
+                    await asyncio.wait([graph_task])
+                    if not graph_task.cancelled():
+                        graph_task.exception()
+                # 시작한 원장 쓰기는 결과가 확정된 뒤에 스레드 락을 놓는다
+                if ledger_writes:
+                    await asyncio.wait(ledger_writes)
 
         if final_state is None:
             # 취소된 실행의 최종 상태는 취소 요청 스트림이 원장 기준으로 확정한다
@@ -573,8 +600,8 @@ class SupervisorService:
                         end_span(exec_span, error="execution_cancelled")
                         return ("CANCELLED", None, "")
 
-                    try:
-                        await self._backend.complete_incident_with_postmortem(
+                    completion = asyncio.ensure_future(asyncio.wait_for(
+                        self._backend.complete_incident_with_postmortem(
                             approval_id=approval_id,
                             incident_code=props.incidentCode,
                             action_command=action_cmd,
@@ -585,7 +612,12 @@ class SupervisorService:
                             root_cause=exec_res.get("rootCause"),
                             timeline_markdown=exec_res.get("timelineMarkdown"),
                             prevention_items=exec_res.get("preventionItems"),
-                        )
+                        ),
+                        timeout=self._settings.http_timeout_seconds * 2,
+                    ))
+                    try:
+                        # 단절돼도 시작한 완료 쓰기가 끝난 뒤에 락을 놓는다
+                        await settle(completion)
                         status_out = "RESOLVED" if exec_res.get("executionStatus", "SUCCESS") == "SUCCESS" else "EXECUTION_FAILED"
                         text_out = f"승인({approval_id})된 조치(`{action_cmd}`)를 실행하고 포스트모템을 반영했습니다. 장애 상태: {status_out}"
                         end_span(exec_span, outputs={"finalStatus": status_out, "executionStatus": exec_res.get("executionStatus")})
@@ -597,11 +629,10 @@ class SupervisorService:
                             status_out = "RESOLVED" if is_resolved(after) else str(approval_status(after, approval_id))
                             end_span(exec_span, outputs={"finalStatus": status_out, "recoveredFromLedger": True})
                             return ("DONE", status_out, f"완료 응답은 받지 못했지만 원장에서 승인({approval_id})의 실행 결과를 확인했습니다. 장애 상태: {status_out}")
-                        if isinstance(exc, BackendApiError) and exc.status_code < 500:
-                            end_span(exec_span, outputs={"finalStatus": "EXECUTION_FAILED"}, error=exc.message)
-                            return ("DONE", "EXECUTION_FAILED", f"실행 결과 반영 중 백엔드 오류가 발생했습니다: {exc.message}")
-                        end_span(exec_span, error="completion_unconfirmed")
-                        return ("INTERRUPTED", None, "")
+                        # 원장에 실행 기록이 없으면 승인은 여전히 실행 대기다(거절 사유만 전달한다)
+                        rejection = exc.message if isinstance(exc, BackendApiError) and exc.status_code < 500 else ""
+                        end_span(exec_span, error=rejection or "completion_unconfirmed")
+                        return ("INTERRUPTED", None, rejection)
 
         outcome, maybe_status, reply_text = await _execute_and_complete()
         if outcome == "CANCELLED":
@@ -610,7 +641,8 @@ class SupervisorService:
             return
         if outcome == "INTERRUPTED":
             await publish_safe(self._bus, tid, "execution_interrupted", {"incidentCode": props.incidentCode, "approvalId": approval_id})
-            retry_text = f"승인({approval_id})은 기록되었으나 실행 결과를 확정하지 못했습니다. 같은 승인 건으로 다시 요청하면 원장을 확인한 뒤 이어서 처리합니다."
+            reason = f" 반영이 거절됐습니다: {reply_text}" if reply_text else ""
+            retry_text = f"승인({approval_id})은 기록되었으나 실행 결과를 확정하지 못했습니다.{reason} 같은 승인 건으로 다시 요청하면 원장을 확인한 뒤 이어서 처리합니다."
             async for chunk in _finish("AWAITING_EXECUTION_RESULT", retry_text, "execution_interrupted", step_name="execute_approved"):
                 yield chunk
             return
@@ -656,8 +688,16 @@ def _snapshot_after_cancel(incident_code: str, previous: dict[str, Any] | None, 
     if is_resolved(detail):
         return {**prev, "workflowStatus": "RESOLVED"}, "이미 해결된 장애라 취소할 작업이 없습니다."
 
-    approval = _find_unfinished_plan_approval(detail)
+    approval = find_open_approval(detail)
     if approval is None:
+        failed = _failed_approval(detail, prev)
+        if failed is not None:
+            plan_id = failed.get("planId")
+            plan = next((p for p in (prev.get("plan"), draft_plan, find_plan(detail, plan_id)) if isinstance(p, dict) and p.get("planId") == plan_id), None)
+            return (
+                {**prev, "workflowStatus": "EXECUTION_FAILED", "plan": plan, "approval": approval_view(failed)},
+                f"취소 전에 승인({failed.get('approvalId')})의 실행이 실패로 원장에 기록됐습니다.",
+            )
         return (
             {**prev, "workflowStatus": "CANCELLED", "approval": None},
             "실행 중인 작업을 취소했습니다. 원장에 남은 승인 요청은 없습니다.",
@@ -676,6 +716,18 @@ def _snapshot_after_cancel(incident_code: str, previous: dict[str, Any] | None, 
         else f"실행 중인 작업은 중단했습니다. 승인({approval_id})은 기록되어 있고 실행 결과는 없습니다. 같은 승인으로 다시 실행할 수 있습니다."
     )
     return {**prev, "workflowStatus": workflow_status, "plan": plan, "approval": approval_view(approval)}, text
+
+
+def _failed_approval(detail: dict[str, Any], previous: dict[str, Any]) -> dict[str, Any] | None:
+    """화면이 보던 승인, 없으면 원장의 최신 승인이 실패한 실행으로 끝났는지 확인한다."""
+    shown_id = (previous.get("approval") or {}).get("approvalId")
+    if shown_id:
+        candidate = find_approval(detail, shown_id)
+    else:
+        candidate = latest_approval(detail)
+    if candidate is None or approval_status(detail, str(candidate.get("approvalId"))) != "EXECUTION_FAILED":
+        return None
+    return candidate
 
 
 def _find_plan_command(plan: dict[str, Any] | None, step_no: int) -> str | None:

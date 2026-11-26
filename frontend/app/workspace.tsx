@@ -212,7 +212,7 @@ function ActiveWorkspace({
   );
   const activeRun = useRef<AbortController | null>(null);
   const threadIdRef = useRef<string | null>(null);
-  const planningRequest = useRef<{ content: string; incidentStartedAt?: string } | null>(null);
+  const planningRequest = useRef<{ content: string; incidentStartedAt?: string; runId?: string } | null>(null);
 
   const {
     snapshot, executions, postMortem, entries, replan, busy, activeStep, restoring, error, needsResync,
@@ -306,7 +306,6 @@ function ActiveWorkspace({
     if (!request?.content || activeRun.current || snapshot.workflowStatus === "RESOLVED") return;
     const trimmed = request.content;
     if (!resume && !canSendPrompt(snapshot.workflowStatus, incident.resolved)) return;
-    planningRequest.current = request;
 
     const controller = new AbortController();
     activeRun.current = controller;
@@ -316,6 +315,8 @@ function ActiveWorkspace({
       threadIdRef.current = tid;
       writeStoredThreadId(mode, incident.incidentCode, tid);
       const runId = createClientId();
+      // 재개가 다시 끊겨도 같은 원본 실행을 가리키도록 처음 runId를 유지한다
+      planningRequest.current = { ...request, runId: request.runId ?? runId };
 
       dispatch({
         type: "REQUEST",
@@ -335,7 +336,7 @@ function ActiveWorkspace({
         forwardedProps: {
           incidentCode: incident.incidentCode,
           incidentStartedAt: request.incidentStartedAt,
-          ...(resume ? { resume: true } : {}),
+          ...(resume ? { resume: true, resumeRunId: request.runId } : {}),
           lastEventSeq,
         },
         signal: controller.signal,

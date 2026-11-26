@@ -19,6 +19,7 @@ class ForwardedPropsInput(BaseModel):
     approvalDecision: ApprovalDecisionInput | None = None
     restore: bool = False
     resume: bool = False
+    resumeRunId: str | None = Field(default=None, min_length=1)
     explicitCancel: bool = False
     lastEventSeq: int | None = Field(default=None, ge=0)
 

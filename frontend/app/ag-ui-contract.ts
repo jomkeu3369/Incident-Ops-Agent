@@ -75,6 +75,7 @@ export type ForwardedProps = {
   };
   restore?: true;
   resume?: true;
+  resumeRunId?: string;
   explicitCancel?: true;
   lastEventSeq?: number;
 };

@@ -16,7 +16,7 @@ from common.backend_client import BackendApiError, BackendClient
 from common.config import Settings
 from common.event_log import EventBus, publish_safe
 from common.planner_math import parse_rfc3339
-from supervisor.ledger import approval_status, approval_view, find_approval, find_plan
+from supervisor.ledger import approval_status, approval_view, find_approval, find_open_approval, find_plan
 
 A2ACaller = Callable[[str, dict[str, Any], str], Awaitable[dict[str, Any]]]
 UiEventSink = Callable[[dict[str, Any]], Awaitable[None]]
@@ -115,30 +115,6 @@ def _extract_log_keywords(user_message: str, incident_title: str = "", incident_
             _add(ko_kw)
 
     return tokens[:6] if tokens else list(_DEFAULT_LOG_KEYWORDS)
-
-
-def _find_unfinished_plan_approval(detail: dict[str, Any] | None) -> dict[str, Any] | None:
-    """백엔드 상세 응답에서 아직 실행 결과가 없는 계획 연결 승인 건(PENDING/APPROVED)을 찾는다."""
-    if not isinstance(detail, dict):
-        return None
-    approvals = detail.get("approvals")
-    if not isinstance(approvals, list):
-        return None
-    executions = detail.get("executions")
-    executed_ids = {
-        str(e.get("approvalId"))
-        for e in (executions if isinstance(executions, list) else [])
-        if isinstance(e, dict) and e.get("approvalId")
-    }
-    for apr in approvals:
-        if not isinstance(apr, dict):
-            continue
-        if not apr.get("planId") or apr.get("decision") not in ("PENDING", "APPROVED"):
-            continue
-        aid = str(apr.get("approvalId") or "")
-        if aid and aid not in executed_ids:
-            return apr
-    return None
 
 
 def _approval_id_for(session_id: str, run_id: str, plan_id: str, replan_count: int, incident_code: str) -> str:
@@ -523,7 +499,7 @@ def build_supervisor_graph(settings: Settings, http_client: httpx.AsyncClient, b
                 await _emit(ui, {"kind": "step_finish", "step": "evaluate"})
                 return {"should_replan": False, "workflow_status": wf_status, "snapshot": snapshot, "replan_history": replan_history, "ui_events": ui}
 
-            existing_apr = _find_unfinished_plan_approval(detail)
+            existing_apr = find_open_approval(detail)
             if existing_apr is not None:
                 existing_aid = str(existing_apr.get("approvalId") or "")
                 existing_decision = str(existing_apr.get("decision") or "")
