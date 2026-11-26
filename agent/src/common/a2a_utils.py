@@ -164,6 +164,15 @@ async def cancel_a2a_task(
     return body
 
 
+# A2A SDK의 SSE ping 간격(15초)보다 커야 조용한 조사 중에 스트림이 끊기지 않는다
+_STREAM_MIN_READ_TIMEOUT_SECONDS = 45.0
+
+
+def _stream_timeout(base: httpx.Timeout) -> httpx.Timeout:
+    read = None if base.read is None else max(base.read, _STREAM_MIN_READ_TIMEOUT_SECONDS)
+    return httpx.Timeout(connect=base.connect, read=read, write=base.write, pool=base.pool)
+
+
 async def send_a2a_stream(
     http_client: httpx.AsyncClient,
     *,
@@ -233,7 +242,7 @@ async def send_a2a_stream(
             if state in {"COMPLETED", "FAILED", "CANCELED", "CANCELLED", "REJECTED"}:
                 terminal_state = state
 
-        async with http_client.stream("POST", f"{base_url.rstrip('/')}/", json=rpc_body, headers=headers) as resp:
+        async with http_client.stream("POST", f"{base_url.rstrip('/')}/", json=rpc_body, headers=headers, timeout=_stream_timeout(http_client.timeout)) as resp:
             if resp.status_code != 200:
                 raise RuntimeError(f"A2A 스트리밍 호출 실패 (HTTP {resp.status_code})")
 

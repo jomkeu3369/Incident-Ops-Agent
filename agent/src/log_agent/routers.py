@@ -187,10 +187,16 @@ class LogAgentExecutor(AgentExecutor):
                 if (
                     key is not None and task_id not in self._canceled_task_ids
                     and result.ok and result.error is None and result.incidentCode == req.incidentCode
-                    and result.stopReason not in {"TIMEOUT_BUDGET_REACHED", "GUARD_REJECTED_INVALID_CHUNK", "BACKEND_ERROR"}
+                    and result.stopReason not in {"TIMEOUT_BUDGET_REACHED", "GUARD_REJECTED_INVALID_CHUNK", "BACKEND_ERROR", "STOP_INSUFFICIENT"}
                     and all(tool.get("ok") is not False and not tool.get("error") for tool in result.toolTrace)
                 ):
                     _remember(self._idempotency_cache, key, result)
+            except asyncio.CancelledError:
+                current = asyncio.current_task()
+                if task_id in self._canceled_task_ids or (current is not None and current.cancelling()):
+                    raise
+                # 요청하지 않은 취소가 새면 작업이 WORKING에 남으므로 실패로 기록되게 한다
+                raise RuntimeError("조사 작업이 예기치 않게 중단됐습니다.") from None
             finally:
                 self._task_waiters.pop(task_id, None)
                 work.waiters.discard(task_id)

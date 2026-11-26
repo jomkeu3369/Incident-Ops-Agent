@@ -275,6 +275,10 @@ class SupervisorService:
                 yield encoder.encode(scope_error)
                 return
             memory = _isolate_incident_memory(raw, tid, props.incidentCode)
+            # 명시적 취소만 원격 작업까지 중단한다(단순 연결 단절은 재개를 위해 남겨 둔다).
+            # 취소 요청마저 끊겨도 빠지지 않도록 보호 구간에서 보낸다
+            with anyio.CancelScope(shield=True):
+                await self._cancel_remote_tasks(tid, props.incidentCode)
             draft_plan = await self._checkpoint_plan(tid)
             if self._checkpointer is not None and hasattr(self._checkpointer, "adelete_thread"):
                 await self._checkpointer.adelete_thread(tid)
@@ -294,9 +298,11 @@ class SupervisorService:
             yield encoder.encode(_checkpoint_sync(props.incidentCode, memory, snapshot))
             yield encoder.encode(RunFinishedEvent(thread_id=tid, run_id=rid))
 
-    async def _cancel_remote_tasks(self, thread_id: str, remote_tasks: dict[str, str]) -> None:
-        """진행 중이던 원격 A2A 작업에 CancelTask를 보내고 확인 여부를 감사 로그에 남긴다."""
-        for task_id, base_url in list(remote_tasks.items()):
+    async def _cancel_remote_tasks(self, thread_id: str, incident_code: str) -> None:
+        """이 대화에 남은 원격 A2A 작업에 CancelTask를 보내고 확인 여부를 감사 로그에 남긴다."""
+        remote_tasks = self._store.remote_tasks(thread_id, incident_code)
+        for task_id, (base_url, _) in list(remote_tasks.items()):
+            remote_tasks.pop(task_id, None)
             try:
                 await cancel_a2a_task(self._http, base_url=base_url, internal_token=self._settings.internal_service_token.get_secret_value(), task_id=task_id)
                 confirmed = True
@@ -355,7 +361,6 @@ class SupervisorService:
         }
         ui_queue: asyncio.Queue[dict[str, Any] | None] = asyncio.Queue()
         ledger_writes: list[asyncio.Future[Any]] = []
-        remote_tasks: dict[str, str] = {}
         live_graph = build_supervisor_graph(
             self._settings,
             self._http,
@@ -365,7 +370,7 @@ class SupervisorService:
             on_ui_event=ui_queue.put,
             checkpointer=self._checkpointer,
             ledger_writes=ledger_writes,
-            remote_tasks=remote_tasks,
+            remote_tasks=self._store.remote_tasks(tid, props.incidentCode),
         )
         graph_config = {"configurable": {"thread_id": tid}} if self._checkpointer is not None else None
 
@@ -448,17 +453,15 @@ class SupervisorService:
             with anyio.CancelScope(shield=True):
                 # SSE 클라이언트가 중간에 연결을 끊으면 백그라운드 그래프 태스크를 즉시 정리한다
                 if not graph_task.done():
-                    graph_task.cancel()
+                    # 이미 취소 중이면 다시 취소하지 않는다: 원격 작업 ID를 확보하는 대기가 중단된다
+                    if not graph_task.cancelling():
+                        graph_task.cancel()
                     await asyncio.wait([graph_task])
                     if not graph_task.cancelled():
                         graph_task.exception()
                 # 시작한 원장 쓰기는 결과가 확정된 뒤에 스레드 락을 놓는다
                 if ledger_writes:
                     await asyncio.wait(ledger_writes)
-                # 명시적 취소만 원격 작업까지 중단한다(단순 연결 단절은 재개를 위해 남겨 둔다).
-                # 취소와 단절이 겹쳐도 빠지지 않도록 보호 구간에서 보낸다
-                if run.cancel_requested:
-                    await self._cancel_remote_tasks(tid, remote_tasks)
 
         if final_state is None:
             # 취소된 실행의 최종 상태는 취소 요청 스트림이 원장 기준으로 확정한다

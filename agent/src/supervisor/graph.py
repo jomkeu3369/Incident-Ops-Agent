@@ -226,7 +226,7 @@ def _resolve_time_bounds(constraints: dict[str, Any]) -> tuple[str, str, str, st
     return metrics_from, metrics_to, win_start.isoformat(), win_end.isoformat()
 
 
-def build_supervisor_graph(settings: Settings, http_client: httpx.AsyncClient, backend: BackendClient, event_bus: EventBus | None = None, a2a_caller: A2ACaller | None = None, on_ui_event: UiEventSink | None = None, checkpointer: Any | None = None, ledger_writes: list[asyncio.Future[Any]] | None = None, remote_tasks: dict[str, str] | None = None):
+def build_supervisor_graph(settings: Settings, http_client: httpx.AsyncClient, backend: BackendClient, event_bus: EventBus | None = None, a2a_caller: A2ACaller | None = None, on_ui_event: UiEventSink | None = None, checkpointer: Any | None = None, ledger_writes: list[asyncio.Future[Any]] | None = None, remote_tasks: dict[str, tuple[str, str]] | None = None):
     """요구사항 4.2 기준 LangGraph(analyze->plan->execute_log->execute_remediation->evaluate->respond)를 컴파일한다."""
 
     async def _emit(ui: list[dict[str, Any]], ev: dict[str, Any]) -> None:
@@ -247,13 +247,11 @@ def build_supervisor_graph(settings: Settings, http_client: httpx.AsyncClient, b
         if a2a_caller is not None:
             return await a2a_caller(url, request, sid), request["idempotencyKey"]
 
-        in_flight: list[str] = []
         identified = asyncio.Event()
 
         def on_task_id(task_id: str) -> None:
-            in_flight.append(task_id)
             if remote_tasks is not None:
-                remote_tasks[task_id] = url
+                remote_tasks[task_id] = (url, request["idempotencyKey"])
             identified.set()
 
         async def on_progress(event: dict[str, Any]) -> None:
@@ -266,11 +264,6 @@ def build_supervisor_graph(settings: Settings, http_client: httpx.AsyncClient, b
                 "worker": "log-analyzer-agent", "taskId": event["taskId"], "state": str(event.get("state") or ""),
                 "stage": str(stage), "elapsedMs": event.get("elapsedMs") or 0,
             }})
-
-        def settled() -> None:
-            if remote_tasks is not None:
-                for task_id in in_flight:
-                    remote_tasks.pop(task_id, None)
 
         stream = asyncio.ensure_future(send_a2a_stream(
             http_client, base_url=url, internal_token=settings.internal_service_token.get_secret_value(),
@@ -288,11 +281,12 @@ def build_supervisor_graph(settings: Settings, http_client: httpx.AsyncClient, b
             if not stream.cancelled():
                 stream.exception()
             raise
-        except Exception:
-            settled()
-            raise
-        # 취소(CancelledError)로 빠져나가면 목록에 남겨 호출자가 원격 CancelTask를 보내게 한다
-        settled()
+        # 조사가 끝나면 같은 논리 작업의 대기자(단절 전 요청 포함)도 모두 끝난다.
+        # 단절·취소·오류로 빠져나간 작업은 목록에 남겨 이후 명시적 취소가 중단할 수 있게 한다
+        if remote_tasks is not None and not streamed.canceled:
+            for task_id, (_, key) in list(remote_tasks.items()):
+                if key == request["idempotencyKey"]:
+                    remote_tasks.pop(task_id, None)
         return streamed.payload, streamed.task_id
 
     async def analyze_node(state: SupervisorState) -> SupervisorState:
