@@ -1,10 +1,11 @@
 # 실스택 검증 전용 override. 기존 incident-ops 컨테이너·볼륨·네트워크·.env와 분리해 실행한다.
 #   docker compose -p iopsv --env-file <verify.env> -f docker-compose-infra.yaml -f docker-compose.yaml -f scripts/live-verify/docker-compose.verify.yaml up -d --build
-# 외부 API(GitHub·Grafana)만 로컬 대역을 사용하고, 포트는 loopback에만 연다.
+# 외부 API(GitHub·Grafana)만 로컬 대역을 사용하고, 검증에 쓰는 포트만 loopback에 연다.
+# Windows Docker Desktop에서 포트 게시가 간헐적으로 실패하면 같은 up 명령을 다시 실행한다.
 services:
   mysql:
     container_name: iopsv-mysql
-    ports: !override ["127.0.0.1:13306:3306"]
+    ports: !reset []
   redis:
     container_name: iopsv-redis
   caddy:
@@ -22,7 +23,7 @@ services:
     ports: !override ["127.0.0.1:18001:8001"]
   remediation-agent:
     container_name: iopsv-remediation-agent
-    ports: !override ["127.0.0.1:18002:8002"]
+    ports: !reset []
     environment:
       GITHUB_API_BASE_URL: http://fake-external:9000/github
   supervisor-agent:
@@ -30,7 +31,7 @@ services:
     ports: !override ["127.0.0.1:18000:8000"]
   frontend:
     container_name: iopsv-frontend
-    ports: !override ["127.0.0.1:13000:3000"]
+    ports: !reset []
   # A2A 계약이 같은 워커 구현 교체(키워드 -> 에이전틱)를 확인하는 두 번째 조사 워커
   log-analyzer-agent-v2:
     image: iopsv-log-analyzer-agent
