@@ -495,7 +495,7 @@ async def test_a2a_five_contract_scenarios_streaming_timeout_cancel_dedup_and_sw
                 )
                 assert dup_res.payload["ok"] is True
             # 1회차만 실행되고 2~3회차는 캐시 히트로 중복 실행 0건!
-            assert mcp_call_count["search"] - before_search == 2
+            assert mcp_call_count["search"] - before_search == 3
             assert mcp_call_count["pull"] - before_pull == 2
 
             # 시나리오 2) 타임아웃 — 느린 워커에 timeout_seconds 강제
@@ -710,7 +710,7 @@ async def test_codex_regressions_incident_isolation_redis_reconcile_inflight_ded
             )
             assert r1.payload["ok"] is True and r2.payload["ok"] is True
             # 1회 실행당 LOG+RUNBOOK 2회 검색만 수행 (동시 2번째 요청이 중복 실행하지 않음)
-            assert mcp_calls["search"] == 2
+            assert mcp_calls["search"] == 3
 
     # 3) 타 장애(INC-B)로 resume=True 요청 시 INC-A의 체크포인트를 재개하지 않아야 함 & 4) 만료된 캐시 항목은 재개 시 제거되어야 함
     shared_redis = _SharedInMemoryRedis()

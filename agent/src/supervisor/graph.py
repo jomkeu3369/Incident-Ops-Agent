@@ -366,7 +366,7 @@ def build_supervisor_graph(settings: Settings, http_client: httpx.AsyncClient, b
         log_req = {
             "incidentCode": state["incident_code"],
             "keywords": keywords,
-            "excludeChunkIds": pulled_ids,
+            "excludeChunkIds": list(pulled_ids),
             "maxPulls": 2 if pulled_ids else settings.dr_dci_max_pull_steps,
             "idempotencyKey": log_task_key,
             "traceId": trace_id,

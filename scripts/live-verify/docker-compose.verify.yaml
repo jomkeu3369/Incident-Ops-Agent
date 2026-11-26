@@ -1,0 +1,63 @@
+# 실스택 검증 전용 override. 기존 incident-ops 컨테이너·볼륨·네트워크·.env와 분리해 실행한다.
+#   docker compose -p iopsv --env-file <verify.env> -f docker-compose-infra.yaml -f docker-compose.yaml -f scripts/live-verify/docker-compose.verify.yaml up -d --build
+# 외부 API(GitHub·Grafana)만 로컬 대역을 사용하고, 포트는 loopback에만 연다.
+services:
+  mysql:
+    container_name: iopsv-mysql
+    ports: !override ["127.0.0.1:13306:3306"]
+  redis:
+    container_name: iopsv-redis
+  caddy:
+    container_name: iopsv-caddy
+    ports: !override ["127.0.0.1:18088:80"]
+  backend:
+    container_name: iopsv-backend
+    ports: !override ["127.0.0.1:18080:8080"]
+    # 인프라·애플리케이션 파일을 한 번에 올리므로 DB 준비를 기다린다
+    depends_on:
+      mysql:
+        condition: service_healthy
+  log-analyzer-agent:
+    container_name: iopsv-log-agent
+    ports: !override ["127.0.0.1:18001:8001"]
+  remediation-agent:
+    container_name: iopsv-remediation-agent
+    ports: !override ["127.0.0.1:18002:8002"]
+    environment:
+      GITHUB_API_BASE_URL: http://fake-external:9000/github
+  supervisor-agent:
+    container_name: iopsv-supervisor
+    ports: !override ["127.0.0.1:18000:8000"]
+  frontend:
+    container_name: iopsv-frontend
+    ports: !override ["127.0.0.1:13000:3000"]
+  # A2A 계약이 같은 워커 구현 교체(키워드 -> 에이전틱)를 확인하는 두 번째 조사 워커
+  log-analyzer-agent-v2:
+    image: iopsv-log-analyzer-agent
+    container_name: iopsv-log-agent-v2
+    command: ["uvicorn", "log_agent.main:app", "--host", "0.0.0.0", "--port", "8001"]
+    environment:
+      INTERNAL_SERVICE_TOKEN: ${INTERNAL_INVESTIGATOR_TOKEN}
+      INTERNAL_INVESTIGATOR_TOKEN: ${INTERNAL_INVESTIGATOR_TOKEN}
+      SPRING_MCP_SSE_URL: http://backend:8080/sse
+      DR_DCI_MODE: agentic
+      DR_DCI_SELECTOR_MODE: adaptive
+      LANGSMITH_TRACING: "false"
+    ports: ["127.0.0.1:28011:8001"]
+    depends_on:
+      backend:
+        condition: service_healthy
+    networks:
+      - incident-ops-net
+  fake-external:
+    image: python:3.12-slim
+    container_name: iopsv-fake-external
+    command: ["python", "/fake/fake_external_api.py"]
+    volumes:
+      - ./scripts/live-verify:/fake:ro
+    networks:
+      - incident-ops-net
+
+networks:
+  incident-ops-net: !override
+    name: iopsv-net

@@ -91,7 +91,7 @@ async def _run_dr_dci_investigation_impl(
     tool_trace: list[dict[str, Any]] = []
 
     try:
-        # 1단계: 키워드 색인 조회 후 제외 목록(excludeChunkIds)을 먼저 걸러내고, 남은 후보가 부족하면 전체 색인으로 확장한다
+        # 1단계: 키워드 색인 조회 후 제외 목록(excludeChunkIds)을 먼저 걸러내고, 남은 후보가 인출 예산을 채우지 못하면 전체 색인으로 확장한다
         log_by_id: dict[str, dict[str, Any]] = {}
         for kw in kw_list:
             rows = await crud.search_index(req.incidentCode, "LOG", kw)
@@ -105,7 +105,7 @@ async def _run_dr_dci_investigation_impl(
                 break
 
         unexcluded_logs = [m for cid, m in log_by_id.items() if cid not in excluded]
-        if not unexcluded_logs or (excluded and len(unexcluded_logs) <= budget):
+        if len(unexcluded_logs) <= budget:
             all_rows = await crud.search_index(req.incidentCode, "LOG", None)
             tool_trace.append({"tool": "searchCorpusIndex", "args": {"incidentCode": req.incidentCode, "corpusType": "LOG", "keyword": None}, "count": len(all_rows)})
             for row in all_rows:

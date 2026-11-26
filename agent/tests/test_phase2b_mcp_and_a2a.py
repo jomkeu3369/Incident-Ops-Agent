@@ -11,6 +11,8 @@ from common.config import Settings
 from common.decisions import DecisionsClient
 from common.tools import ExternalToolsClient
 from log_agent.main import create_log_agent_app
+from log_agent.schemas import LogInvestigationRequest
+from log_agent.services import run_dr_dci_investigation
 from remediation_agent.main import create_remediation_agent_app
 
 
@@ -115,6 +117,42 @@ async def test_log_agent_a2a_dr_dci_pulls_prioritized_chunks():
     assert set(res["evidenceChunkIds"]) == {"LOG-104", "LOG-105", "RUNBOOK-01"}
     assert res["recommendedCommand"] == "kubectl rollout undo deployment/payment-service"
     assert "LOG-101" in res["remainingChunkIds"]
+
+
+async def test_dr_dci_fills_budget_from_full_index_when_keywords_hit_too_few_logs():
+    """장애 제목에서 뽑은 키워드가 증상 로그 하나만 찾더라도 남은 예산으로 원인 로그를 인출한다."""
+    rows = {
+        "LOG-101": ("LOG", "정상 트래픽 및 헬스체크 로그", "healthcheck,200,normal"),
+        "LOG-102": ("LOG", "배포 롤아웃 시작 이벤트", "deploy,rollout,v2.4.1"),
+        "LOG-103": ("LOG", "외부 PG사 웹훅 수신 로그", "webhook,pg,callback"),
+        "LOG-104": ("LOG", "HikariPool 커넥션 타임아웃 급증", "HikariPool,Connection,timeout"),
+        "LOG-105": ("LOG", "커넥션 누수 감지 스택트레이스", "leak,Connection"),
+        "LOG-106": ("LOG", "게이트웨이 502 Upstream 응답 기록", "502,Bad Gateway,upstream"),
+        "RUNBOOK-01": ("RUNBOOK", "DB 커넥션 풀 고갈 및 누수 긴급 복구 런북", "HikariPool,leak,rollback"),
+    }
+
+    async def fake_mcp(tool_name: str, args: dict):
+        if tool_name == "searchCorpusIndex":
+            keyword = args.get("keyword") or ""
+            return [
+                {"chunkId": cid, "corpusType": kind, "title": title, "keywords": keywords, "sequenceOrder": order}
+                for order, (cid, (kind, title, keywords)) in enumerate(rows.items())
+                if kind == args["corpusType"] and (keyword in title or keyword in keywords)
+            ]
+        kind, title, _ = rows[args["chunkId"]]
+        return {"chunkId": args["chunkId"], "corpusType": kind, "title": title, "content": title}
+
+    cfg = _settings(dr_dci_max_pull_steps=5)
+    async with httpx.AsyncClient() as http:
+        result = await run_dr_dci_investigation(
+            BackendClient(cfg, http, mcp_caller=fake_mcp),
+            cfg,
+            LogInvestigationRequest(incidentCode="INC-2026-001", keywords=["502", "Bad", "Gateway"], maxPulls=5),
+        )
+
+    assert {"LOG-104", "LOG-105", "LOG-106", "RUNBOOK-01"} <= set(result.evidenceChunkIds)
+    assert result.pulledCount == 5
+    assert {"LOG-101", "LOG-103"} <= set(result.remainingChunkIds)
 
 
 async def test_remediation_agent_a2a_three_verdicts_cache_reuse_and_execute():
