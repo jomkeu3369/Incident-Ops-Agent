@@ -31,20 +31,24 @@ if ([string]::IsNullOrWhiteSpace($InternalToken)) {
 
 function Invoke-Api {
     param(
+        [Parameter(Mandatory = $true)]
         [string]$Method,
+        [Parameter(Mandatory = $true)]
         [string]$Url,
         [hashtable]$Headers = @{},
-        [string]$Body = $null
+        [object]$Body = $null
     )
+    $methodUpper = $Method.ToUpperInvariant()
+    $bodyText = if ($null -eq $Body) { $null } else { [string]$Body }
     try {
         $params = @{
-            Method          = $Method
+            Method          = $methodUpper
             Uri             = $Url
             Headers         = $Headers
             UseBasicParsing = $true
         }
-        if ($null -ne $Body) {
-            $params["Body"] = [System.Text.Encoding]::UTF8.GetBytes($Body)
+        if ($methodUpper -ne "GET" -and $methodUpper -ne "HEAD" -and -not [string]::IsNullOrEmpty($bodyText)) {
+            $params["Body"] = [System.Text.Encoding]::UTF8.GetBytes($bodyText)
             $params["ContentType"] = "application/json; charset=utf-8"
         }
         $resp = Invoke-WebRequest @params
@@ -55,9 +59,8 @@ function Invoke-Api {
             throw
         }
         $statusCode = [int]$webResp.StatusCode
-        $reader = New-Object System.IO.StreamReader($webResp.GetResponseStream())
-        $content = $reader.ReadToEnd()
-        $reader.Close()
+        # Windows PowerShell 5.1과 PowerShell 7 모두 오류 응답 본문을 ErrorDetails에 담는다
+        $content = if ($_.ErrorDetails) { [string]$_.ErrorDetails.Message } else { "" }
         return @{ Status = $statusCode; Content = $content }
     }
 }
@@ -88,7 +91,11 @@ Assert-Status -Name "Seeded demo incident detail (INC-2026-001)" -Actual $demo.S
 $agui = Invoke-Api -Method "GET" -Url "$BaseUrl/api/ag-ui/status"
 Assert-Status -Name "Supervisor AG-UI status" -Actual $agui.Status -Expected 200
 
-# 4. Isolated incident ledger flow: create -> plan -> PENDING(409) -> REJECTED(409) -> APPROVED(200 RESOLVED)
+# 4. Isolated incident ledger flow (3/3 contract):
+#    (a) PENDING(409) -> REJECTED(OPEN, 409)
+#    (b) APPROVED + worker FAILED(hold without RESOLVED/postmortem)
+#    (c) APPROVED + command mismatch(409) -> SUCCESS(200 RESOLVED + postmortem)
+$approvedCmd = "kubectl rollout undo deployment/payment-service"
 $createBody = @{
     incidentCode = $smokeIncident
     title        = "Smoke test payment latency"
@@ -107,7 +114,7 @@ $planBody = @{
             stepNo           = 1
             description      = "Rollback payment-service deployment"
             condition        = "Operator approval confirmed"
-            actionCommand    = "kubectl rollout undo deployment/payment-service"
+            actionCommand    = $approvedCmd
             evidenceChunkIds = @("RUNBOOK-01")
         }
     )
@@ -117,7 +124,98 @@ $planBody = @{
 $planRes = Invoke-Api -Method "POST" -Url "$BaseUrl/api/incidents/$smokeIncident/plans" -Headers $authHeaders -Body $planBody
 Assert-Status -Name "Register remediation plan ($planId)" -Actual $planRes.Status -Expected 201
 
-$approvalId = "APR-SMOKE-$stamp"
+# 4a. Unapproved PENDING (409) -> REJECTED (reverts to OPEN) -> REJECTED completion blocked (409)
+$rejectApprovalId = "APR-REJ-$stamp"
+$rejectApprovalBody = @{
+    approvalId = $rejectApprovalId
+    planId     = $planId
+    stepNo     = 1
+    proposedBy = "smoke-tester"
+} | ConvertTo-Json -Compress
+$rejAprRes = Invoke-Api -Method "POST" -Url "$BaseUrl/api/incidents/$smokeIncident/approvals" -Headers $authHeaders -Body $rejectApprovalBody
+Assert-Status -Name "Create PENDING approval for rejection test ($rejectApprovalId)" -Actual $rejAprRes.Status -Expected 201
+
+$rejectCompleteBody = @{
+    approvalId          = $rejectApprovalId
+    actionCommand       = $approvedCmd
+    executedBy          = "smoke-tester"
+    executionStatus     = "SUCCESS"
+    executionOutput     = "[simulated] should be blocked"
+    verificationSummary = "502 rate 0.0%"
+    rootCause           = "smoke test simulated leak"
+    timelineMarkdown    = "- smoke verified"
+    preventionItems     = "- add automated gate"
+} | ConvertTo-Json -Compress
+
+$blockedPending = Invoke-Api -Method "POST" -Url "$BaseUrl/api/incidents/$smokeIncident/complete" -Headers $authHeaders -Body $rejectCompleteBody
+Assert-Status -Name "Unapproved PENDING completion blocked (409)" -Actual $blockedPending.Status -Expected 409
+
+$rejectDecisionBody = @{
+    decision   = "REJECTED"
+    approvedBy = "smoke-reviewer"
+} | ConvertTo-Json -Compress
+$rejected = Invoke-Api -Method "PATCH" -Url "$BaseUrl/api/incidents/$smokeIncident/approvals/$rejectApprovalId" -Headers $authHeaders -Body $rejectDecisionBody
+Assert-Status -Name "Reject remediation approval ($rejectApprovalId)" -Actual $rejected.Status -Expected 200
+$rejectedObj = $rejected.Content | ConvertFrom-Json
+if ($rejectedObj.decision -ne "REJECTED") {
+    throw "[FAIL] Expected decision=REJECTED, got $($rejectedObj.decision)"
+}
+$detailAfterReject = Invoke-Api -Method "GET" -Url "$BaseUrl/api/incidents/$smokeIncident" -Headers $authHeaders
+Assert-Status -Name "Fetch incident after rejection" -Actual $detailAfterReject.Status -Expected 200
+$detailAfterRejectObj = $detailAfterReject.Content | ConvertFrom-Json
+if ($detailAfterRejectObj.incident.status -ne "OPEN") {
+    throw "[FAIL] Expected incident status=OPEN after rejection, got $($detailAfterRejectObj.incident.status)"
+}
+Write-Host "[PASS] Rejected approval reverted incident status to OPEN" -ForegroundColor Green
+
+$blockedRejected = Invoke-Api -Method "POST" -Url "$BaseUrl/api/incidents/$smokeIncident/complete" -Headers $authHeaders -Body $rejectCompleteBody
+Assert-Status -Name "Rejected approval completion blocked (409)" -Actual $blockedRejected.Status -Expected 409
+
+# 4b. Approved worker failure (executionStatus=FAILED) holds incident without RESOLVED or postmortem
+$failApprovalId = "APR-FAIL-$stamp"
+$failApprovalBody = @{
+    approvalId = $failApprovalId
+    planId     = $planId
+    stepNo     = 1
+    proposedBy = "smoke-tester"
+} | ConvertTo-Json -Compress
+$failAprRes = Invoke-Api -Method "POST" -Url "$BaseUrl/api/incidents/$smokeIncident/approvals" -Headers $authHeaders -Body $failApprovalBody
+Assert-Status -Name "Create PENDING approval for worker failure hold test ($failApprovalId)" -Actual $failAprRes.Status -Expected 201
+
+$approveBody = @{
+    decision   = "APPROVED"
+    approvedBy = "smoke-approver"
+} | ConvertTo-Json -Compress
+$approvedForFail = Invoke-Api -Method "PATCH" -Url "$BaseUrl/api/incidents/$smokeIncident/approvals/$failApprovalId" -Headers $authHeaders -Body $approveBody
+Assert-Status -Name "Approve remediation for worker failure test ($failApprovalId)" -Actual $approvedForFail.Status -Expected 200
+
+$failedCompleteBody = @{
+    approvalId      = $failApprovalId
+    actionCommand   = $approvedCmd
+    executedBy      = "smoke-worker"
+    executionStatus = "FAILED"
+    executionOutput = "[simulated] worker rollback execution timed out"
+} | ConvertTo-Json -Compress
+$workerFailed = Invoke-Api -Method "POST" -Url "$BaseUrl/api/incidents/$smokeIncident/complete" -Headers $authHeaders -Body $failedCompleteBody
+Assert-Status -Name "Worker failure recorded without resolving incident" -Actual $workerFailed.Status -Expected 200
+$workerFailedObj = $workerFailed.Content | ConvertFrom-Json
+if ($workerFailedObj.incidentStatus -eq "RESOLVED" -or $null -ne $workerFailedObj.postMortem) {
+    throw "[FAIL] Worker failure must hold incident (got status=$($workerFailedObj.incidentStatus))"
+}
+$noPostMortem = Invoke-Api -Method "GET" -Url "$BaseUrl/api/incidents/$smokeIncident/postmortem" -Headers $authHeaders
+Assert-Status -Name "Postmortem absent while worker failure is held (404)" -Actual $noPostMortem.Status -Expected 404
+# 응답값이 아니라 원장에 저장된 상태를 다시 읽어 확인한다
+$heldRes = Invoke-Api -Method "GET" -Url "$BaseUrl/api/incidents/$smokeIncident" -Headers $authHeaders
+Assert-Status -Name "Fetch incident after worker failure" -Actual $heldRes.Status -Expected 200
+$held = $heldRes.Content | ConvertFrom-Json
+$failedRows = @($held.executions | Where-Object { $_.approvalId -eq $failApprovalId -and $_.executionStatus -eq "FAILED" })
+if ($held.incident.status -ne "WAITING_APPROVAL" -or $failedRows.Count -ne 1) {
+    throw "[FAIL] Ledger must keep the incident at WAITING_APPROVAL with one FAILED execution (status=$($held.incident.status), rows=$($failedRows.Count))"
+}
+Write-Host "[PASS] Worker FAILED execution held incident at $($workerFailedObj.incidentStatus) with no postmortem" -ForegroundColor Green
+
+# 4c. Approved command mismatch blocked (409) -> Approved SUCCESS resolves incident with postmortem
+$approvalId = "APR-OK-$stamp"
 $approvalBody = @{
     approvalId = $approvalId
     planId     = $planId
@@ -125,11 +223,28 @@ $approvalBody = @{
     proposedBy = "smoke-tester"
 } | ConvertTo-Json -Compress
 $aprRes = Invoke-Api -Method "POST" -Url "$BaseUrl/api/incidents/$smokeIncident/approvals" -Headers $authHeaders -Body $approvalBody
-Assert-Status -Name "Create PENDING approval ($approvalId)" -Actual $aprRes.Status -Expected 201
+Assert-Status -Name "Create PENDING approval for completion test ($approvalId)" -Actual $aprRes.Status -Expected 201
+
+$approved = Invoke-Api -Method "PATCH" -Url "$BaseUrl/api/incidents/$smokeIncident/approvals/$approvalId" -Headers $authHeaders -Body $approveBody
+Assert-Status -Name "Approve remediation ($approvalId)" -Actual $approved.Status -Expected 200
+
+$tamperedCompleteBody = @{
+    approvalId          = $approvalId
+    actionCommand       = "kubectl delete deployment/payment-service"
+    executedBy          = "smoke-tester"
+    executionStatus     = "SUCCESS"
+    executionOutput     = "[simulated] tampered command"
+    verificationSummary = "502 rate 0.0%"
+    rootCause           = "smoke test simulated leak"
+    timelineMarkdown    = "- smoke verified"
+    preventionItems     = "- add automated gate"
+} | ConvertTo-Json -Compress
+$blockedTampered = Invoke-Api -Method "POST" -Url "$BaseUrl/api/incidents/$smokeIncident/complete" -Headers $authHeaders -Body $tamperedCompleteBody
+Assert-Status -Name "Approved command mismatch blocked (409)" -Actual $blockedTampered.Status -Expected 409
 
 $completeBody = @{
     approvalId          = $approvalId
-    actionCommand       = "kubectl rollout undo deployment/payment-service"
+    actionCommand       = $approvedCmd
     executedBy          = "smoke-tester"
     executionStatus     = "SUCCESS"
     executionOutput     = "[simulated] executed rollback"
@@ -139,22 +254,18 @@ $completeBody = @{
     preventionItems     = "- add automated gate"
 } | ConvertTo-Json -Compress
 
-$blockedPending = Invoke-Api -Method "POST" -Url "$BaseUrl/api/incidents/$smokeIncident/complete" -Headers $authHeaders -Body $completeBody
-Assert-Status -Name "Unapproved PENDING completion blocked (409)" -Actual $blockedPending.Status -Expected 409
-
-# Approve and complete
-$approveBody = @{
-    decision   = "APPROVED"
-    approvedBy = "smoke-approver"
-} | ConvertTo-Json -Compress
-$approved = Invoke-Api -Method "PATCH" -Url "$BaseUrl/api/incidents/$smokeIncident/approvals/$approvalId" -Headers $authHeaders -Body $approveBody
-Assert-Status -Name "Approve remediation ($approvalId)" -Actual $approved.Status -Expected 200
-
 $completed = Invoke-Api -Method "POST" -Url "$BaseUrl/api/incidents/$smokeIncident/complete" -Headers $authHeaders -Body $completeBody
 Assert-Status -Name "Approved completion resolves incident" -Actual $completed.Status -Expected 200
 $completedObj = $completed.Content | ConvertFrom-Json
-if ($completedObj.incidentStatus -ne "RESOLVED") {
-    throw "[FAIL] Expected incidentStatus=RESOLVED, got $($completedObj.incidentStatus)"
+if ($completedObj.incidentStatus -ne "RESOLVED" -or $null -eq $completedObj.postMortem) {
+    throw "[FAIL] Expected incidentStatus=RESOLVED with postMortem, got $($completedObj.incidentStatus)"
+}
+$resolvedRes = Invoke-Api -Method "GET" -Url "$BaseUrl/api/incidents/$smokeIncident" -Headers $authHeaders
+Assert-Status -Name "Fetch incident after completion" -Actual $resolvedRes.Status -Expected 200
+$resolved = $resolvedRes.Content | ConvertFrom-Json
+$successRows = @($resolved.executions | Where-Object { $_.approvalId -eq $approvalId -and $_.executionStatus -eq "SUCCESS" })
+if ($resolved.incident.status -ne "RESOLVED" -or $null -eq $resolved.postMortem -or $successRows.Count -ne 1) {
+    throw "[FAIL] Ledger must record RESOLVED, postmortem and one SUCCESS execution (status=$($resolved.incident.status), rows=$($successRows.Count))"
 }
 Write-Host "[PASS] Incident transitioned to RESOLVED with postmortem" -ForegroundColor Green
 

@@ -704,6 +704,26 @@ async def test_eval_harness_metrics_false_supported_rate_and_cli(tmp_path: Path)
     assert "### 혼동 행렬" in md
     assert "`rule_based`" in md
 
+    # 미등록 단가 모델(MODEL_PRICING_PER_1M 미포함)은 $0.00000 대신 None / N/A로 기록되어야 한다
+    class UnknownModelJudge:
+        async def judge_plan_evidence(self, *, proposed_action: str, runbook: str, evidence: str) -> DecisionResult:
+            return DecisionResult(
+                verdict="SUPPORTED",
+                confidence=0.9,
+                probabilities={},
+                provider="openai_structured",
+                model="gpt-6.1-unlisted-pricing",
+                input_tokens=500,
+                output_tokens=80,
+                latency_ms=12.0,
+            )
+
+    unknown_report = await evaluate_judge(UnknownModelJudge(), mini_cases[:1], judge_name="unlisted", concurrency=1)
+    assert unknown_report.estimated_cost_usd is None
+    unknown_md = format_markdown_report([unknown_report])
+    assert "| N/A |" in unknown_md
+    assert "$0.00000" not in unknown_md
+
 
 def test_eval_cli_safety_gate_and_outputs(tmp_path: Path):
     """CLI 실행 시 JSON/Markdown 산출물 생성과 --max-fsr 안전 게이트 통과·실패(exit 2)를 검증한다."""

@@ -185,7 +185,7 @@ def generate_synthetic_incidents(
             q_kws = ("HikariPool", "502", "timeout")
             ext_m = f"[External] 기준 배포 {cur_v} 502 비율={cur_502}% (totalRequests={cur_reqs}), 후보 {prev_v} 502 비율={prev_502_ok}% (totalRequests={prev_reqs})"
 
-        elif arch in ("db_leak_2hop_dev", "db_leak_2hop_eval"):
+        elif arch == "db_leak_2hop_dev":
             chunks.extend([
                 CorpusChunkFixture(c_sym, "LOG", inc, svc, f"게이트웨이 502 급증 ({cur_v} 배포 후)", "502,Bad Gateway,timeout",
                                    f"{cur_v} 배포 후 502 급증({cur_502}%). 상세 DB 풀 진단은 {c_root} 참조.", seq),
@@ -197,6 +197,20 @@ def generate_synthetic_incidents(
             ])
             req_ids = (c_sym, c_root, rb_main)
             q_kws = ("502", "timeout")
+            ext_m = f"[External] 기준 배포 {cur_v} 502 비율={cur_502}% (totalRequests={cur_reqs}), 후보 {prev_v} 502 비율={prev_502_ok}% (totalRequests={prev_reqs})"
+
+        elif arch == "db_leak_2hop_eval":
+            chunks.extend([
+                CorpusChunkFixture(c_sym, "LOG", inc, svc, f"배치 트랜잭션 락 대기 타임아웃 급증 ({cur_v})", "deadlock,lock-wait,sqltransient,500,timeout",
+                                   f"{cur_v} 배포 직후 배치 트랜잭션 지연 급증 및 Lock wait timeout 발생(502={cur_502}%). InnoDB 데드락 분석은 {c_root} 참조.", seq),
+                CorpusChunkFixture(c_root, "LOG", inc, svc, f"InnoDB 트랜잭션 락 경합 덤프 ({cur_v})", "innodb,tx-lock,contention,dump",
+                                   f"ERROR Deadlock found when trying to get lock after rollout of {cur_v}; long-running batch transaction holding DB connection pool locks (커넥션 풀 포화, waiting_tx=48).", seq + 1),
+                CorpusChunkFixture(rb_main, "RUNBOOK", None, svc, "트랜잭션 데드락·장기 락 연쇄 장애 롤백 런북", "deadlock,lock-wait,sqltransient,pool,rollback,kubectl",
+                                   f"1. 배포 직후 배치 트랜잭션 데드락 및 커넥션 풀 포화 확인, 후보 502 비율 1.0% 미만, 최소 100건 표본 확인 시 롤백 실행\nkubectl rollout undo deployment/{svc}", 1),
+                _distractor_rb(idx, svc),
+            ])
+            req_ids = (c_sym, c_root, rb_main)
+            q_kws = ("deadlock", "lock-wait", "timeout")
             ext_m = f"[External] 기준 배포 {cur_v} 502 비율={cur_502}% (totalRequests={cur_reqs}), 후보 {prev_v} 502 비율={prev_502_ok}% (totalRequests={prev_reqs})"
 
         elif arch == "db_preexisting_eval":
@@ -271,8 +285,8 @@ def generate_synthetic_incidents(
                                    f"{cur_v} 배포 후 파드 재시작 반복. 커널 종료 사유는 {c_root} 참조.", seq),
                 CorpusChunkFixture(c_root, "LOG", inc, svc, "컨테이너 커널 힙 프로파일", "kernel,profile,heap",
                                    f"ERROR reason=OOMKilled exitCode=137 after deploy of {cur_v}. 이전 버전 {prev_v} 힙 39% 정상.", seq + 1),
-                CorpusChunkFixture(rb_main, "RUNBOOK", None, svc, "OOMKilled 롤백 런북", "OOMKilled,memory,rollback,kubectl",
-                                   f"1. 배포 직후 OOMKilled 및 이전 버전 정상 확인 시 즉시 롤백\nkubectl rollout undo deployment/{svc}", 1),
+                CorpusChunkFixture(rb_main, "RUNBOOK", None, svc, "컨테이너 OOMKilled 힙 급증 롤백 런북", "OOMKilled,memory,rollback,kubectl",
+                                   f"1. 커널 종료 사유가 배포 이후 OOMKilled이고 직전 버전의 힙 지표가 정상이면 롤백한다.\n2. 롤아웃 완료 후 파드 재시작 횟수를 다시 확인한다.\nkubectl rollout undo deployment/{svc}", 1),
                 _distractor_rb(idx, svc),
             ])
             req_ids = (c_sym, c_root, rb_main)
@@ -283,7 +297,7 @@ def generate_synthetic_incidents(
             chunks.extend([
                 CorpusChunkFixture(c_sym, "LOG", inc, svc, "OOMKilled 및 이전 버전 지표 미수집", "OOMKilled,memory,metrics",
                                    f"{cur_v} 배포 후 OOMKilled 1회 발생. 이전 버전 {prev_v} 지표 미수집(metrics unavailable).", seq),
-                CorpusChunkFixture(rb_main, "RUNBOOK", None, svc, "OOMKilled 롤백 런북", "OOMKilled,rollback,kubectl",
+                CorpusChunkFixture(rb_main, "RUNBOOK", None, svc, "메모리 OOM 지표 검증 롤백 런북", "OOMKilled,rollback,kubectl",
                                    f"1. 이전 버전 정상 확인 후 롤백\nkubectl rollout undo deployment/{svc}", 1),
                 _distractor_rb(idx, svc),
             ])
@@ -575,18 +589,60 @@ def write_mysql_seed_sql(
     batch_size: int = 100,
     include_plans_and_approvals: bool = True,
 ) -> dict[str, int]:
-    """Flyway V1~V7 MySQL 스키마와 100% 호환되는 k6 부하 테스트용 멱등 벌크 INSERT SQL을 생성한다."""
+    """Flyway V1~V7 MySQL 스키마와 100% 호환되는 k6 부하 테스트용 멱등 벌크 INSERT SQL을 생성한다.
+
+    실 MySQL `CorpusMapper.xml`은 `corpus_type='RUNBOOK' AND incident_code IS NULL`을 서비스 공용으로 조회하므로,
+    서비스·제목·키워드·본문이 모두 같은 런북만 한 행으로 합치고 계획 `evidenceChunkIds`를 그 ID로 매핑한다.
+    내용이 다른 런북은 합치지 않아 각 장애의 정답 근거가 유지된다.
+    """
     path = Path(output_path)
     path.parent.mkdir(parents=True, exist_ok=True)
 
     base_dt = datetime(2026, 11, 1, 9, 0, 0)
     severities = ("SEV1", "SEV2", "SEV3")
     total_chunks = 0
+    log_chunk_count = 0
+    shared_runbook_count = 0
+    skipped_runbooks = 0
     total_plans = 0
     total_approvals = 0
 
+    # 2) corpus_chunks 정규화 사전 계산: 서비스 공용 RUNBOOK(incident_code=NULL)은 내용이 완전히 같은 것만 합친다
+    all_chunk_rows: list[str] = []
+    shared_rb_by_content: dict[tuple[str, str, str, str], str] = {}
+    rb_id_remap: dict[str, str] = {}
+    for c in cases:
+        for ch in c.chunks:
+            cid = ch.chunk_id[:32]
+            ctype = ch.corpus_type[:16].upper()
+            if ctype == "RUNBOOK" and ch.incident_code is None:
+                key = (ch.service_name[:100], ch.title[:200], ch.keywords[:255], ch.content)
+                canonical_id = shared_rb_by_content.get(key)
+                if canonical_id is not None:
+                    rb_id_remap[ch.chunk_id] = canonical_id
+                    skipped_runbooks += 1
+                    continue
+                shared_rb_by_content[key] = cid
+                rb_id_remap[ch.chunk_id] = cid
+                shared_runbook_count += 1
+            else:
+                log_chunk_count += 1
+
+            total_chunks += 1
+            all_chunk_rows.append(
+                f"({_sql_escape(cid)}, {_sql_escape(ch.corpus_type[:16])}, "
+                f"{_sql_escape(ch.incident_code)}, {_sql_escape(ch.service_name[:100])}, "
+                f"{_sql_escape(ch.title[:200])}, {_sql_escape(ch.keywords[:255])}, "
+                f"{_sql_escape(ch.content)}, {int(ch.sequence_order)})"
+            )
+
     with path.open("w", encoding="utf-8", newline="\n") as fp:
-        fp.write("-- Auto-generated deterministic synthetic incident dataset for k6 load & DR-DCI scale tests\n")
+        fp.write(
+            "-- Auto-generated deterministic synthetic incident dataset for k6 load & DR-DCI scale tests\n"
+            f"-- Summary: incidents={len(cases)}, corpus_chunks={total_chunks} "
+            f"(logs={log_chunk_count}, shared_runbook_count={shared_runbook_count}, "
+            f"deduplicated_runbooks_skipped={skipped_runbooks})\n"
+        )
         fp.write("SET NAMES utf8mb4;\nSTART TRANSACTION;\n\n")
 
         # 1) incidents 벌크 INSERT
@@ -611,16 +667,6 @@ def write_mysql_seed_sql(
             )
 
         # 2) corpus_chunks 벌크 INSERT
-        all_chunk_rows: list[str] = []
-        for c in cases:
-            for ch in c.chunks:
-                total_chunks += 1
-                all_chunk_rows.append(
-                    f"({_sql_escape(ch.chunk_id[:32])}, {_sql_escape(ch.corpus_type[:16])}, "
-                    f"{_sql_escape(ch.incident_code)}, {_sql_escape(ch.service_name[:100])}, "
-                    f"{_sql_escape(ch.title[:200])}, {_sql_escape(ch.keywords[:255])}, "
-                    f"{_sql_escape(ch.content)}, {int(ch.sequence_order)})"
-                )
         for start in range(0, len(all_chunk_rows), batch_size):
             batch_rows = all_chunk_rows[start : start + batch_size]
             fp.write(
@@ -640,19 +686,20 @@ def write_mysql_seed_sql(
                 plan_id = f"PLAN-SYN-{idx:04d}"
                 approval_id = f"APR-SYN-{idx:04d}"
                 action_cmd = f"kubectl rollout undo deployment/{c.service_name}"
+                mapped_req_ids = [rb_id_remap.get(cid, cid) for cid in c.required_chunk_ids]
                 steps_json = json.dumps([
                     {
                         "stepNo": 1,
                         "description": f"{c.service_name} 근거 청크 확인",
                         "condition": f"{c.category} 증상 확인",
-                        "evidenceChunkIds": list(c.required_chunk_ids[:2]),
+                        "evidenceChunkIds": mapped_req_ids[:2],
                     },
                     {
                         "stepNo": 2,
                         "description": f"{c.service_name} 직전 안정 버전 롤백",
                         "condition": "운영자 승인 완료",
                         "actionCommand": action_cmd,
-                        "evidenceChunkIds": list(c.required_chunk_ids[-1:]),
+                        "evidenceChunkIds": mapped_req_ids[-1:],
                     },
                 ], ensure_ascii=False)
                 plan_rows.append(
@@ -684,6 +731,9 @@ def write_mysql_seed_sql(
     return {
         "incidents": len(cases),
         "corpus_chunks": total_chunks,
+        "log_chunk_count": log_chunk_count,
+        "shared_runbook_count": shared_runbook_count,
+        "deduplicated_runbooks_skipped": skipped_runbooks,
         "remediation_plans": total_plans,
         "remediation_approvals": total_approvals,
     }

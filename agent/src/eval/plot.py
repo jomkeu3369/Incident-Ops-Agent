@@ -187,20 +187,26 @@ def plot_latency_distribution(reports: Sequence[dict[str, Any]], output_path: Pa
     df = pd.DataFrame(rows)
     fig, ax = plt.subplots(figsize=(9.5, 4.6))
 
-    sns.boxplot(
-        data=df,
-        y="judge",
-        x="latency_ms",
-        color="#DBEAFE",
-        width=0.45,
-        fliersize=0,
-        linewidth=1.3,
-        ax=ax,
+    judge_order = list(dict.fromkeys(df["judge"].tolist()))
+    grouped_latencies = [df.loc[df["judge"] == j, "latency_ms"].to_numpy() for j in judge_order]
+    positions = list(range(len(judge_order)))
+    ax.boxplot(
+        grouped_latencies,
+        positions=positions,
+        orientation="horizontal",
+        widths=0.45,
+        patch_artist=True,
+        showfliers=False,
+        boxprops={"facecolor": "#DBEAFE", "edgecolor": "#475569", "linewidth": 1.3},
+        whiskerprops={"color": "#475569", "linewidth": 1.3},
+        capprops={"color": "#475569", "linewidth": 1.3},
+        medianprops={"color": "#1E293B", "linewidth": 1.5},
     )
     sns.stripplot(
         data=df,
         y="judge",
         x="latency_ms",
+        order=judge_order,
         hue="correct",
         palette={"Correct": "#2563EB", "Missed": "#EA580C"},
         alpha=0.82,
@@ -208,6 +214,8 @@ def plot_latency_distribution(reports: Sequence[dict[str, Any]], output_path: Pa
         jitter=0.14,
         ax=ax,
     )
+    ax.set_yticks(positions)
+    ax.set_yticklabels(judge_order)
 
     summary_lines: list[str] = []
     for report in reports:
@@ -561,17 +569,28 @@ def plot_four_way_latency_and_steps(payload: dict[str, Any], output_path: Path) 
     s_df = pd.DataFrame(sum_rows)
 
     fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(13.2, 4.9))
-    sns.boxplot(
-        data=c_df,
-        y="strategy",
-        x="latency_ms",
-        hue="strategy",
-        palette=_STRATEGY_COLORS,
-        width=0.5,
-        fliersize=2,
-        legend=False,
-        ax=ax1,
+    strat_order = list(dict.fromkeys(c_df["strategy"].tolist()))
+    grouped_strat = [c_df.loc[c_df["strategy"] == st, "latency_ms"].to_numpy() for st in strat_order]
+    strat_positions = list(range(len(strat_order)))
+    bp = ax1.boxplot(
+        grouped_strat,
+        positions=strat_positions,
+        orientation="horizontal",
+        widths=0.5,
+        patch_artist=True,
+        showfliers=True,
+        boxprops={"edgecolor": "#334155", "linewidth": 1.2},
+        whiskerprops={"color": "#334155", "linewidth": 1.2},
+        capprops={"color": "#334155", "linewidth": 1.2},
+        medianprops={"color": "#0F172A", "linewidth": 1.4},
+        flierprops={"marker": "o", "markersize": 2.5, "markerfacecolor": "#475569", "markeredgecolor": "#475569"},
     )
+    for patch, strat in zip(bp["boxes"], strat_order):
+        patch.set_facecolor(_STRATEGY_COLORS.get(strat, "#94A3B8"))
+        patch.set_alpha(0.85)
+    ax1.set_yticks(strat_positions)
+    ax1.set_yticklabels(strat_order)
+    ax1.invert_yaxis()
     is_live = payload.get("latency_scope") == "live_llm_api_inclusive"
     ax1.set_title(
         "Live LLM API End-to-End Latency — p50/p95/p99 (incl. OpenAI RTT)"

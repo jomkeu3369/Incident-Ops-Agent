@@ -50,7 +50,8 @@
   - `npm run test:mock-e2e`: Next `/bff/mock-ag-ui` 3건(`ag-ui-phase2.test.ts`, `admin-phase4.test.ts`) — `TEST_AG_UI_BASE_URL` 지정 시 실행
   - `npm run test:ssr-bff`: 실제 Spring BFF 대상(`backend-phase3.test.ts`) — `TEST_AG_UI_BASE_URL`, `TEST_SECRET_TOKEN` 지정 시 실행. 기본 기대 제목을 `db/demo/data.sql` 시드와 일치시켰으며, 완료 픽스처의 포스트모템 검증은 `TEST_EXPECTED_POSTMORTEM_ROOT_CAUSE`로 선택 활성화 가능
 - **오프라인 Compose 스모크 테스트 (`scripts/smoke-test.ps1`):**
-  - 외부 API 키 없이 ① Spring `401` fail-closed ② `INC-2026-001` 시드 ③ AG-UI `/api/ag-ui/status` ④ 격리된 임시 장애(`INC-SMOKE-*`)의 미승인 완료 `409 Conflict` 차단 → 승인 → `RESOLVED` 전이 ⑤ Next BFF 시크릿 미유출을 일괄 검증
+  - 외부 API 키 없이 ① Spring `401` fail-closed ② `INC-2026-001` 시드 ③ AG-UI `/api/ag-ui/status` ④ 격리된 임시 장애(`INC-SMOKE-*`)에서 미승인·반려 승인의 완료 `409` 차단, 실행 실패(`FAILED`) 기록 시 장애 보류, 명령 불일치 `409`, 승인 후 `RESOLVED` 전이 ⑤ Next BFF 시크릿 미유출을 일괄 확인하는 스크립트
+- **실행 상태:** 위 스모크와 `test:ssr-bff`는 실행 중인 Spring·MySQL이 필요합니다. 이 문서의 수치에는 실스택 실행 결과가 포함되지 않습니다. 실패 시나리오는 REST로 `FAILED`를 기록하는 검증이며 워커 프로세스 장애를 재현하지는 않습니다.
 
 ---
 

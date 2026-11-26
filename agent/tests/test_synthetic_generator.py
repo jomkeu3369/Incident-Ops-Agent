@@ -60,12 +60,17 @@ def test_synthetic_jsonl_and_mysql_seed_sql_generation(tmp_path: Path):
     sql_path = tmp_path / "syn-seed.sql"
     stats = write_mysql_seed_sql(cases, sql_path, batch_size=50)
     assert stats["incidents"] == 120
-    assert stats["corpus_chunks"] == sum(len(c.chunks) for c in cases)
+    shared = [ch for c in cases for ch in c.chunks if ch.corpus_type == "RUNBOOK" and ch.incident_code is None]
+    assert stats["shared_runbook_count"] == len({(r.service_name, r.title, r.keywords, r.content) for r in shared})
+    assert stats["deduplicated_runbooks_skipped"] > 0
+    assert stats["corpus_chunks"] == stats["log_chunk_count"] + stats["shared_runbook_count"]
+    assert stats["corpus_chunks"] < sum(len(c.chunks) for c in cases)
     assert stats["remediation_plans"] == 40
     assert stats["remediation_approvals"] == 40
 
     sql_text = sql_path.read_text(encoding="utf-8")
     assert sql_text.startswith("-- Auto-generated")
+    assert f"shared_runbook_count={stats['shared_runbook_count']}" in sql_text
     assert "START TRANSACTION;" in sql_text
     assert "COMMIT;" in sql_text
     assert "INSERT INTO incidents" in sql_text
@@ -75,6 +80,87 @@ def test_synthetic_jsonl_and_mysql_seed_sql_generation(tmp_path: Path):
     assert "ON DUPLICATE KEY UPDATE id = id;" in sql_text
     assert re.search(r"PLAN-SYN-0003", sql_text)
     assert re.search(r"APR-SYN-0003", sql_text)
+
+    # 정규화된 공용 런북 ID만 remediation_plans.steps에 참조되는지 검증
+    inserted_chunk_ids = set(re.findall(r"\('([LR]-\d{4}-[A-Z0-9]+)', '(?:LOG|RUNBOOK)'", sql_text))
+    referenced_in_plans = set(re.findall(r'"([LR]-\d{4}-[A-Z0-9]+)"', sql_text))
+    assert referenced_in_plans
+    assert referenced_in_plans.issubset(inserted_chunk_ids)
+
+    # 합쳐진 뒤에도 각 계획이 가리키는 런북은 그 장애의 정답 런북과 내용이 같아야 한다
+    by_id = {ch.chunk_id: ch for c in cases for ch in c.chunks}
+    plan_steps = re.findall(r"\('PLAN-SYN-\d+', '([^']+)'.*?'(\[\{.*?\}\])'", sql_text)
+    assert len(plan_steps) == stats["remediation_plans"]
+    cases_by_incident = {c.incident_code: c for c in cases}
+    for incident_code, raw_steps in plan_steps:
+        case = cases_by_incident[incident_code]
+        steps = json.loads(raw_steps)
+        mapped = steps[0]["evidenceChunkIds"] + steps[1]["evidenceChunkIds"]
+        original = list(case.required_chunk_ids[:2]) + list(case.required_chunk_ids[-1:])
+        for new_id, old_id in zip(mapped, original, strict=True):
+            new, old = by_id[new_id], by_id[old_id]
+            assert (new.service_name, new.title, new.content) == (old.service_name, old.title, old.content)
+
+
+def test_synthetic_dev_and_eval_have_zero_template_title_and_body_overlap():
+    """dev와 eval은 archetype/template_id뿐 아니라 정규화된 핵심 로그·런북 제목/본문 템플릿도 0건 중복이어야 한다."""
+    _, cases = generate_synthetic_incidents(count=260, seed=42, noise_chunks_per_incident=3)
+
+    service_re = re.compile(
+        r"\b(?:" + "|".join(re.escape(s) for s in sorted({c.service_name for c in cases}, key=len, reverse=True)) + r")\b"
+    )
+
+    def _norm(text: str) -> str:
+        t = service_re.sub("<SVC>", text)
+        t = re.sub(r"\bv\d+\.\d+\.\d+\b", "<VER>", t)
+        t = re.sub(r"\b[LR]-\d{4}-[A-Z0-9]+\b", "<CID>", t)
+        t = re.sub(r"\b\d+(?:\.\d+)?%", "<PCT>", t)
+        t = re.sub(r"sample_size=\d+", "sample_size=<N>", t)
+        return t
+
+    dev_arch: set[str] = set()
+    eval_arch: set[str] = set()
+    dev_tids: set[str] = set()
+    eval_tids: set[str] = set()
+    dev_log_templates: set[tuple[str, str]] = set()
+    eval_log_templates: set[tuple[str, str]] = set()
+    dev_rb_templates: set[tuple[str, str]] = set()
+    eval_rb_templates: set[tuple[str, str]] = set()
+
+    for case in cases:
+        if case.split == "dev":
+            dev_arch.add(case.archetype)
+            dev_tids.add(case.template_id)
+        else:
+            eval_arch.add(case.archetype)
+            eval_tids.add(case.template_id)
+
+        for ch in case.chunks:
+            # 노이즈 로그(-Nxx)와 공통 HPA distractor 런북(-99) 제외
+            if "-N" in ch.chunk_id or ch.chunk_id.endswith("-99"):
+                continue
+            pair = (_norm(ch.title), _norm(ch.content))
+            if ch.corpus_type == "LOG":
+                (dev_log_templates if case.split == "dev" else eval_log_templates).add(pair)
+            else:
+                (dev_rb_templates if case.split == "dev" else eval_rb_templates).add(pair)
+
+    assert dev_arch.isdisjoint(eval_arch)
+    assert dev_tids.isdisjoint(eval_tids)
+    assert dev_log_templates.isdisjoint(eval_log_templates), (
+        f"dev/eval LOG template leak: {dev_log_templates & eval_log_templates}"
+    )
+    assert dev_rb_templates.isdisjoint(eval_rb_templates), (
+        f"dev/eval RUNBOOK template leak: {dev_rb_templates & eval_rb_templates}"
+    )
+    # 제목만 다르고 본문이 같은(또는 그 반대인) 템플릿도 누출이다
+    for kind, dev_pairs, eval_pairs in (
+        ("LOG", dev_log_templates, eval_log_templates),
+        ("RUNBOOK", dev_rb_templates, eval_rb_templates),
+    ):
+        for index, field in enumerate(("title", "content")):
+            shared = {p[index] for p in dev_pairs} & {p[index] for p in eval_pairs}
+            assert not shared, f"dev/eval {kind} {field} leak: {shared}"
 
 
 def test_synthetic_cli_runs_end_to_end_with_benchmark_summary(tmp_path: Path):

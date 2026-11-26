@@ -109,7 +109,7 @@ def _distractor_runbook(service_name: str, seq: int = 2) -> CorpusChunkFixture:
 
 
 def build_dr_dci_benchmark_dataset() -> tuple[str, list[DrDciBenchmarkCase]]:
-    """6개 장애 카테고리 × 10건 = 60건(dev 24 / eval 36 원형 분리)의 DR-DCI 4종 전략 벤치마크 코퍼스를 생성한다."""
+    """6개 장애 카테고리 × 10건 = 60건(dev 30 / eval 30 원형 분리, multi-hop 25건)의 DR-DCI 4종 전략 벤치마크 코퍼스를 생성한다."""
     cases: list[DrDciBenchmarkCase] = []
 
     # =========================================================================
@@ -244,7 +244,7 @@ def build_dr_dci_benchmark_dataset() -> tuple[str, list[DrDciBenchmarkCase]]:
         ))
 
     # =========================================================================
-    # 2. memory_oom (10건: dev 4, eval 6)
+    # 2. memory_oom (10건: dev 5, eval 5)
     # =========================================================================
     oom_specs = [
         # dev 템플릿: supported, contradicted_candidate, missing | eval 템플릿: supported_multihop, contradicted_preexisting, contradicted_nondeploy
@@ -353,7 +353,7 @@ def build_dr_dci_benchmark_dataset() -> tuple[str, list[DrDciBenchmarkCase]]:
         ))
 
     # =========================================================================
-    # 3. external_dependency (10건: dev 4, eval 6)
+    # 3. external_dependency (10건: dev 6, eval 4)
     # =========================================================================
     ext_specs = [
         # dev 템플릿: pg_outage, internal_bug, ambiguous | eval 템플릿: pg_multihop, region_outage
@@ -533,7 +533,7 @@ def build_dr_dci_benchmark_dataset() -> tuple[str, list[DrDciBenchmarkCase]]:
         ))
 
     # =========================================================================
-    # 5. telemetry_gap (10건: dev 4, eval 6)
+    # 5. telemetry_gap (10건: dev 6, eval 4)
     # =========================================================================
     tel_specs = [
         # dev 템플릿: scrape_gap, absent | eval 템플릿: sample_multihop, complete_ok, external_contradicted
@@ -629,7 +629,7 @@ def build_dr_dci_benchmark_dataset() -> tuple[str, list[DrDciBenchmarkCase]]:
         ))
 
     # =========================================================================
-    # 6. adversarial_edge (10건: dev 4, eval 6 — 인젝션 6건 + 에이전틱 불리 반례 2건 포함!)
+    # 6. adversarial_edge (10건: dev 5, eval 5 — 인젝션 6건 + 에이전틱 불리 반례 2건 포함!)
     # =========================================================================
     adv_specs = [
         # dev 템플릿: inj_missing, short_counterexample, negated_ok
