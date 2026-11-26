@@ -17,11 +17,11 @@ from common.a2a_utils import make_agent_json_message
 from common.backend_client import BackendClient
 from common.config import Settings
 from common.di import get_backend_client, get_settings
-from common.security import verify_internal_token
+from common.security import verify_log_agent_token
 from log_agent.schemas import LogInvestigationRequest, LogInvestigationResponse
 from log_agent.services import run_dr_dci_investigation
 
-router = APIRouter(prefix="/internal", tags=["a2a-internal"], dependencies=[Depends(verify_internal_token)])
+router = APIRouter(prefix="/internal", tags=["a2a-internal"], dependencies=[Depends(verify_log_agent_token)])
 _CACHE_TTL = 600
 _CACHE_SIZE = 512
 _RequestKey = tuple[str, str, str]

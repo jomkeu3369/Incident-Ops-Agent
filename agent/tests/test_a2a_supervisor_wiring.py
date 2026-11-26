@@ -13,6 +13,7 @@ import pytest
 import uvicorn
 from ag_ui.core import RunAgentInput, UserMessage
 from fastapi import FastAPI, Request
+from fastapi.testclient import TestClient
 from pydantic import SecretStr
 
 from common.a2a_utils import cancel_a2a_task, send_a2a_stream
@@ -20,6 +21,7 @@ from common.backend_client import BackendClient
 from log_agent import routers as log_routers
 from log_agent.main import create_log_agent_app
 from log_agent.schemas import LogInvestigationResponse
+from remediation_agent.main import create_remediation_agent_app
 from supervisor.checkpointer import RedisCheckpointSaver
 from supervisor.cruds import SupervisorRedisStore
 from supervisor.services import SupervisorService
@@ -370,3 +372,17 @@ async def test_cancel_one_of_two_shared_waiters_keeps_the_other_running() -> Non
     assert cancelled.canceled is True
     assert completed.payload["ok"] is True
     assert corpus.calls["search"] == 2
+
+
+@pytest.mark.parametrize(("create_app_under_test", "accepted", "rejected"), [
+    (create_log_agent_app, "read-only-token", "phase7-secret-token"),
+    (create_remediation_agent_app, "phase7-secret-token", "read-only-token"),
+])
+def test_internal_routes_use_the_same_credential_as_each_workers_rpc(create_app_under_test, accepted: str, rejected: str) -> None:
+    """호스트 실행처럼 두 토큰이 서로 다른 값으로 함께 설정돼도 워커마다 한 자격증명만 받는다."""
+    app = create_app_under_test(_settings(internal_investigator_token=SecretStr("read-only-token")))
+    with TestClient(app) as client:
+        assert client.get("/internal/ping", headers={"X-Internal-Token": accepted}).status_code == 200
+        assert client.get("/internal/ping", headers={"X-Internal-Token": rejected}).status_code == 401
+        assert client.get("/internal/ping").status_code == 401
+
