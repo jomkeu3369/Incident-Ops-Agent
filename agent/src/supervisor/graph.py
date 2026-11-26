@@ -11,12 +11,15 @@ from typing import Any, Awaitable, Callable, TypedDict
 import httpx
 from langgraph.graph import END, START, StateGraph
 
-from common.a2a_utils import send_a2a_json
+from common.a2a_utils import send_a2a_json, send_a2a_stream
 from common.backend_client import BackendApiError, BackendClient
 from common.config import Settings
 from common.event_log import EventBus, publish_safe
 from common.planner_math import parse_rfc3339
 from supervisor.ledger import approval_status, approval_view, find_approval, find_open_approval, find_plan
+
+# 취소 시점에 원격 작업 ID를 아직 못 받았으면 이만큼 기다려 CancelTask 대상을 확보한다
+_REMOTE_TASK_ID_GRACE_SECONDS = 2.0
 
 A2ACaller = Callable[[str, dict[str, Any], str], Awaitable[dict[str, Any]]]
 UiEventSink = Callable[[dict[str, Any]], Awaitable[None]]
@@ -223,7 +226,7 @@ def _resolve_time_bounds(constraints: dict[str, Any]) -> tuple[str, str, str, st
     return metrics_from, metrics_to, win_start.isoformat(), win_end.isoformat()
 
 
-def build_supervisor_graph(settings: Settings, http_client: httpx.AsyncClient, backend: BackendClient, event_bus: EventBus | None = None, a2a_caller: A2ACaller | None = None, on_ui_event: UiEventSink | None = None, checkpointer: Any | None = None, ledger_writes: list[asyncio.Future[Any]] | None = None):
+def build_supervisor_graph(settings: Settings, http_client: httpx.AsyncClient, backend: BackendClient, event_bus: EventBus | None = None, a2a_caller: A2ACaller | None = None, on_ui_event: UiEventSink | None = None, checkpointer: Any | None = None, ledger_writes: list[asyncio.Future[Any]] | None = None, remote_tasks: dict[str, str] | None = None):
     """요구사항 4.2 기준 LangGraph(analyze->plan->execute_log->execute_remediation->evaluate->respond)를 컴파일한다."""
 
     async def _emit(ui: list[dict[str, Any]], ev: dict[str, Any]) -> None:
@@ -236,6 +239,61 @@ def build_supervisor_graph(settings: Settings, http_client: httpx.AsyncClient, b
             return await a2a_caller(url, payload, context_id)
         token = settings.internal_service_token.get_secret_value()
         return await send_a2a_json(http_client, base_url=url, internal_token=token, payload=payload, context_id=context_id)
+
+    async def _investigate(state: SupervisorState, request: dict[str, Any], ui: list[dict[str, Any]]) -> tuple[dict[str, Any], str | None]:
+        """조사 워커에 위임하고 (결과, 작업 참조)를 반환한다. 실서비스 경로는 A2A 스트리밍을 사용한다."""
+        sid = state["session_id"]
+        url = settings.log_agent_a2a_url
+        if a2a_caller is not None:
+            return await a2a_caller(url, request, sid), request["idempotencyKey"]
+
+        in_flight: list[str] = []
+        identified = asyncio.Event()
+
+        def on_task_id(task_id: str) -> None:
+            in_flight.append(task_id)
+            if remote_tasks is not None:
+                remote_tasks[task_id] = url
+            identified.set()
+
+        async def on_progress(event: dict[str, Any]) -> None:
+            detail = event.get("detail")
+            stage = detail.get("stage") if isinstance(detail, dict) else None
+            if not stage or not event.get("taskId"):
+                return
+            await _emit(ui, {"kind": "a2a_progress", "value": {
+                "version": 1, "incidentCode": state["incident_code"], "runId": state["run_id"],
+                "worker": "log-analyzer-agent", "taskId": event["taskId"], "state": str(event.get("state") or ""),
+                "stage": str(stage), "elapsedMs": event.get("elapsedMs") or 0,
+            }})
+
+        def settled() -> None:
+            if remote_tasks is not None:
+                for task_id in in_flight:
+                    remote_tasks.pop(task_id, None)
+
+        stream = asyncio.ensure_future(send_a2a_stream(
+            http_client, base_url=url, internal_token=settings.internal_service_token.get_secret_value(),
+            payload=request, context_id=sid, on_progress=on_progress, on_task_id=on_task_id,
+        ))
+        try:
+            streamed = await asyncio.shield(stream)
+        except asyncio.CancelledError:
+            if not stream.done():
+                waiting = asyncio.ensure_future(identified.wait())
+                await asyncio.wait({waiting, stream}, timeout=_REMOTE_TASK_ID_GRACE_SECONDS, return_when=asyncio.FIRST_COMPLETED)
+                waiting.cancel()
+                stream.cancel()
+                await asyncio.wait([stream])
+            if not stream.cancelled():
+                stream.exception()
+            raise
+        except Exception:
+            settled()
+            raise
+        # 취소(CancelledError)로 빠져나가면 목록에 남겨 호출자가 원격 CancelTask를 보내게 한다
+        settled()
+        return streamed.payload, streamed.task_id
 
     async def analyze_node(state: SupervisorState) -> SupervisorState:
         """1단계: 요청 의도 분류 및 기준·제약 조건 추출."""
@@ -320,12 +378,16 @@ def build_supervisor_graph(settings: Settings, http_client: httpx.AsyncClient, b
             "traceId": trace_id,
         }
         log_call_id = f"tc-log-{uuid.uuid4().hex[:6]}"
-        a2a_task_ids.append(log_task_key)
         t0 = time.perf_counter()
         try:
-            log_res = await _call_worker(settings.log_agent_a2a_url, log_req, sid)
+            log_res, task_ref = await _investigate(state, log_req, ui)
         except Exception:
-            log_res = {"ok": False, "error": {"code": "A2A_ERROR", "message": "로그 분석 에이전트 호출에 실패했습니다."}, "evidence": []}
+            log_res, task_ref = {"ok": False, "error": {"code": "A2A_ERROR", "message": "로그 분석 에이전트 호출에 실패했습니다."}, "evidence": []}, None
+        if task_ref:
+            a2a_task_ids.append(task_ref)
+        if log_res.get("ok") and log_res.get("incidentCode") not in (None, state["incident_code"]):
+            # 다른 장애의 근거는 계획에 섞지 않는다
+            log_res = {"ok": False, "error": {"code": "A2A_INCIDENT_MISMATCH", "message": "다른 장애의 조사 결과를 폐기했습니다."}, "evidence": []}
         log_ms = round((time.perf_counter() - t0) * 1000, 1)
         await publish_safe(event_bus, sid, "tool_call", {"tool": "a2a:log-analyzer-agent", "args": {"incidentCode": state["incident_code"], "excludeCount": len(pulled_ids)}, "ok": bool(log_res.get("ok")), "elapsedMs": log_ms})
         await _emit(ui, {"kind": "tool_call", "id": log_call_id, "name": "log-analyzer-agent", "args": log_req, "result": {"ok": bool(log_res.get("ok")), "pulledCount": log_res.get("pulledCount", 0), "chunkIds": log_res.get("evidenceChunkIds", [])}})

@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, Awaitable, Callable
 
 from common.backend_client import BackendApiError, BackendClient
 from common.config import Settings
@@ -36,12 +36,18 @@ def _extract_command(text: str) -> str | None:
     return None
 
 
-async def run_dr_dci_investigation(backend: BackendClient, settings: Settings, req: LogInvestigationRequest) -> LogInvestigationResponse:
+async def run_dr_dci_investigation(
+    backend: BackendClient,
+    settings: Settings,
+    req: LogInvestigationRequest,
+    *,
+    on_pull_start: Callable[[], Awaitable[None]] | None = None,
+) -> LogInvestigationResponse:
     """DR-DCI 루프: 설정(keyword | agentic)에 따라 정적 키워드 또는 에이전틱 반복 인출을 실행한다."""
     if settings.dr_dci_mode == "agentic":
         from log_agent.agentic_dr_dci import run_agentic_dr_dci_investigation
 
-        return await run_agentic_dr_dci_investigation(backend, settings, req)
+        return await run_agentic_dr_dci_investigation(backend, settings, req, on_pull_start=on_pull_start)
 
     budget = min(req.maxPulls or settings.dr_dci_max_pull_steps, settings.dr_dci_max_pull_steps)
     async with traced_span(
@@ -55,7 +61,7 @@ async def run_dr_dci_investigation(backend: BackendClient, settings: Settings, r
         },
         tags=["dr-dci", "log-agent", "mcp"],
     ) as span:
-        response = await _run_dr_dci_investigation_impl(backend, settings, req, budget)
+        response = await _run_dr_dci_investigation_impl(backend, settings, req, budget, on_pull_start)
         end_span(
             span,
             outputs={
@@ -70,7 +76,13 @@ async def run_dr_dci_investigation(backend: BackendClient, settings: Settings, r
         return response
 
 
-async def _run_dr_dci_investigation_impl(backend: BackendClient, settings: Settings, req: LogInvestigationRequest, budget: int) -> LogInvestigationResponse:
+async def _run_dr_dci_investigation_impl(
+    backend: BackendClient,
+    settings: Settings,
+    req: LogInvestigationRequest,
+    budget: int,
+    on_pull_start: Callable[[], Awaitable[None]] | None,
+) -> LogInvestigationResponse:
     """DR-DCI 루프 실제 구현."""
     crud = CorpusCrud(backend)
     kw_list = [k.strip() for k in req.keywords if k and k.strip()]
@@ -125,6 +137,8 @@ async def _run_dr_dci_investigation_impl(backend: BackendClient, settings: Setti
     recommended_command: str | None = None
 
     # 2단계: 선별한 청크만 단건 인출 후 요약만 남기고 원문은 폐기한다
+    if targets and on_pull_start is not None:
+        await on_pull_start()
     for meta in targets:
         cid = str(meta["chunkId"])
         try:

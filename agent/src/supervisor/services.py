@@ -30,7 +30,7 @@ from ag_ui.core import (
 )
 from ag_ui.encoder import EventEncoder
 
-from common.a2a_utils import send_a2a_json
+from common.a2a_utils import cancel_a2a_task, send_a2a_json
 from common.backend_client import BackendApiError, BackendClient
 from common.config import Settings
 from common.event_log import EventBus, publish_safe
@@ -294,6 +294,16 @@ class SupervisorService:
             yield encoder.encode(_checkpoint_sync(props.incidentCode, memory, snapshot))
             yield encoder.encode(RunFinishedEvent(thread_id=tid, run_id=rid))
 
+    async def _cancel_remote_tasks(self, thread_id: str, remote_tasks: dict[str, str]) -> None:
+        """진행 중이던 원격 A2A 작업에 CancelTask를 보내고 확인 여부를 감사 로그에 남긴다."""
+        for task_id, base_url in list(remote_tasks.items()):
+            try:
+                await cancel_a2a_task(self._http, base_url=base_url, internal_token=self._settings.internal_service_token.get_secret_value(), task_id=task_id)
+                confirmed = True
+            except Exception:
+                confirmed = False
+            await publish_safe(self._bus, thread_id, "remote_task_cancel", {"taskId": task_id, "confirmed": confirmed})
+
     async def _checkpoint_plan(self, thread_id: str) -> dict[str, Any] | None:
         """체크포인트에 보존된 계획 초안을 읽는다(취소 후에도 승인 대상 계획을 보여 주기 위함)."""
         if self._checkpointer is None or not hasattr(self._checkpointer, "aget_tuple"):
@@ -345,6 +355,7 @@ class SupervisorService:
         }
         ui_queue: asyncio.Queue[dict[str, Any] | None] = asyncio.Queue()
         ledger_writes: list[asyncio.Future[Any]] = []
+        remote_tasks: dict[str, str] = {}
         live_graph = build_supervisor_graph(
             self._settings,
             self._http,
@@ -354,6 +365,7 @@ class SupervisorService:
             on_ui_event=ui_queue.put,
             checkpointer=self._checkpointer,
             ledger_writes=ledger_writes,
+            remote_tasks=remote_tasks,
         )
         graph_config = {"configurable": {"thread_id": tid}} if self._checkpointer is not None else None
 
@@ -443,6 +455,10 @@ class SupervisorService:
                 # 시작한 원장 쓰기는 결과가 확정된 뒤에 스레드 락을 놓는다
                 if ledger_writes:
                     await asyncio.wait(ledger_writes)
+                # 명시적 취소만 원격 작업까지 중단한다(단순 연결 단절은 재개를 위해 남겨 둔다).
+                # 취소와 단절이 겹쳐도 빠지지 않도록 보호 구간에서 보낸다
+                if run.cancel_requested:
+                    await self._cancel_remote_tasks(tid, remote_tasks)
 
         if final_state is None:
             # 취소된 실행의 최종 상태는 취소 요청 스트림이 원장 기준으로 확정한다
@@ -747,6 +763,8 @@ def _encode_ui_event(encoder: EventEncoder, ev: dict[str, Any]) -> list[str]:
         return [encoder.encode(StepStartedEvent(step_name=str(ev["step"])))]
     if kind == "step_finish":
         return [encoder.encode(StepFinishedEvent(step_name=str(ev["step"])))]
+    if kind == "a2a_progress":
+        return [encoder.encode(CustomEvent(name="a2a_progress", value=ev.get("value")))]
     if kind == "replan":
         return [encoder.encode(CustomEvent(name="replan", value=ev.get("value")))]
     if kind == "tool_call":

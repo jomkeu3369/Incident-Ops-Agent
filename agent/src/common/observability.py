@@ -1,12 +1,14 @@
 from __future__ import annotations
 
 from contextlib import asynccontextmanager, contextmanager
+import json
 import logging
 import re
 from typing import Any, AsyncIterator, Iterator, Mapping
+from urllib.parse import quote, unquote
 
 from langsmith import Client, RunTree, get_current_run_tree, trace
-from langsmith.run_helpers import tracing_context
+from langsmith.run_helpers import get_tracing_context, tracing_context
 from pydantic import SecretStr
 
 from common.config import Settings
@@ -16,6 +18,16 @@ logger = logging.getLogger(__name__)
 LANGSMITH_TRACE_HEADER = "langsmith-trace"
 LANGSMITH_BAGGAGE_HEADER = "baggage"
 REDACTED_VALUE = "[REDACTED]"
+
+_BAGGAGE_METADATA_KEYS = frozenset({
+    "incident_code", "thread_id", "run_id", "trace_id", "approval_id", "resume", "service",
+})
+_BAGGAGE_TAGS = frozenset({
+    "a2a", "ag-ui", "agentic", "approval-execution", "dr-dci", "execution",
+    "log-agent", "log-analyzer-agent", "mcp", "planner", "remediation-agent",
+    "resume", "run", "streaming", "supervisor",
+})
+_BAGGAGE_VALUE = re.compile(r"[A-Za-z0-9_.:-]{1,128}\Z")
 
 _SENSITIVE_KEY_TOKENS = (
     "token",
@@ -135,21 +147,49 @@ def flush_langsmith_client(client: Any | None) -> None:
             logger.warning("LangSmith flush failed (fail-safe): %s", type(exc).__name__)
 
 
+def _sanitize_baggage(raw: str) -> str:
+    members: dict[str, str] = {}
+    for item in raw.split(","):
+        key, sep, value = item.strip().partition("=")
+        if not sep or key in members:
+            continue
+        decoded = unquote(value)
+        if key == "langsmith-metadata":
+            try:
+                metadata = json.loads(decoded)
+            except (ValueError, RecursionError):
+                continue
+            if not isinstance(metadata, dict):
+                continue
+            allowed = {
+                field: content
+                for field, content in metadata.items()
+                if field in _BAGGAGE_METADATA_KEYS and (
+                    isinstance(content, bool) or
+                    (isinstance(content, str) and _BAGGAGE_VALUE.fullmatch(content) and _redact_string(content) == content)
+                )
+            }
+            if allowed:
+                members[key] = quote(json.dumps(allowed, separators=(",", ":")), safe="")
+        elif key == "langsmith-tags":
+            tags = [tag for tag in decoded.split(",") if tag in _BAGGAGE_TAGS]
+            if tags:
+                members[key] = quote(",".join(tags), safe="")
+    return ",".join(f"{key}={value}" for key, value in members.items())
+
+
 def extract_trace_headers() -> dict[str, str]:
     """현재 활성 LangSmith RunTree에서 A2A HTTP 전파용 트레이스 헤더만 추출한다."""
     try:
+        if get_tracing_context().get("enabled") is False:
+            return {}
         tree = get_current_run_tree()
         if tree is None:
             return {}
         raw = tree.to_headers()
         if not isinstance(raw, Mapping):
             return {}
-        headers: dict[str, str] = {}
-        for key in (LANGSMITH_TRACE_HEADER, LANGSMITH_BAGGAGE_HEADER):
-            val = raw.get(key)
-            if isinstance(val, str) and val.strip():
-                headers[key] = val.strip()
-        return headers
+        return extract_incoming_trace_headers(raw) or {}
     except Exception:
         return {}
 
@@ -161,7 +201,7 @@ def extract_incoming_trace_headers(headers: Mapping[str, str]) -> dict[str, str]
     if not trace_val:
         return None
     extracted = {LANGSMITH_TRACE_HEADER: trace_val}
-    baggage_val = lowered.get(LANGSMITH_BAGGAGE_HEADER, "").strip()
+    baggage_val = _sanitize_baggage(lowered.get(LANGSMITH_BAGGAGE_HEADER, ""))
     if baggage_val:
         extracted[LANGSMITH_BAGGAGE_HEADER] = baggage_val
     return extracted
@@ -177,8 +217,7 @@ def langsmith_tracing_scope(
     metadata: Mapping[str, Any] | None = None,
 ) -> Iterator[bool]:
     """요청·그래프 단위 LangSmith 트레이싱 컨텍스트를 연다 (비활성 시 명시적 격리 no-op)."""
-    active = bool(settings.langsmith_enabled or client is not None)
-    if not active:
+    if not settings.langsmith_enabled:
         with tracing_context(enabled=False):
             yield False
         return
@@ -191,10 +230,11 @@ def langsmith_tracing_scope(
 
     safe_meta = redact_sensitive_dict(metadata) if metadata else None
     parent: Any = None
-    if parent_headers:
+    safe_parent_headers = extract_incoming_trace_headers(parent_headers) if parent_headers else None
+    if safe_parent_headers:
         try:
             parent = RunTree.from_headers(
-                dict(parent_headers),
+                safe_parent_headers,
                 client=resolved_client,
                 project_name=settings.langsmith_project,
             )
@@ -225,10 +265,8 @@ async def traced_span(
 ) -> AsyncIterator[Any]:
     """활성 트레이싱 컨텍스트가 있을 때만 자식 스팬을 기록하는 fail-safe 비동기 컨텍스트 매니저."""
     try:
-        from langsmith.run_helpers import get_tracing_context
-
-        ctx = get_tracing_context()
-        enabled = bool(ctx.get("enabled")) or client is not None
+        state = get_tracing_context().get("enabled")
+        enabled = state is not False and (bool(state) or client is not None)
     except Exception:
         enabled = False
 

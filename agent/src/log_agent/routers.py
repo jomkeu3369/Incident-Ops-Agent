@@ -1,7 +1,11 @@
 from __future__ import annotations
 
 import asyncio
+from collections import OrderedDict
+from dataclasses import dataclass, field
+import hashlib
 import json
+import time
 import uuid
 from fastapi import APIRouter, Depends, FastAPI
 from a2a.server.agent_execution import AgentExecutor, RequestContext
@@ -18,6 +22,37 @@ from log_agent.schemas import LogInvestigationRequest, LogInvestigationResponse
 from log_agent.services import run_dr_dci_investigation
 
 router = APIRouter(prefix="/internal", tags=["a2a-internal"], dependencies=[Depends(verify_internal_token)])
+_CACHE_TTL = 600
+_CACHE_SIZE = 512
+_RequestKey = tuple[str, str, str]
+
+
+def _request_key(req: LogInvestigationRequest) -> _RequestKey | None:
+    idem_key = (req.idempotencyKey or "").strip()
+    if not idem_key:
+        return None
+    fields = req.model_dump(exclude={"incidentCode", "idempotencyKey", "traceId"})
+    fingerprint = hashlib.sha256(json.dumps(fields, sort_keys=True, ensure_ascii=False).encode()).hexdigest()
+    return idem_key, req.incidentCode, fingerprint
+
+
+def _prune_cache(cache: OrderedDict) -> None:
+    now = time.monotonic()
+    while cache and (len(cache) > _CACHE_SIZE or next(iter(cache.values()))[0] <= now):
+        cache.popitem(last=False)
+
+
+def _remember(cache: OrderedDict, key, value) -> None:
+    cache[key] = (time.monotonic() + _CACHE_TTL, value)
+    cache.move_to_end(key)
+    _prune_cache(cache)
+
+
+@dataclass
+class _Investigation:
+    task: asyncio.Task[LogInvestigationResponse]
+    pulling: asyncio.Event
+    waiters: set[str] = field(default_factory=set)
 
 
 def _investigator_backend(app: FastAPI) -> BackendClient:
@@ -65,12 +100,10 @@ class LogAgentExecutor(AgentExecutor):
 
     def __init__(self, app: FastAPI) -> None:
         self._app = app
-        self._idempotency_cache: dict[str, dict] = {}
-        self._inflight_by_key: dict[str, asyncio.Task[LogInvestigationResponse]] = {}
-        self._inflight_waiters: dict[str, set[str]] = {}
+        self._idempotency_cache: OrderedDict[_RequestKey, tuple[float, LogInvestigationResponse]] = OrderedDict()
+        self._inflight_by_key: dict[_RequestKey, _Investigation] = {}
         self._task_waiters: dict[str, asyncio.Task[LogInvestigationResponse]] = {}
-        self._task_to_idem_key: dict[str, str] = {}
-        self._canceled_task_ids: set[str] = set()
+        self._canceled_task_ids: OrderedDict[str, tuple[float, None]] = OrderedDict()
 
     async def execute(self, context: RequestContext, event_queue: EventQueue) -> None:
         """사용자 메시지 JSON을 파싱해 표준 A2A 진행 상태·산출물 이벤트를 발행한다."""
@@ -95,10 +128,7 @@ class LogAgentExecutor(AgentExecutor):
                 )
             )
 
-        # 1) 멱등 중복 요청 확인 (동일 idempotencyKey 재전송 시 워커 재실행 0건)
-        idem_key = (req.idempotencyKey or "").strip()
-        if idem_key and idem_key in self._idempotency_cache:
-            cached_payload = dict(self._idempotency_cache[idem_key])
+        async def progress(stage: str) -> None:
             await event_queue.enqueue_event(
                 TaskStatusUpdateEvent(
                     task_id=task_id,
@@ -106,135 +136,75 @@ class LogAgentExecutor(AgentExecutor):
                     status=TaskStatus(
                         state=TaskState.TASK_STATE_WORKING,
                         message=make_agent_json_message(
-                            {"stage": "deduplicated_hit", "incidentCode": req.incidentCode, "taskId": task_id, "idempotencyKey": idem_key},
+                            {"stage": stage, "incidentCode": req.incidentCode, "taskId": task_id},
                             context_id=ctx_id,
                         ),
                     ),
                 )
             )
-            await event_queue.enqueue_event(
-                TaskArtifactUpdateEvent(
-                    task_id=task_id,
-                    context_id=ctx_id,
-                    artifact=Artifact(
-                        artifact_id=f"art-{task_id}",
-                        name="dr_dci_investigation",
-                        parts=[Part(text=json.dumps(cached_payload, ensure_ascii=False))],
-                    ),
-                    last_chunk=True,
-                )
-            )
-            await event_queue.enqueue_event(
-                TaskStatusUpdateEvent(
-                    task_id=task_id,
-                    context_id=ctx_id,
-                    status=TaskStatus(
-                        state=TaskState.TASK_STATE_COMPLETED,
-                        message=make_agent_json_message(
-                            {"stage": "completed", "incidentCode": req.incidentCode, "taskId": task_id, "deduplicated": True},
-                            context_id=ctx_id,
-                        ),
-                    ),
-                )
-            )
-            return
-
-        # 2) 진행 상태 1: 색인 조회 시작
-        await event_queue.enqueue_event(
-            TaskStatusUpdateEvent(
-                task_id=task_id,
-                context_id=ctx_id,
-                status=TaskStatus(
-                    state=TaskState.TASK_STATE_WORKING,
-                    message=make_agent_json_message(
-                        {"stage": "searching_index", "incidentCode": req.incidentCode, "taskId": task_id, "traceId": req.traceId},
-                        context_id=ctx_id,
-                    ),
-                ),
-            )
-        )
-
-        # 3) 진행 상태 2: 청크 선별 인출
-        await event_queue.enqueue_event(
-            TaskStatusUpdateEvent(
-                task_id=task_id,
-                context_id=ctx_id,
-                status=TaskStatus(
-                    state=TaskState.TASK_STATE_WORKING,
-                    message=make_agent_json_message(
-                        {"stage": "pulling_chunks", "incidentCode": req.incidentCode, "taskId": task_id, "traceId": req.traceId},
-                        context_id=ctx_id,
-                    ),
-                ),
-            )
-        )
-
-        container = self._app.state.container
-        backend = _investigator_backend(self._app)
-        # 동일 idempotencyKey의 동시 진행 중(in-flight) 요청은 작업을 공유하되, 취소는 요청별 waiter로 격리한다
-        if idem_key and idem_key in self._inflight_by_key:
-            work_task = self._inflight_by_key[idem_key]
+        key = _request_key(req)
+        _prune_cache(self._idempotency_cache)
+        _prune_cache(self._canceled_task_ids)
+        cached = self._idempotency_cache.get(key) if key is not None else None
+        if cached is not None:
+            await progress("deduplicated_hit")
+            result = cached[1]
         else:
-            work_task = asyncio.create_task(run_dr_dci_investigation(backend, container.settings, req))
-            if idem_key:
-                self._inflight_by_key[idem_key] = work_task
+            await progress("searching_index")
+            if task_id in self._canceled_task_ids:
+                return
+            work = self._inflight_by_key.get(key) if key is not None else None
+            if work is None:
+                pulling = asyncio.Event()
 
-        if idem_key:
-            self._inflight_waiters.setdefault(idem_key, set()).add(task_id)
-            self._task_to_idem_key[task_id] = idem_key
+                async def on_pull_start() -> None:
+                    pulling.set()
 
-        async def _await_shared() -> LogInvestigationResponse:
-            return await asyncio.shield(work_task) if idem_key else await work_task
-
-        waiter_task: asyncio.Task[LogInvestigationResponse] = asyncio.create_task(_await_shared())
-        self._task_waiters[task_id] = waiter_task
-        try:
-            result = await waiter_task
-        except asyncio.CancelledError:
-            self._canceled_task_ids.add(task_id)
-            await event_queue.enqueue_event(
-                TaskStatusUpdateEvent(
-                    task_id=task_id,
-                    context_id=ctx_id,
-                    status=TaskStatus(
-                        state=TaskState.TASK_STATE_CANCELED,
-                        message=make_agent_json_message({"stage": "canceled", "taskId": task_id}, context_id=ctx_id),
-                    ),
+                cfg = self._app.state.container.settings
+                task = asyncio.create_task(
+                    run_dr_dci_investigation(_investigator_backend(self._app), cfg, req, on_pull_start=on_pull_start)
                 )
-            )
-            return
-        finally:
-            self._task_waiters.pop(task_id, None)
-            self._task_to_idem_key.pop(task_id, None)
-            if idem_key:
-                waiters = self._inflight_waiters.get(idem_key)
-                if waiters is not None:
-                    waiters.discard(task_id)
-                    if not waiters:
-                        self._inflight_waiters.pop(idem_key, None)
-                        if self._inflight_by_key.get(idem_key) is work_task:
-                            self._inflight_by_key.pop(idem_key, None)
-                            if not work_task.done() and task_id in self._canceled_task_ids:
-                                work_task.cancel()
-            elif not work_task.done() and task_id in self._canceled_task_ids:
-                work_task.cancel()
+                work = _Investigation(task, pulling)
+                if key is not None:
+                    self._inflight_by_key[key] = work
+            work.waiters.add(task_id)
+            shared = work
+
+            async def wait_for_result() -> LogInvestigationResponse:
+                pull_signal = asyncio.create_task(shared.pulling.wait())
+                try:
+                    await asyncio.wait((shared.task, pull_signal), return_when=asyncio.FIRST_COMPLETED)
+                    if shared.pulling.is_set():
+                        await progress("pulling_chunks")
+                    return await asyncio.shield(shared.task)
+                finally:
+                    pull_signal.cancel()
+
+            waiter = asyncio.create_task(wait_for_result())
+            self._task_waiters[task_id] = waiter
+            try:
+                result = await waiter
+                if (
+                    key is not None and task_id not in self._canceled_task_ids
+                    and result.ok and result.error is None and result.incidentCode == req.incidentCode
+                    and result.stopReason not in {"TIMEOUT_BUDGET_REACHED", "GUARD_REJECTED_INVALID_CHUNK", "BACKEND_ERROR"}
+                    and all(tool.get("ok") is not False and not tool.get("error") for tool in result.toolTrace)
+                ):
+                    _remember(self._idempotency_cache, key, result)
+            finally:
+                self._task_waiters.pop(task_id, None)
+                work.waiters.discard(task_id)
+                if not work.waiters:
+                    if key is not None:
+                        self._inflight_by_key.pop(key, None)
+                    if not work.task.done():
+                        work.task.cancel()
+                    await asyncio.gather(work.task, return_exceptions=True)
 
         if task_id in self._canceled_task_ids:
-            await event_queue.enqueue_event(
-                TaskStatusUpdateEvent(
-                    task_id=task_id,
-                    context_id=ctx_id,
-                    status=TaskStatus(
-                        state=TaskState.TASK_STATE_CANCELED,
-                        message=make_agent_json_message({"stage": "canceled", "taskId": task_id}, context_id=ctx_id),
-                    ),
-                )
-            )
             return
 
         payload = result.model_dump()
-        if idem_key and result.ok:
-            self._idempotency_cache[idem_key] = payload
 
         # 4) 최종 산출물(Artifact) 발행 후 완료 상태 전이
         await event_queue.enqueue_event(
@@ -261,6 +231,7 @@ class LogAgentExecutor(AgentExecutor):
                             "incidentCode": req.incidentCode,
                             "taskId": task_id,
                             "pulledCount": result.pulledCount,
+                            "deduplicated": cached is not None,
                         },
                         context_id=ctx_id,
                     ),
@@ -273,10 +244,7 @@ class LogAgentExecutor(AgentExecutor):
         task_id = str(getattr(context, "task_id", None) or "")
         ctx_id = str(getattr(context, "context_id", None) or "")
         if task_id:
-            self._canceled_task_ids.add(task_id)
-            waiter = self._task_waiters.get(task_id)
-            if waiter is not None and not waiter.done():
-                waiter.cancel()
+            _remember(self._canceled_task_ids, task_id, None)
         await event_queue.enqueue_event(
             TaskStatusUpdateEvent(
                 task_id=task_id or str(uuid.uuid4()),
@@ -287,3 +255,6 @@ class LogAgentExecutor(AgentExecutor):
                 ),
             )
         )
+        waiter = self._task_waiters.get(task_id)
+        if waiter is not None and not waiter.done():
+            waiter.cancel()
