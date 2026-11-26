@@ -22,6 +22,7 @@ from typing import Any, Awaitable, Callable
 import uuid
 
 import httpx
+import httpx2
 from mcp import ClientSession
 from mcp.client.sse import sse_client
 
@@ -54,6 +55,24 @@ VERIFY_RUNBOOK = (
 )
 
 
+CONNECT_RETRIES = 5
+
+
+def http_client(**kwargs: Any) -> httpx.AsyncClient:
+    """접속 수립 실패만 다시 시도한다. 요청이 서버에 닿기 전의 실패라 검증 결과를 가리지 않는다.
+
+    Windows 호스트에서 loopback 접속이 간헐적으로 WinError 10014로 실패하는 환경을 위한 설정이다.
+    """
+    return httpx.AsyncClient(transport=httpx.AsyncHTTPTransport(retries=CONNECT_RETRIES), **kwargs)
+
+
+def mcp_http_client(headers: dict[str, str] | None = None, timeout: Any = None, auth: Any = None) -> httpx2.AsyncClient:
+    return httpx2.AsyncClient(
+        headers=headers, auth=auth, timeout=timeout or httpx2.Timeout(30, read=300),
+        transport=httpx2.AsyncHTTPTransport(retries=CONNECT_RETRIES),
+    )
+
+
 class Stack:
     def __init__(self, env_file: Path) -> None:
         values = dict(
@@ -74,7 +93,7 @@ class Stack:
         return {"X-Internal-Token": token or self.shared}
 
     async def ledger(self, incident: str) -> dict[str, Any]:
-        async with httpx.AsyncClient(timeout=15) as client:
+        async with http_client(timeout=15) as client:
             response = await client.get(f"{SPRING}/api/incidents/{incident}", headers=self.headers())
             response.raise_for_status()
             return response.json()
@@ -89,7 +108,7 @@ class Stack:
         code = f"INC-LV-{STAMP}-{self._incident_no:03d}"
         body = {"incidentCode": code, "title": "결제 API 502 Bad Gateway 급증 및 응답 지연", "serviceName": "payment-service",
                 "severity": "SEV1", "summary": "14:00 배포 직후 502 급증"}
-        async with httpx.AsyncClient(timeout=15) as client:
+        async with http_client(timeout=15) as client:
             (await client.post(f"{SPRING}/api/incidents", json=body, headers=self.headers())).raise_for_status()
         suffix = f"{STAMP[-6:]}{self._incident_no:03d}"
         sql = (
@@ -109,7 +128,7 @@ class Stack:
 
     async def wait_ready(self, url: str, timeout: float = 90.0) -> None:
         async with asyncio.timeout(timeout):
-            async with httpx.AsyncClient(timeout=5) as client:
+            async with http_client(timeout=5) as client:
                 while True:
                     try:
                         if (await client.get(url)).status_code == 200:
@@ -150,7 +169,7 @@ class Stack:
         executions, postmortems = (int(value) for value in done.stdout.split())
         return {"executions": executions, "postMortems": postmortems}
 
-    async def recreate_supervisor(self, env: dict[str, str] | None = None, attempts: int = 6) -> None:
+    async def recreate_supervisor(self, env: dict[str, str] | None = None, attempts: int = 20) -> None:
         """컨테이너를 새로 만든다. Docker Desktop의 간헐적 포트 게시 실패는 다시 시도한다."""
         command = [*self.compose, "up", "-d", "--no-deps", "--force-recreate", "supervisor-agent"]
         for attempt in range(1, attempts + 1):
@@ -178,7 +197,7 @@ async def agui(
     }
     result: dict[str, Any] = {"http": None, "events": [], "disconnected": False}
     try:
-        async with httpx.AsyncClient(timeout=httpx.Timeout(90)) as client:
+        async with http_client(timeout=httpx.Timeout(90)) as client:
             async with client.stream("POST", f"{base}/api/ag-ui", json=body, headers={"Accept": "text/event-stream"}) as response:
                 result["http"] = response.status_code
                 if response.status_code != 200:
@@ -203,7 +222,7 @@ def snapshots(result: dict[str, Any]) -> list[dict[str, Any]]:
 
 
 async def completed_log_calls(thread: str) -> int:
-    async with httpx.AsyncClient(timeout=10) as client:
+    async with http_client(timeout=10) as client:
         response = await client.get(f"{SUPERVISOR}/api/ag-ui/sessions/{thread}")
     response.raise_for_status()
     return sum(1 for event in response.json()["events"] if "a2a:log-analyzer-agent" in json.dumps(event) and event.get("type", event.get("eventType")) == "tool_call")
@@ -400,7 +419,7 @@ async def run_a2a(stack: Stack, samples: int) -> dict[str, Any]:
     payload = {"incidentCode": incident, "keywords": ["HikariPool", "502", "rollback"]}
     token = stack.readonly
     out: dict[str, Any] = {}
-    async with httpx.AsyncClient(timeout=30) as http:
+    async with http_client(timeout=30) as http:
         async def call(base: str = LOG_AGENT, key: str | None = None, **kwargs: Any):
             return await send_a2a_stream(http, base_url=base, internal_token=token, payload=payload,
                                          idempotency_key=key or f"lv-{uuid.uuid4().hex}", **kwargs)
@@ -482,7 +501,7 @@ async def run_a2a(stack: Stack, samples: int) -> dict[str, Any]:
 # --------------------------------------------------------------------------- MCP
 async def raw_mcp_post(base: str, token: str, content: bytes, content_type: str) -> int:
     """SSE 세션을 연 뒤 메시지 POST의 HTTP 상태만 확인한다."""
-    async with httpx.AsyncClient(timeout=10) as client:
+    async with http_client(timeout=10) as client:
         async with client.stream("GET", f"{base}/sse", headers={"X-Internal-Token": token}) as stream:
             async for line in stream.aiter_lines():
                 if line.startswith("data:"):
@@ -512,7 +531,7 @@ async def run_mcp(stack: Stack) -> dict[str, Any]:
     for label, base in (("spring_direct", SPRING), ("caddy", GATEWAY)):
         record: dict[str, Any] = {}
         for role, token in (("shared", stack.shared), ("investigator", stack.readonly)):
-            async with sse_client(f"{base}/sse", headers={"X-Internal-Token": token}) as (read, write), ClientSession(read, write) as session:
+            async with sse_client(f"{base}/sse", headers={"X-Internal-Token": token}, httpx_client_factory=mcp_http_client) as (read, write), ClientSession(read, write) as session:
                 await asyncio.wait_for(session.initialize(), 15)
                 tools = sorted(t.name for t in (await session.list_tools()).tools)
                 resources = [str(r.uri) for r in (await session.list_resources()).resources]
@@ -538,7 +557,7 @@ async def run_mcp(stack: Stack) -> dict[str, Any]:
 
         call = {"jsonrpc": "2.0", "id": 7, "method": "tools/call", "params": {"name": "completeIncidentWithPostMortem", "arguments": complete_args}}
         smuggled = ('{"a":"丁\\",\"}":1,' + json.dumps(call)[1:]).encode("utf-8")
-        async with httpx.AsyncClient(timeout=10) as client:
+        async with http_client(timeout=10) as client:
             bad_token = (await client.get(f"{base}/sse", headers={"X-Internal-Token": "wrong"})).status_code
             rest_write = (await client.post(f"{base}/api/incidents/{incident_a}/complete", json=complete_args, headers={"X-Internal-Token": stack.readonly})).status_code
         record["negative"] = {
@@ -581,6 +600,7 @@ def metadata() -> dict[str, Any]:
             "judge": "rule_based (no LLM calls)", "execution": "simulated rollback",
             "processKill": "docker kill (SIGKILL) of the supervisor only, while the SSE stream is still open",
             "preCommitControl": "remediation_agent is paused (docker pause) so the supervisor cannot commit before the interruption",
+            "clientConnectRetries": CONNECT_RETRIES,
             "verificationFixtures": "per-incident deploy-correlation log chunk and one shared verification runbook (seed demo data alone ends BLOCKED under rule_based)",
         },
     }
