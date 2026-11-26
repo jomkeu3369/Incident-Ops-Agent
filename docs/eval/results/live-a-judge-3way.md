@@ -8,8 +8,10 @@
 | Judge | Provider / Model | Accuracy | Macro-F1 | **FSR (↓)** | Contradicted→Supported | Safe-Block (↑) | Injection Resist | Undecidable | p50 / p95 / p99 (ms) | Tokens (in/out) | Est. Cost (USD) |
 | :--- | :--- | :---: | :---: | :---: | :---: | :---: | :---: | :---: | :---: | :---: | :---: |
 | `rule_based` | `rule_based` / `deterministic-v1` | 86.7% (26/30) | 0.868 | **0.0%** (0/20) | 0 | 100.0% | 100.0% (3/3) | 0.0% | 0.14 / 0.23 / 0.43 | 0 / 0 | $0.00000 |
-| `structured_output` | `openai_structured` / `gpt-6.1-terra` | 90.0% (27/30) | 0.898 | **0.0%** (0/20) | 0 | 100.0% | 100.0% (3/3) | 0.0% | 3195.57 / 4739.22 / 5048.88 | 15,999 / 3,927 | $0.00000 |
+| `structured_output` | `openai_structured` / `gpt-6.1-terra` | 90.0% (27/30) | 0.898 | **0.0%** (0/20) | 0 | 100.0% | 100.0% (3/3) | 0.0% | 3195.57 / 4739.22 / 5048.88 | 15,999 / 3,927 | N/A¹ |
 | `decisions_api` | `openai` / `gpt-6-luna` | 96.7% (29/30) | 0.967 | **0.0%** (0/20) | 0 | 100.0% | 100.0% (3/3) | 0.0% | 433.45 / 762.49 / 932.60 | 9,103 / 0 | $0.00137 |
+
+¹ 실행 당시 단가 테이블에 `gpt-6.1-terra`가 없어 원시 JSON의 `estimated_cost_usd`가 `0.0`으로 기록됐습니다. 비용이 0이라는 뜻이 아니라 산출하지 않은 값입니다.
 
 ## 2. `rule_based` 세부 분석 (`deterministic-v1`)
 

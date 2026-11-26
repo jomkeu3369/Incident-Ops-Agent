@@ -279,9 +279,6 @@ class _IndexedWindowSelector:
                 sc += 18
             sc += sum(8 for tok in clue_tokens if tok in hay)
             sc += sum(5 for kw in kw_lower if kw in hay)
-            # Hard distractor 중 정상/아카이브/정기 리포트는 색인 제목 단계에서 우선순위 감점
-            if any(w in hay for w in ("정상", "아카이브", "정기", "healthy", "weekly", "historical")):
-                sc -= 6
             scored.append((sc, -int(meta.get("sequenceOrder") or 0), meta))
         scored.sort(key=lambda item: (item[0], item[1]), reverse=True)
         return [m for _, _, m in scored[: self._index_window]]

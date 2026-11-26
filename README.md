@@ -154,21 +154,20 @@ Spring 백엔드(`INC-2026-001`)의 장애 목록·승인 원장을 서버 BFF�
 | 복구 실행 | 승인된 조치는 **시뮬레이션**으로 실행됩니다(`[simulated] executed ...`). 실제 클러스터 명령은 실행하지 않습니다. |
 | 포스트모템 | 근거 청크 ID·승인 ID를 채운 템플릿 기반 초안입니다. LLM이 작성하지 않습니다. |
 | 요청 분석 | 시간 범위·작업 시간·502 비율 기준은 규칙(정규식)으로 추출합니다. |
-| DR-DCI | 메타데이터 색인에서 키워드 점수로 선별해 인출합니다. 모델이 다음에 볼 청크를 고르는 방식은 아직 아닙니다. |
+| DR-DCI | 기본값은 키워드 점수 기반 선별 인출입니다. `DR_DCI_MODE=agentic`을 지정하면 읽기 전용 선택기가 다음 청크를 고릅니다. |
 | 시나리오 | `payment-service` 502 · DB 커넥션 풀 고갈 시나리오 1종에 맞춰져 있습니다. |
-| 근거 판정 | 합성 사례 일부로만 확인했습니다. 정확도·오판 비율을 측정한 평가 세트는 아직 없습니다. |
+| 근거 판정 | 정답 라벨이 있는 합성 사례로 정확도·위험 오승인율을 측정합니다([평가 리포트](docs/eval/)). 실제 장애 데이터로 검증한 것은 아닙니다. |
 | 인증 | 서비스 간 내부 토큰만 사용하며 사용자 인증·승인자 신원 관리는 없습니다. |
-| 배포·CI | 로컬 Docker Compose 실행 기준이며 CI와 공개 배포는 없습니다. |
+| 배포·CI | GitHub Actions에서 Backend·Agent·Frontend를 검사합니다. 실행은 로컬 Docker Compose 기준이며 공개 배포는 없습니다. |
 
 ### 로드맵 (계획)
 
-1. **판정 평가 하네스:** 정답 라벨이 있는 합성 장애 시나리오로 판정 정확도와 위험 오판율(근거 부족인데 `SUPPORTED`)을 측정하고 판정 방식을 비교합니다.
-2. **에이전틱 DR-DCI:** 모델이 색인을 보고 다음 인출 대상을 선택하게 하고, 전체 컨텍스트 투입·벡터 RAG와 토큰·정확도·지연을 비교합니다.
-3. **시나리오 확장:** 요청 분석의 규칙·하드코딩 키워드를 줄이고 장애 유형을 확장합니다.
-4. **실제 실행 검증:** 로컬 Kubernetes에서 롤백을 실제로 실행하고 지표로 복구를 확인합니다.
-5. **승인 통제 강화:** 승인자 신원·권한, 감사 로그, 승인 만료, 고위험 조치 이중 승인.
-6. **내구성·운영:** 체크포인트 기반 중단 후 재개, CI/CD와 공개 데모.
-7. **보안 검증:** 로그·런북에 삽입된 악성 지시문(프롬프트 인젝션)에 대한 방어 시험.
+완료한 평가·프로토콜 단계와 남은 단계는 [Phase 5–9 로드맵](docs/12-portfolio-roadmap.md)에 정리했습니다.
+
+1. **부하·성능 검증:** k6로 REST·MCP·SSE 부하와 승인 경합을 측정합니다.
+2. **실제 실행 검증:** 로컬 Kubernetes에서 롤백을 실제로 실행하고 지표로 복구를 확인합니다.
+3. **승인 통제 강화:** 승인자 신원·권한, 감사 로그, 승인 만료, 고위험 조치 이중 승인.
+4. **공개 데모:** 사용자 인증을 도입한 뒤 배포합니다.
 
 ---
 
@@ -177,8 +176,8 @@ Spring 백엔드(`INC-2026-001`)의 장애 목록·승인 원장을 서버 BFF�
 ### 4.1 환경변수 설정 (`.env`)
 루트 디렉터리에서 `.env.example`을 복사해 `.env`를 작성합니다.
 
-```bash
-cp .env.example .env
+```powershell
+Copy-Item .env.example .env   # bash: cp .env.example .env
 ```
 
 | 환경변수 | 필수 여부 | 발급 및 설정 방법 |
@@ -193,13 +192,16 @@ cp .env.example .env
 > **보안 원칙:** 모든 API 키와 내부 토큰은 `.env` 및 서버 런타임 환경변수에서만 읽으며, 소스코드와 브라우저 응답·실행 로그에 노출하지 않습니다.
 
 ### 4.2 Docker Compose 전체 스택 기동
-```bash
+```powershell
 # 1) 공용 네트워크 및 MySQL·Redis·Caddy 인프라 기동
 docker compose -f docker-compose-infra.yaml up -d
 
 # 2) Backend(demo 프로필) · Agent 3종 · Frontend 기동
-SPRING_PROFILES_ACTIVE=docker,demo docker compose up -d --build
+$env:SPRING_PROFILES_ACTIVE = 'docker,demo'
+docker compose up -d --build
 ```
+
+bash에서는 `SPRING_PROFILES_ACTIVE=docker,demo docker compose up -d --build`를 사용합니다.
 기동 후 `http://localhost`에서 Caddy 단일 출처로 접속합니다.
 
 ### 4.3 프론트엔드 단독 실행 (모의 SSE로 전체 화면 확인)
@@ -210,23 +212,28 @@ npm run dev -- --port 3100
 ```
 * 모의 SSE 모드 접속: `http://localhost:3100/?mode=mock`
 * 로컬 Supervisor(`:8000`) + Spring(`:8080`) 연동 실행:
-  ```bash
-  SUPERVISOR_URL=http://localhost:8000 \
-  BACKEND_INTERNAL_URL=http://localhost:8080 \
-  INTERNAL_SERVICE_TOKEN=<공유_내부_토큰> \
+  ```powershell
+  $env:SUPERVISOR_URL = 'http://localhost:8000'
+  $env:BACKEND_INTERNAL_URL = 'http://localhost:8080'
+  $env:INTERNAL_SERVICE_TOKEN = '<공유_내부_토큰>'
   npm run dev -- --port 3100
   ```
 
 ### 4.4 자동화 테스트 실행
-```bash
-# Backend (Java 21 + Maven, 32건)
-cd backend && mvn test
 
-# Agent (Python 3.12 + pytest, 55건)
-cd agent && .venv/Scripts/pytest tests
+각 명령은 해당 디렉터리에서 실행합니다. 최신 통과 수는 CI 결과를 기준으로 합니다.
 
-# Frontend (Next.js typecheck + build + 테스트 18건: 단위 14건 + 실서버 통합 4건)
-cd frontend && npm run typecheck && npm run build && npm test
+```powershell
+# backend/ (JDK 21 + Maven)
+mvn test
+
+# agent/ (Python 3.12+, 최초 1회: python -m pip install -e ".[dev,eval]")
+python -m pytest
+
+# frontend/ (npm ci 이후)
+npm run typecheck
+npm run build
+npm test      # 실서버 통합 테스트는 TEST_AG_UI_BASE_URL이 없으면 건너뜁니다
 ```
 
 ### 대표 시나리오 5종
@@ -260,7 +267,7 @@ cd frontend && npm run typecheck && npm run build && npm test
 
 | 적용 영역 | 참고 논문 | 프로젝트 반영 내용 |
 | :--- | :--- | :--- |
-| **DR-DCI 동적 코퍼스 인출** | Yi Lu et al., *Dr-DCI: Scaling Direct Corpus Interaction via Dynamic Workspace Expansion* ([arXiv:2606.14885](https://arxiv.org/abs/2606.14885)) | `log_agent`가 Spring MCP `searchCorpusIndex` → `pullCorpusChunk`로 필요한 로그·런북 청크만 인출(`DR_DCI_MAX_PULL_STEPS`, `DR_DCI_MAX_CHUNK_CHARS`). 현재는 키워드 점수 기반 선별이며 모델 주도 선택은 [로드맵](#로드맵-계획) |
+| **DR-DCI 동적 코퍼스 인출** | Yi Lu et al., *Dr-DCI: Scaling Direct Corpus Interaction via Dynamic Workspace Expansion* ([arXiv:2606.14885](https://arxiv.org/abs/2606.14885)) | `log_agent`가 Spring MCP `searchCorpusIndex` → `pullCorpusChunk`로 필요한 로그·런북 청크만 인출(`DR_DCI_MAX_PULL_STEPS`, `DR_DCI_MAX_CHUNK_CHARS`). 기본은 키워드 점수 기반 선별이며 `DR_DCI_MODE=agentic`은 모델 주도 선택 |
 | **컨텍스트 폭발·열화 방지** | Nelson F. Liu et al., *Lost in the Middle: How Language Models Use Long Contexts*, TACL 2024 ([arXiv:2307.03172](https://arxiv.org/abs/2307.03172)) | 전체 로그 일괄 프롬프트 적재를 피하고 핵심 근거 청크 ID·요약 중심으로 추론 컨텍스트를 유지 |
 | **Planner · Worker 분리** | Binfeng Xu et al., *ReWOO: Decoupling Reasoning from Observations for Efficient Augmented Language Models* ([arXiv:2305.18323](https://arxiv.org/abs/2305.18323)) | `SplitWorkerExecutor`로 계획 수립과 도구 실행을 분리해 정상 경로 Worker LLM 호출 0회 및 고정 인자(`fixed_args`) 불변 보존 |
 | **추론·도구 호출·재계획 루프** | Shunyu Yao et al., *ReAct: Synergizing Reasoning and Acting in Language Models*, ICLR 2023 ([arXiv:2210.03629](https://arxiv.org/abs/2210.03629)) | LangGraph 5단계(`analyze → plan → execute → evaluate → respond`)에서 외부 Tool 관측 결과와 제약 조건을 비교하고 미충족 시 재계획 |
@@ -282,5 +289,6 @@ cd frontend && npm run typecheck && npm run build && npm test
 * **API:** [백엔드 REST & MCP 명세](docs/02-backend-api-and-mcp-spec.md) · [프론트엔드 API 명세](docs/09-frontend-api-spec.md)
 * **Agent 설계:** [도메인 플래너 & 근거 판정](docs/04-domain-planner-and-decisions.md) · [외부 API Tool 정의서](docs/05-external-api-tools.md) · [Agent 구현 계획](docs/07-agent-phase-plan.md) · [Frontend 구현 계획](docs/08-frontend-phase-plan.md)
 * **검증:** [검증 결과서](docs/10-verification.md) — 기능별 구현·검증 근거, 시나리오 5종, 테스트 현황, 미검증 범위
-* **확장 전략·로드맵:** [제3 포트폴리오 확장 전략 및 논의 정리](docs/11-portfolio-expansion-strategy.md)
+* **확장 전략·로드맵:** [제3 포트폴리오 확장 전략 및 논의 정리](docs/11-portfolio-expansion-strategy.md) · [Phase 5–9 로드맵](docs/12-portfolio-roadmap.md)
+* **평가:** [4종 검색 전략](docs/eval/phase6-agentic-dr-dci-report.md) · [선형 스케일](docs/eval/scaling-4paradigm-report.md) · [라이브 LLM](docs/eval/live-llm-benchmark-report.md)
 * **출처:** 이 프로젝트는 학습 과제 명세(AI 코어 프로젝트)를 출발점으로 했습니다. 당시의 [요구사항 매핑표](docs/archive/requirements-mapping.md)는 보관용으로 남겨 두었습니다. 원본 명세 PDF는 저장소에 포함하지 않았습니다.

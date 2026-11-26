@@ -112,7 +112,7 @@ class EvaluationReport:
     latency_p95_ms: float
     total_input_tokens: int
     total_output_tokens: int
-    estimated_cost_usd: float
+    estimated_cost_usd: float | None
     per_label: dict[str, LabelMetrics]
     per_category: dict[str, CategoryMetrics]
     confusion_matrix: dict[str, dict[str, int]]
@@ -139,18 +139,26 @@ def _percentile(sorted_values: Sequence[float], pct: float) -> float:
     return round(sorted_values[low] * (1.0 - frac) + sorted_values[high] * frac, 2)
 
 
-def _estimate_cost_usd(model: str, input_tokens: int, output_tokens: int) -> float:
-    """모델 단가 테이블을 기반으로 예상 USD 비용을 계산한다."""
-    in_price, out_price = MODEL_PRICING_PER_1M.get(model, (0.0, 0.0))
+_UNSET_COST: Any = object()
+
+
+def _estimate_cost_usd(model: str, input_tokens: int, output_tokens: int) -> float | None:
+    """모델 단가 테이블을 기반으로 예상 USD 비용을 계산한다. 미등록 모델은 None을 반환한다."""
+    pricing = MODEL_PRICING_PER_1M.get(model)
+    if pricing is None:
+        return None
+    in_price, out_price = pricing
     cost = (input_tokens * in_price + output_tokens * out_price) / 1_000_000.0
     return round(cost, 6)
 
 
-def _estimate_result_cost_usd(res: DecisionResult) -> float:
+def _estimate_result_cost_usd(res: DecisionResult) -> float | None:
     """단일 판정 결과의 모델별 토큰 내역(폴백 포함)을 반영해 예상 USD 비용을 계산한다."""
     if res.usage_breakdown:
-        total = sum(_estimate_cost_usd(m, in_t, out_t) for m, in_t, out_t in res.usage_breakdown)
-        return round(total, 6)
+        costs = [_estimate_cost_usd(m, in_t, out_t) for m, in_t, out_t in res.usage_breakdown]
+        if any(c is None for c in costs):
+            return None
+        return round(sum(c for c in costs if c is not None), 6)
     return _estimate_cost_usd(res.model, res.input_tokens or 0, res.output_tokens or 0)
 
 
@@ -161,7 +169,7 @@ def _compute_report(
     model: str,
     dataset_version: str,
     case_evals: list[CaseEvaluation],
-    total_cost_usd: float | None = None,
+    total_cost_usd: float | None = _UNSET_COST,
 ) -> EvaluationReport:
     """케이스별 평가 결과에서 정확도·위험 오승인율(FSR)·혼동 행렬·지연/비용을 집계한다."""
     total = len(case_evals)
@@ -254,7 +262,11 @@ def _compute_report(
         latency_p99_ms=_percentile(latencies, 99.0),
         total_input_tokens=total_in,
         total_output_tokens=total_out,
-        estimated_cost_usd=round(total_cost_usd, 6) if total_cost_usd is not None else _estimate_cost_usd(model, total_in, total_out),
+        estimated_cost_usd=(
+            _estimate_cost_usd(model, total_in, total_out)
+            if total_cost_usd is _UNSET_COST
+            else (round(total_cost_usd, 6) if total_cost_usd is not None else None)
+        ),
         per_label=per_label,
         per_category=per_category,
         confusion_matrix=confusion,
@@ -361,7 +373,8 @@ async def evaluate_judge(
             ) as bench_span:
                 pairs = await asyncio.gather(*(_run_case(c) for c in cases))
                 case_evals = [p[0] for p in pairs]
-                total_cost_usd = sum(_estimate_result_cost_usd(p[1]) for p in pairs)
+                case_costs = [_estimate_result_cost_usd(p[1]) for p in pairs]
+                total_cost_usd = None if any(c is None for c in case_costs) else sum(c for c in case_costs if c is not None)
                 first_res = pairs[0][1]
                 report = _compute_report(
                     judge_name=judge_name,
@@ -438,6 +451,7 @@ def format_markdown_report(reports: Sequence[EvaluationReport]) -> str:
     ]
     for r in reports:
         inj_str = f"{r.injection_resistance_rate * 100:.1f}% ({r.prompt_injection_blocked}/{r.prompt_injection_cases})" if r.injection_resistance_rate is not None else "N/A"
+        cost_str = f"${r.estimated_cost_usd:.5f}" if r.estimated_cost_usd is not None else "N/A"
         lines.append(
             f"| `{r.judge_name}` | `{r.provider}` / `{r.model}` | "
             f"{r.accuracy * 100:.1f}% ({r.correct_cases}/{r.total_cases}) | "
@@ -449,7 +463,7 @@ def format_markdown_report(reports: Sequence[EvaluationReport]) -> str:
             f"{r.undecidable_rate * 100:.1f}% | "
             f"{r.latency_p50_ms:.2f} / {r.latency_p95_ms:.2f} / {r.latency_p99_ms:.2f} | "
             f"{r.total_input_tokens:,} / {r.total_output_tokens:,} | "
-            f"${r.estimated_cost_usd:.5f} |"
+            f"{cost_str} |"
         )
 
     for r in reports:

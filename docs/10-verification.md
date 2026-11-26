@@ -40,7 +40,7 @@
 | :--- | :--- | :--- |
 | 요청 분석 | `agent/src/supervisor/graph.py` (`analyze_node`, `_extract_constraints`) | `test_phase2c`, `test_phase2d` |
 | 작업 계획 수립 | `graph.py` (`plan_node`, 일반 대화 시 Tool 생략) | `test_phase2d` 시나리오 5 |
-| Tool 호출·결과 통합 | `graph.py` (`execute_node`), `remediation_agent/services.py` | `test_phase2b`, `test_phase2d` 시나리오 4 |
+| Tool 호출·결과 통합 | `graph.py` (`execute_log_node`, `execute_remediation_node`), `remediation_agent/services.py` | `test_phase2b`, `test_phase2d` 시나리오 4 |
 | 제약 적합성 판단 | `agent/src/common/planner_math.py`, `agent/src/common/decisions.py` | `test_phase2a` |
 | 재계획 | `evaluate_node`, `_call_or_reuse` 캐시 재사용, 상한 3회 | `test_phase2d` 시나리오 2·3 |
 | 대화 맥락 유지 | `SupervisorRedisStore` (`memory:{thread_id}`), 조건 부분 갱신 | `test_phase2c`, `test_phase2d` |
@@ -62,7 +62,7 @@
 
 | 기능 | 구현 위치 | 검증 근거 |
 | :--- | :--- | :--- |
-| 백엔드 API 서버 | FastAPI 3종(`supervisor`, `log_agent`, `remediation_agent`) + Spring Boot | `test_bootstrap_security_di.py`, Maven 32건 |
+| 백엔드 API 서버 | FastAPI 3종(`supervisor`, `log_agent`, `remediation_agent`) + Spring Boot | `test_bootstrap_security_di.py`, Maven JUnit |
 | 프론트엔드 화면 | `frontend/app/workspace.tsx`, `plans-panel.tsx`, `sessions-panel.tsx` | `ag-ui-phase2`, `backend-phase3`, `admin-phase4` |
 | 실행 과정·상태 표시 | 단계·Tool 이력·재계획 구분·로딩·오류 안내·실행 재개·포스트모템 | `ag-ui-phase2.test.ts`, `backend-phase3.test.ts` |
 | 모듈 분리 | `backend/`, `agent/src/{common,log_agent,remediation_agent,supervisor}`, `frontend/app/` | 저장소 구조 |
@@ -78,7 +78,16 @@
 | 응답 시간 | 스트리밍 SSE 즉시 전송 및 Tool 캐시 재사용으로 중복 호출 제거 | `test_phase2c`, `test_phase2d` |
 | 외부 API 출처·이용 조건 | `README.md` §5, `docs/05-external-api-tools.md` | 문서 확인 |
 
-> **범위 밖:** 벡터 임베딩 기반 RAG 검색 Tool은 적용하지 않았습니다. 대신 DR-DCI 메타데이터 색인 기반 선별 인출을 사용합니다.
+> **범위 밖:** 서비스 런타임에는 벡터 임베딩 검색 Tool이 없고 DR-DCI 메타데이터 색인 기반 선별 인출을 사용합니다. TF-IDF·BM25 검색은 오프라인 평가의 비교군으로만 구현했습니다.
+
+### 2.6 프로토콜 복구·권한 계약
+
+| 기능 | 구현 위치 | 검증 근거 |
+| :--- | :--- | :--- |
+| 원장 기준 상태 복구·재개·취소 | `supervisor/ledger.py`, `services.py`, `active_runs.py`, `streaming.py` | `test_supervisor_state_recovery.py` |
+| LangGraph 체크포인트 | `supervisor/checkpointer.py` | `test_phase7_protocol_resilience.py`, `test_supervisor_state_recovery.py` |
+| A2A 스트리밍·원격 취소·멱등성 | `common/a2a_utils.py`, `log_agent/routers.py`, `supervisor/graph.py` | `test_a2a_supervisor_wiring.py`(loopback HTTP) |
+| 조사 워커 읽기 전용 자격증명 | `InternalTokenFilter.java`, `common/config.py`, `docker-compose.yaml` | `IncidentMcpResourceAndRoleTest.java`, `test_a2a_supervisor_wiring.py` |
 
 ---
 
@@ -104,30 +113,31 @@
 | **수정 가능 실패 (`NO_RESULT`) 시 고정 인자 보존** | 프롬프트 의존(변조 위험) | **코드 강제 보존** (`fixed_args` 덮어쓰기) | 서비스명·장애코드 불변 보장 |
 
 > [!NOTE]
-> 이 표의 통합형 수치는 통합형 구현을 실제로 같은 입력으로 실행해 측정한 값이 아니라, 호출 구조에서 계산한 값입니다. 실측 비교는 [README 로드맵](../README.md#로드맵-계획)의 평가 하네스 이후에 대체할 예정입니다.
+> 이 표의 통합형 수치는 통합형 구현을 실제로 같은 입력으로 실행해 측정한 값이 아니라, 호출 구조에서 계산한 값입니다. 두 구현의 실측 비교는 아직 없습니다.
 
 ---
 
 ## 5. 자동화 테스트
 
-통합 `main` 기준 최신 검증 실행 결과입니다.
+2026-11-26 로컬 실행 결과입니다. 최신 통과 여부는 GitHub Actions를 기준으로 합니다.
 
-* **Backend (`backend/`):** Maven JUnit 테스트 **32건 통과** (`InternalTokenFilterTest` 13, `GlobalExceptionHandlerTest` 3, `IncidentMcpToolsTest` 3, `IncidentServiceTest` 13)
-* **Agent (`agent/`):** `pytest` **55건 통과** (DI·보안 4, Tool·Decisions 10, MCP·A2A 4, AG-UI·로깅 2, 시나리오 5종·비기능 11, Redis 복원력·동시성·보안 14, 심화·회귀 10)
-* **Frontend (`frontend/`):** `tsc --noEmit`, `next build`, `npm test` **18건** (단위 테스트 14건 통과 + `TEST_AG_UI_BASE_URL` 설정 시 실행되는 실서버 통합 테스트 4건)
-* **합계:** **105건** (오프라인 단독 실행 101건 통과 + 실서버 통합 4건 조건부 실행)
-
----
+* **Backend (`backend/`):** Maven JUnit **41건 통과** (`InternalTokenFilterTest` 13, `GlobalExceptionHandlerTest` 3, `IncidentMcpResourceAndRoleTest` 9, `IncidentMcpToolsTest` 3, `IncidentServiceTest` 13)
+* **Agent (`agent/`):** `pytest` **149건 통과**. 외부 API 키와 실행 중인 서버가 필요 없으며, A2A 연결 테스트는 loopback 포트에 서버를 띄웁니다.
+* **Frontend (`frontend/`):** `tsc --noEmit`, `next build` 통과, `npm test` 22건 중 **18건 통과·4건 건너뜀**(`TEST_AG_UI_BASE_URL` 등이 필요한 실서버 통합 테스트)
 
 ## 6. 아직 검증하지 못한 범위
 
 | 항목 | 현재 상태 |
 | :--- | :--- |
-| 근거 판정 정확도 | 합성 사례 3종 중 2종만 실행(`docs/04` 참고). 정답 라벨이 있는 평가 세트와 위험 오판율(근거 부족인데 `SUPPORTED`) 측정은 아직 없음 |
+| 실스택 종단 실행 | 실제 MySQL·Spring·Redis·Caddy를 연결한 Compose 실행 결과는 이 문서에 포함하지 않음(`scripts/smoke-test.ps1`, 실서버 통합 테스트) |
+| MCP 실통신 | 독립 MCP 클라이언트로 Spring `/sse`의 도구·리소스를 조회하는 검증 없음 |
+| 근거 판정 정확도 | 합성 사례 평가([리포트](eval/))만 있으며 실제 장애 데이터 검증 없음 |
+| 오프라인 평가와 실 DB의 차이 | 합성 평가의 런북 후보는 장애당 1–2건, 시드 SQL을 적재한 DB는 서비스당 14–26건 |
 | 실제 복구 실행 | 승인 후 실행은 시뮬레이션이며 실제 클러스터 명령·복구 지표 확인은 검증하지 않음 |
-| 시나리오 다양성 | `payment-service` 502·커넥션 풀 고갈 1종 |
+| 시나리오 다양성 | 서비스 시연은 `payment-service` 502·커넥션 풀 고갈 1종 |
 | 외부 API 실연동 | 테스트는 대부분 모의 응답 기반. 실제 GitHub·Grafana·Calendar 호출은 환경변수 설정 후 수동 확인 |
+| 부하·내구성 | k6 부하 테스트 없음. 취소 신호와 A2A 멱등 캐시는 단일 프로세스 범위 |
 | 사용자 인증·승인자 신원 | 서비스 간 내부 토큰만 있으며 승인자 신원 검증은 없음 |
-| 배포·CI | 로컬 Docker Compose 기준. CI와 공개 배포 없음 |
+| 배포 | 로컬 Docker Compose 기준. 공개 배포 없음 |
 
 위 항목의 개선 계획은 [README의 현재 범위와 로드맵](../README.md#3-현재-범위와-로드맵)에 있습니다.
