@@ -6,6 +6,7 @@ export type WorkflowStatus =
   | "REJECTED"
   | "RESOLVED"
   | "EXECUTION_FAILED"
+  | "CANCELLED"
   | "BLOCKED";
 
 export type Decision = "APPROVED" | "REJECTED";
@@ -52,6 +53,7 @@ export type ReplanRecord = {
 
 export type Snapshot = {
   incidentCode: string;
+  eventSeq?: number;
   workflowStatus: WorkflowStatus;
   plan: Plan | null;
   approval: Approval | null;
@@ -72,7 +74,33 @@ export type ForwardedProps = {
     decision: Decision;
   };
   restore?: true;
+  resume?: true;
+  explicitCancel?: true;
+  lastEventSeq?: number;
 };
+
+export type CheckpointSync = {
+  incidentCode: string;
+  lastEventSeq: number;
+  lastCompletedStep: string | null;
+};
+
+export type A2aProgress = {
+  version: number;
+  incidentCode: string;
+  runId: string;
+  worker: string;
+  taskId: string;
+  state: string;
+  stage: string;
+  elapsedMs: number;
+};
+
+export function eventSequence(...values: unknown[]): number | undefined {
+  return values.find((value): value is number =>
+    typeof value === "number" && Number.isSafeInteger(value) && value >= 0,
+  );
+}
 
 export const STATUS_LABELS: Record<WorkflowStatus, string> = {
   IDLE: "계획 요청 전",
@@ -82,6 +110,7 @@ export const STATUS_LABELS: Record<WorkflowStatus, string> = {
   REJECTED: "반려됨",
   RESOLVED: "해결됨",
   EXECUTION_FAILED: "실행 실패",
+  CANCELLED: "실행 취소됨",
   BLOCKED: "진행 보류",
 };
 
@@ -232,11 +261,12 @@ export function normalizeSnapshot(raw: unknown, fallbackIncidentCode: string): S
         );
       })
     : [];
-  return { incidentCode, workflowStatus, plan, approval, replanHistory };
+  const eventSeq = eventSequence(obj.eventSeq, obj.snapshotSeq);
+  return { incidentCode, workflowStatus, plan, approval, replanHistory, eventSeq };
 }
 
 function isWorkflowStatus(value: unknown): value is WorkflowStatus {
-  return typeof value === "string" && value in STATUS_LABELS;
+  return typeof value === "string" && Object.hasOwn(STATUS_LABELS, value);
 }
 
 const OFFSETLESS_ISO_RE = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(?::\d{2}(?:\.\d+)?)?$/;

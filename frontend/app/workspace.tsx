@@ -206,13 +206,18 @@ function ActiveWorkspace({
   const [incidentStartedAt, setIncidentStartedAt] = useState(incident.startedAt ?? "");
   const [planSaveNotice, setPlanSaveNotice] = useState<string | null>(null);
   const [savingPlan, setSavingPlan] = useState(false);
+  const [cancelling, setCancelling] = useState(false);
   const [state, dispatch] = useReducer(workspaceReducer, undefined, () =>
     createInitialState(incident, initialDetail),
   );
   const activeRun = useRef<AbortController | null>(null);
   const threadIdRef = useRef<string | null>(null);
+  const planningRequest = useRef<{ content: string; incidentStartedAt?: string } | null>(null);
 
-  const { snapshot, executions, postMortem, entries, replan, busy, activeStep, restoring, error, needsResync } = state;
+  const {
+    snapshot, executions, postMortem, entries, replan, busy, activeStep, restoring, error, needsResync,
+    lastEventSeq, a2aProgress,
+  } = state;
   const approvedStep =
     snapshot.plan && snapshot.approval && snapshot.plan.planId === snapshot.approval.planId
       ? (snapshot.plan.steps ?? []).find((step) => step.stepNo === snapshot.approval?.stepNo)
@@ -234,7 +239,7 @@ function ActiveWorkspace({
   }, [incident.incidentCode, mode]);
 
   const restoreSession = useCallback(
-    async (targetMode: AgUiMode, storedThreadId: string) => {
+    async (targetMode: AgUiMode, storedThreadId: string, cursor = 0) => {
       if (activeRun.current) return;
       const controller = new AbortController();
       activeRun.current = controller;
@@ -249,6 +254,7 @@ function ActiveWorkspace({
           forwardedProps: {
             incidentCode: incident.incidentCode,
             restore: true,
+            lastEventSeq: cursor,
           },
           signal: controller.signal,
           dispatch,
@@ -280,6 +286,7 @@ function ActiveWorkspace({
     activeRun.current?.abort();
     activeRun.current = null;
     threadIdRef.current = null;
+    planningRequest.current = null;
     writeStoredThreadId(mode, incident.incidentCode, null);
     setPrompt(demoPrompt);
     dispatch({ type: "RESET", incident, detail: initialDetail });
@@ -293,10 +300,13 @@ function ActiveWorkspace({
     onSwitchMode(nextMode);
   }
 
-  async function submitPrompt() {
-    const trimmed = prompt.trim();
-    if (!trimmed || activeRun.current || snapshot.workflowStatus === "RESOLVED") return;
-    if (!canSendPrompt(snapshot.workflowStatus, incident.resolved)) return;
+  async function submitPrompt(resume = false) {
+    const startedAt = incidentStartedAt.trim() || undefined;
+    const request = resume ? planningRequest.current : { content: prompt.trim(), incidentStartedAt: startedAt };
+    if (!request?.content || activeRun.current || snapshot.workflowStatus === "RESOLVED") return;
+    const trimmed = request.content;
+    if (!resume && !canSendPrompt(snapshot.workflowStatus, incident.resolved)) return;
+    planningRequest.current = request;
 
     const controller = new AbortController();
     activeRun.current = controller;
@@ -306,14 +316,13 @@ function ActiveWorkspace({
       threadIdRef.current = tid;
       writeStoredThreadId(mode, incident.incidentCode, tid);
       const runId = createClientId();
-      const startedAtValue = incidentStartedAt.trim() || undefined;
 
       dispatch({
         type: "REQUEST",
         entry: {
           id: runId,
           label: "운영자",
-          text: trimmed,
+          text: resume ? "중단된 계획 수립을 재개합니다." : trimmed,
           kind: "operator",
         },
       });
@@ -325,13 +334,18 @@ function ActiveWorkspace({
         userMessage: { id: runId, content: trimmed },
         forwardedProps: {
           incidentCode: incident.incidentCode,
-          ...(startedAtValue ? { incidentStartedAt: startedAtValue } : {}),
+          incidentStartedAt: request.incidentStartedAt,
+          ...(resume ? { resume: true } : {}),
+          lastEventSeq,
         },
         signal: controller.signal,
-        dispatch,
+        dispatch: (action) => {
+          if (activeRun.current === controller) dispatch(action);
+        },
       });
 
-      if (outcome.ok && !controller.signal.aborted) {
+      if (outcome.ok && activeRun.current === controller && !controller.signal.aborted) {
+        planningRequest.current = null;
         setPrompt("");
         await syncBackendDetail();
       }
@@ -349,6 +363,7 @@ function ActiveWorkspace({
     }
 
     const resuming = canResumeApprovedExecution(snapshot);
+    planningRequest.current = null;
     const controller = new AbortController();
     activeRun.current = controller;
 
@@ -378,16 +393,19 @@ function ActiveWorkspace({
         runId,
         forwardedProps: {
           incidentCode: incident.incidentCode,
+          lastEventSeq,
           approvalDecision: {
             approvalId: snapshot.approval.approvalId,
             decision,
           },
         },
         signal: controller.signal,
-        dispatch,
+        dispatch: (action) => {
+          if (activeRun.current === controller) dispatch(action);
+        },
       });
 
-      if (!controller.signal.aborted) {
+      if (activeRun.current === controller && !controller.signal.aborted) {
         await syncBackendDetail();
       }
     } finally {
@@ -400,9 +418,36 @@ function ActiveWorkspace({
   async function handleResync() {
     const tid = threadIdRef.current ?? readStoredThreadId(mode, incident.incidentCode);
     if (tid) {
-      await restoreSession(mode, tid);
+      await restoreSession(mode, tid, lastEventSeq);
     } else {
       await syncBackendDetail();
+    }
+  }
+
+  async function cancelActiveRun() {
+    const previous = activeRun.current;
+    const tid = threadIdRef.current;
+    if (!previous || !tid || restoring || cancelling || mode !== "live") return;
+    const controller = new AbortController();
+    activeRun.current = controller;
+    setCancelling(true);
+    try {
+      const outcome = await runAgUiRequest({
+        url: resolveAgUiUrl(mode),
+        threadId: tid,
+        runId: createClientId(),
+        forwardedProps: { incidentCode: incident.incidentCode, explicitCancel: true, lastEventSeq },
+        signal: controller.signal,
+        dispatch,
+      });
+      if (outcome.ok && !controller.signal.aborted) {
+        planningRequest.current = null;
+        await syncBackendDetail();
+      }
+    } finally {
+      previous.abort();
+      if (activeRun.current === controller) activeRun.current = null;
+      setCancelling(false);
     }
   }
 
@@ -582,10 +627,20 @@ function ActiveWorkspace({
               ))}
             </ol>
 
-            {busy && (
-              <p className={styles.progress} role="status">
-                {restoring ? "이전 대화 상태를 복원하는 중" : activeStep ? `${activeStep} 진행 중` : "AG-UI 응답을 받는 중"}
-              </p>
+            {(busy || cancelling) && (
+              <>
+                <p className={styles.progress} role="status">
+                  {cancelling ? "실행 취소 요청 중" : restoring ? "이전 대화 상태를 복원하는 중"
+                    : a2aProgress?.stage === "searching_index" ? "로그 색인 검색 중"
+                    : a2aProgress?.stage === "pulling_chunks" ? "근거 청크 인출 중"
+                    : activeStep ? `${activeStep} 진행 중` : "AG-UI 응답을 받는 중"}
+                </p>
+                {mode === "live" && !restoring && !cancelling && snapshot.workflowStatus !== "RESOLVED" && (
+                  <button type="button" className={styles.secondaryButton} onClick={() => void cancelActiveRun()}>
+                    <X size={14} aria-hidden="true" /> 실행 취소
+                  </button>
+                )}
+              </>
             )}
 
             {error && (
@@ -594,6 +649,11 @@ function ActiveWorkspace({
                 {needsResync && (
                   <button type="button" className={styles.secondaryButton} disabled={busy} onClick={() => void handleResync()}>
                     <RefreshCw size={14} aria-hidden="true" /> 상태 다시 조회
+                  </button>
+                )}
+                {needsResync && mode === "live" && planningRequest.current && snapshot.workflowStatus !== "RESOLVED" && (
+                  <button type="button" className={styles.secondaryButton} disabled={busy} onClick={() => void submitPrompt(true)}>
+                    <RefreshCw size={14} aria-hidden="true" /> 계획 수립 재개
                   </button>
                 )}
               </div>

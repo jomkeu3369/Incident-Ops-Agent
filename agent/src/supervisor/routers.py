@@ -53,7 +53,7 @@ async def ag_ui_status(operator_id: str = Depends(get_operator_id), cfg: Setting
 async def run_ag_ui(run_input: RunAgentInput, request: Request, operator_id: str = Depends(get_operator_id), service: SupervisorService = Depends(get_supervisor_service)) -> StreamingResponse:
     """AG-UI 표준 SSE 엔드포인트 (계획 요청 · 승인/반려 · 새로고침 복원)."""
     props = service.parse_forwarded_props(run_input)
-    decided = await service.prepare_approval_decision(props, operator_id)
+    decided = await service.prepare_approval_decision(props, operator_id, run_input.thread_id)
     stream = service.stream_ag_ui(run_input, props, operator_id, decided, request.headers.get("accept"))
     return StreamingResponse(stream, media_type="text/event-stream", headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
 

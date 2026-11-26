@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import asyncio
 from datetime import datetime, timedelta
+import hashlib
 import json
 import re
 import time
@@ -14,6 +16,7 @@ from common.backend_client import BackendApiError, BackendClient
 from common.config import Settings
 from common.event_log import EventBus, publish_safe
 from common.planner_math import parse_rfc3339
+from supervisor.ledger import approval_status, approval_view, find_approval, find_plan
 
 A2ACaller = Callable[[str, dict[str, Any], str], Awaitable[dict[str, Any]]]
 UiEventSink = Callable[[dict[str, Any]], Awaitable[None]]
@@ -138,6 +141,40 @@ def _find_unfinished_plan_approval(detail: dict[str, Any] | None) -> dict[str, A
     return None
 
 
+def _approval_id_for(session_id: str, run_id: str, plan_id: str, replan_count: int, incident_code: str) -> str:
+    """재개된 실행이 자신이 이미 등록한 승인을 알아볼 수 있도록 실행·계획에서 승인 ID를 결정적으로 만든다."""
+    digest = hashlib.sha256(f"{session_id}|{run_id}|{plan_id}|{replan_count}".encode()).hexdigest()[:8].upper()
+    return f"APR-{incident_code}-{digest}"
+
+
+def _action_signature(steps: Any) -> list[tuple[int, str]]:
+    return sorted(
+        (int(step.get("stepNo") or 0), str(step.get("actionCommand") or ""))
+        for step in (steps or [])
+        if isinstance(step, dict)
+    )
+
+
+async def _register_plan_and_approval(
+    backend: BackendClient, incident_code: str, plan_id: str, draft: dict[str, Any], approval_id: str, step_no: int
+) -> dict[str, Any]:
+    """계획과 승인을 등록한다. 이전 시도에서 이미 커밋된 행은 원장에서 확인해 재사용한다."""
+    try:
+        await backend.create_plan(incident_code, {"planId": plan_id, "createdBy": "supervisor-agent", "steps": draft["steps"], "verificationCriteria": draft["verificationCriteria"]})
+    except BackendApiError as exc:
+        saved = find_plan(await backend.get_incident_detail(incident_code), plan_id)
+        if saved is None or _action_signature(saved.get("steps")) != _action_signature(draft["steps"]):
+            raise exc
+    try:
+        await backend.create_approval(incident_code, {"approvalId": approval_id, "planId": plan_id, "stepNo": step_no, "proposedBy": "supervisor-agent"})
+    except BackendApiError as exc:
+        saved = find_approval(await backend.get_incident_detail(incident_code), approval_id)
+        if saved is None or saved.get("planId") != plan_id:
+            raise exc
+        return approval_view(saved)
+    return {"approvalId": approval_id, "planId": plan_id, "stepNo": step_no, "decision": "PENDING"}
+
+
 def _extract_constraints(message: str, prev: dict[str, Any], incident_started_at: str | None) -> tuple[dict[str, Any], str, str]:
     """사용자 메시지에서 의도와 제약 조건을 추출해 이전 대화 조건과 병합한다."""
     text = message.strip()
@@ -209,7 +246,7 @@ def _resolve_time_bounds(constraints: dict[str, Any]) -> tuple[str, str, str, st
     return metrics_from, metrics_to, win_start.isoformat(), win_end.isoformat()
 
 
-def build_supervisor_graph(settings: Settings, http_client: httpx.AsyncClient, backend: BackendClient, event_bus: EventBus | None = None, a2a_caller: A2ACaller | None = None, on_ui_event: UiEventSink | None = None, checkpointer: Any | None = None):
+def build_supervisor_graph(settings: Settings, http_client: httpx.AsyncClient, backend: BackendClient, event_bus: EventBus | None = None, a2a_caller: A2ACaller | None = None, on_ui_event: UiEventSink | None = None, checkpointer: Any | None = None, ledger_writes: list[asyncio.Future[Any]] | None = None):
     """요구사항 4.2 기준 LangGraph(analyze->plan->execute_log->execute_remediation->evaluate->respond)를 컴파일한다."""
 
     async def _emit(ui: list[dict[str, Any]], ev: dict[str, Any]) -> None:
@@ -469,13 +506,22 @@ def build_supervisor_graph(settings: Settings, http_client: httpx.AsyncClient, b
             draft = dict(rem["planDraft"])
             plan_id = draft["planId"]
             step_no = int(draft.get("approvalStepNo") or 2)
-            approval_id = f"APR-{state['incident_code']}-{uuid.uuid4().hex[:6].upper()}"
+            approval_id = _approval_id_for(sid, state["run_id"], plan_id, replan_count, state["incident_code"])
 
             # 미완료 계획 연결 승인이 이미 있으면 POST /plans로 고아 계획을 남기지 않고 즉시 차단한다
             try:
                 detail = await backend.get_incident_detail(state["incident_code"])
             except BackendApiError:
                 detail = None
+            own_apr = find_approval(detail, approval_id)
+            if own_apr is not None and own_apr.get("planId") == plan_id:
+                # 이 실행이 중단 전에 이미 등록한 승인: 새로 쓰지 않고 원장 상태를 그대로 보여 준다.
+                wf_status = approval_status(detail, approval_id) or "BLOCKED"
+                snapshot = {"incidentCode": state["incident_code"], "workflowStatus": wf_status, "plan": {k: v for k, v in draft.items() if k != "approvalStepNo"}, "approval": approval_view(own_apr), "replanHistory": replan_history}
+                await publish_safe(event_bus, sid, "step_finished", {"step": "evaluate", "workflowStatus": wf_status, "reason": "approval_already_registered"})
+                await _emit(ui, {"kind": "step_finish", "step": "evaluate"})
+                return {"should_replan": False, "workflow_status": wf_status, "snapshot": snapshot, "replan_history": replan_history, "ui_events": ui}
+
             existing_apr = _find_unfinished_plan_approval(detail)
             if existing_apr is not None:
                 existing_aid = str(existing_apr.get("approvalId") or "")
@@ -491,10 +537,18 @@ def build_supervisor_graph(settings: Settings, http_client: httpx.AsyncClient, b
                 return {"should_replan": False, "workflow_status": "BLOCKED", "snapshot": snapshot, "remediation_result": rem, "replan_history": replan_history, "ui_events": ui}
 
             # Spring 백엔드에 복구 계획과 승인 대기 요청을 등록한다 (MCP 미노출 REST 2종)
+            # 원장 쓰기는 취소와 분리한다. 취소 처리기는 이 작업이 끝난 뒤에 원장을 읽는다.
+            writes = asyncio.ensure_future(_register_plan_and_approval(backend, state["incident_code"], plan_id, draft, approval_id, step_no))
+            if ledger_writes is not None:
+                ledger_writes.append(writes)
             try:
-                await backend.create_plan(state["incident_code"], {"planId": plan_id, "createdBy": "supervisor-agent", "steps": draft["steps"], "verificationCriteria": draft["verificationCriteria"]})
-                await backend.create_approval(state["incident_code"], {"approvalId": approval_id, "planId": plan_id, "stepNo": step_no, "proposedBy": "supervisor-agent"})
-                approval = {"approvalId": approval_id, "planId": plan_id, "stepNo": step_no, "decision": "PENDING"}
+                try:
+                    approval = await asyncio.shield(writes)
+                except asyncio.CancelledError:
+                    await asyncio.wait([writes])
+                    if not writes.cancelled():
+                        writes.exception()  # 취소가 우선이므로 쓰기 오류는 원장 재조회로 확인한다
+                    raise
                 wf_status = "AWAITING_APPROVAL"
             except BackendApiError as exc:
                 approval = None

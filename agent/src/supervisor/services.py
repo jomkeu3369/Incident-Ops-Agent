@@ -34,8 +34,19 @@ from common.backend_client import BackendApiError, BackendClient
 from common.config import Settings
 from common.event_log import EventBus, publish_safe
 from common.observability import end_span, langsmith_tracing_scope, traced_span
+from supervisor.active_runs import ActiveRun, was_cancelled_by_request
 from supervisor.cruds import SupervisorRedisStore
-from supervisor.graph import A2ACaller, build_supervisor_graph
+from supervisor.graph import A2ACaller, _find_unfinished_plan_approval, build_supervisor_graph
+from supervisor.ledger import (
+    OPEN_APPROVAL_STATUSES,
+    approval_status,
+    approval_view,
+    find_approval,
+    find_execution,
+    find_plan,
+    is_resolved,
+    reconcile_snapshot,
+)
 from supervisor.schemas import ForwardedPropsInput
 
 
@@ -108,8 +119,8 @@ class SupervisorService:
         except ValidationError:
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="forwardedProps 형식이 올바르지 않습니다.")
 
-    async def prepare_approval_decision(self, props: ForwardedPropsInput, operator_id: str) -> dict[str, Any] | None:
-        """승인·반려 요청이면 스트림 오픈 전에 Spring 원장에 결정을 반영하며, 중단된 미완료 APPROVED 건은 재개를 허용한다."""
+    async def prepare_approval_decision(self, props: ForwardedPropsInput, operator_id: str, thread_id: str | None = None) -> dict[str, Any] | None:
+        """승인·반려 요청이면 스트림 오픈 전에 Spring 원장에 결정을 반영하며, 스레드에 반영되지 못한 기존 결정은 이어서 처리한다."""
         if props.approvalDecision is None:
             return None
         try:
@@ -120,42 +131,50 @@ class SupervisorService:
                 decision=props.approvalDecision.decision,
             )
         except BackendApiError as exc:
-            # 이미 APPROVED 상태지만 워커 장애 등으로 아직 실행·완료가 기록되지 않은 건만 재개를 허용한다
-            if exc.status_code == 409 and props.approvalDecision.decision == "APPROVED":
-                resumable = await self._find_resumable_approval(props.incidentCode, props.approvalDecision.approvalId)
-                if resumable is not None:
-                    return resumable
+            # 같은 결정이 이미 원장에 있으면(응답 유실·실행 중단) 스트림에서 원장 상태를 이어 처리한다.
+            if exc.status_code == 409:
+                recorded = await self._unfinished_decision(props, thread_id)
+                if recorded is not None:
+                    return recorded
             raise HTTPException(status_code=exc.status_code, detail=exc.message)
 
-    async def _find_resumable_approval(self, incident_code: str, approval_id: str) -> dict[str, Any] | None:
-        """백엔드에서 APPROVED 기록은 있으나 실행 결과가 아직 없는 미완료 승인 건을 조회한다."""
+    async def _unfinished_decision(self, props: ForwardedPropsInput, thread_id: str | None) -> dict[str, Any] | None:
+        """원장에 같은 결정이 있고 이 스레드가 그 결과를 아직 확정하지 못했을 때만 승인 행을 반환한다."""
+        approval_id = props.approvalDecision.approvalId  # type: ignore[union-attr]
+        detail = await self._ledger_detail(props.incidentCode)
+        recorded = find_approval(detail, approval_id)
+        if recorded is None or recorded.get("decision") != props.approvalDecision.decision:  # type: ignore[union-attr]
+            return None
+        has_execution = find_execution(detail, approval_id) is not None
+        if recorded.get("decision") == "APPROVED" and is_resolved(detail) and not has_execution:
+            return None
+        if thread_id is not None:
+            memory = _isolate_incident_memory(await self._store.get_thread_memory(thread_id), thread_id, props.incidentCode)
+            snapshot = memory.get("snapshot") or {}
+            known = (snapshot.get("approval") or {}).get("approvalId") == approval_id
+            if known and snapshot.get("workflowStatus") in ("RESOLVED", "EXECUTION_FAILED", "REJECTED"):
+                return None
+        return recorded
+
+    async def _ledger_detail(self, incident_code: str) -> dict[str, Any] | None:
+        """원장을 조회한다. 확인할 수 없으면 None(상태를 추정하지 않는다)."""
         try:
             detail = await self._backend.get_incident_detail(incident_code)
-        except BackendApiError:
+        except Exception:
             return None
-        incident = detail.get("incident") if isinstance(detail, dict) else None
-        if not isinstance(incident, dict) or incident.get("status") == "RESOLVED":
-            return None
-        approvals = detail.get("approvals") if isinstance(detail, dict) else None
-        matched = next((a for a in (approvals or []) if isinstance(a, dict) and a.get("approvalId") == approval_id and a.get("decision") == "APPROVED"), None)
-        if matched is None:
-            return None
-        executions = detail.get("executions") if isinstance(detail, dict) else None
-        if any(isinstance(e, dict) and e.get("approvalId") == approval_id for e in (executions or [])):
-            return None
-        return matched
+        return detail if isinstance(detail, dict) else None
 
     async def _load_plan_from_backend(self, incident_code: str, plan_id: str | None) -> dict[str, Any] | None:
         """승인 대상 planId에 해당하는 계획 정보를 백엔드 상세 응답에서 조회한다."""
-        if not plan_id:
-            return None
-        try:
-            detail = await self._backend.get_incident_detail(incident_code)
-        except BackendApiError:
-            return None
-        plans = detail.get("plans") if isinstance(detail, dict) else None
-        matched = next((p for p in (plans or []) if isinstance(p, dict) and p.get("planId") == plan_id), None)
-        return matched if isinstance(matched, dict) else None
+        return find_plan(await self._ledger_detail(incident_code), plan_id)
+
+    async def _commit_snapshot(self, thread_id: str, memory: dict[str, Any], props: ForwardedPropsInput, snapshot: dict[str, Any], last_step: str) -> dict[str, Any]:
+        """모든 상태 전이에 같은 규칙을 적용한다: 순번을 올리고 저장한 뒤에만 전송한다."""
+        sequence = max(int(memory.get("lastEventSeq") or 0), props.lastEventSeq or 0) + 1
+        committed = {**snapshot, "eventSeq": sequence}
+        memory.update(incidentCode=props.incidentCode, snapshot=committed, lastEventSeq=sequence, lastCompletedStep=last_step)
+        await self._store.save_thread_memory(thread_id, memory)
+        return committed
 
     async def stream_ag_ui(self, run_input: RunAgentInput, props: ForwardedPropsInput, operator_id: str, decided_approval: dict[str, Any] | None, accept_header: str | None) -> AsyncIterator[str]:
         """AG-UI 표준 SSE 이벤트 스트림을 생성한다."""
@@ -165,225 +184,304 @@ class SupervisorService:
         try:
             yield encoder.encode(RunStartedEvent(thread_id=tid, run_id=rid))
 
-            # 1) 새로고침 복원 흐름 (restore=True, 읽기 전용)
+            # 1) 새로고침 복원 흐름 (restore=True, 워커 호출·원장 쓰기 없음)
             if props.restore:
-                memory = _isolate_incident_memory(await self._store.get_thread_memory(tid), tid, props.incidentCode)
-                snap = memory.get("snapshot") or {"incidentCode": props.incidentCode, "workflowStatus": "IDLE", "plan": None, "approval": None, "replanHistory": memory.get("replanHistory") or []}
-                yield encoder.encode(StateSnapshotEvent(snapshot=snap))
-                yield encoder.encode(MessagesSnapshotEvent(messages=memory.get("messages") or []))
-                yield encoder.encode(
-                    CustomEvent(
-                        name="checkpoint_sync",
-                        value={
-                            "eventSeq": int(memory.get("lastEventSeq") or 0),
-                            "lastCompletedStep": memory.get("lastCompletedStep"),
-                            "workflowStatus": snap.get("workflowStatus"),
-                        },
-                    )
-                )
-                yield encoder.encode(RunFinishedEvent(thread_id=tid, run_id=rid))
+                async for chunk in self._handle_restore_stream(encoder, tid, rid, props):
+                    yield chunk
                 return
 
-            async with self._store.thread_lock(tid):
-                memory = _isolate_incident_memory(await self._store.get_thread_memory(tid), tid, props.incidentCode)
+            # 2) 명시적 취소 흐름 (단순 연결 단절과 분리: 실행 중인 작업에 먼저 신호를 보낸다)
+            if props.explicitCancel:
+                async for chunk in self._handle_cancel_stream(encoder, tid, rid, props, operator_id):
+                    yield chunk
+                return
 
-                # 1-b) 명시적 취소 흐름 (단순 연결 단절과 분리: 체크포인트를 정리하고 CANCELLED 상태 기록)
-                if props.explicitCancel:
-                    if self._checkpointer is not None and hasattr(self._checkpointer, "adelete_thread"):
-                        await self._checkpointer.adelete_thread(tid)
-                    prev_snap = dict(memory.get("snapshot") or {"incidentCode": props.incidentCode, "plan": None, "approval": None, "replanHistory": []})
-                    cancel_snap = {**prev_snap, "workflowStatus": "CANCELLED"}
-                    next_seq = int(memory.get("lastEventSeq") or 0) + 1
-                    memory["snapshot"] = cancel_snap
-                    memory["lastEventSeq"] = next_seq
-                    memory["lastCompletedStep"] = "cancelled"
-                    await self._store.save_thread_memory(tid, memory)
-                    await publish_safe(self._bus, tid, "run_cancelled", {"incidentCode": props.incidentCode, "operatorId": operator_id})
-                    yield encoder.encode(StateSnapshotEvent(snapshot=cancel_snap))
-                    yield encoder.encode(CustomEvent(name="checkpoint_sync", value={"eventSeq": next_seq, "lastCompletedStep": "cancelled", "workflowStatus": "CANCELLED"}))
-                    yield encoder.encode(RunFinishedEvent(thread_id=tid, run_id=rid))
-                    return
+            # 락 대기 중인 실행도 취소할 수 있도록 락보다 먼저 등록한다
+            with self._store.track_run(tid, ActiveRun(props.incidentCode)) as run:
+                async with self._store.thread_lock(tid):
+                    if run.cancel_requested:
+                        yield encoder.encode(RunFinishedEvent(thread_id=tid, run_id=rid))
+                        return
+                    memory = _isolate_incident_memory(await self._store.get_thread_memory(tid), tid, props.incidentCode)
 
-                # 2) 운영자 승인/반려 처리 흐름
-                if props.approvalDecision is not None and decided_approval is not None:
-                    async for chunk in self._handle_approval_stream(encoder, tid, rid, props, operator_id, decided_approval, memory):
+                    # 3) 운영자 승인/반려 처리 흐름
+                    if props.approvalDecision is not None and decided_approval is not None:
+                        stream = self._handle_approval_stream(encoder, tid, rid, props, operator_id, decided_approval, memory, run)
+                    # 4) 일반 계획 요청 / 체크포인트 재개 흐름
+                    else:
+                        stream = self._handle_planning_stream(encoder, run_input, props, operator_id, memory, run)
+                    async for chunk in stream:
                         yield chunk
-                    return
-
-                # 3) 일반 계획 요청 / 체크포인트 재개 흐름 (LangGraph 실시간 스트리밍 실행)
-                user_text = _extract_last_user_text(run_input)
-                history_msgs = list(memory.get("messages") or [])
-                if user_text and not props.resume:
-                    history_msgs.append({"id": f"msg-u-{uuid.uuid4().hex[:6]}", "role": "user", "content": user_text})
-
-                loaded_cache, loaded_timestamps = _load_fresh_tool_cache(
-                    memory, self._settings.tool_cache_ttl_seconds, time.time()
-                )
-                trace_id = str(memory.get("traceId") or f"tr-{rid}")
-                init_state = {
-                    "session_id": tid,
-                    "run_id": rid,
-                    "trace_id": trace_id,
-                    "a2a_task_ids": list(memory.get("a2aTaskIds") or []),
-                    "incident_code": props.incidentCode,
-                    "service_name": self._settings.default_service_name,
-                    "user_message": user_text,
-                    "incident_started_at": props.incidentStartedAt,
-                    "constraints": dict(memory.get("constraints") or {}),
-                    "evidence": list(memory.get("evidence") or []),
-                    "pulled_chunk_ids": list(memory.get("pulledChunkIds") or []),
-                    "remaining_chunk_ids": list(memory.get("remainingChunkIds") or []),
-                    "runbook_summary": str(memory.get("runbookSummary") or ""),
-                    "recommended_command": memory.get("recommendedCommand"),
-                    "cached_tool_results": loaded_cache,
-                    "cached_tool_results_timestamps": loaded_timestamps,
-                    "replan_count": 0,
-                    "should_replan": False,
-                    "replan_history": list(memory.get("replanHistory") or []),
-                    "snapshot": memory.get("snapshot"),
-                    "ui_events": [],
-                }
-                ui_queue: asyncio.Queue[dict[str, Any] | None] = asyncio.Queue()
-                live_graph = build_supervisor_graph(
-                    self._settings,
-                    self._http,
-                    self._backend,
-                    event_bus=self._bus,
-                    a2a_caller=self._a2a_caller,
-                    on_ui_event=ui_queue.put,
-                    checkpointer=self._checkpointer,
-                )
-                graph_config = {"configurable": {"thread_id": tid}} if self._checkpointer is not None else None
-
-                async def _run_graph() -> dict[str, Any]:
-                    try:
-                        with langsmith_tracing_scope(
-                            self._settings,
-                            client=self._langsmith_client,
-                            tags=["ag-ui", "supervisor", "resume" if props.resume else "run"],
-                            metadata={
-                                "incident_code": props.incidentCode,
-                                "thread_id": tid,
-                                "run_id": rid,
-                                "trace_id": trace_id,
-                                "operator_id": operator_id,
-                                "resume": props.resume,
-                            },
-                        ):
-                            async with traced_span(
-                                "supervisor.ag_ui_run",
-                                run_type="chain",
-                                inputs={"incidentCode": props.incidentCode, "userMessage": user_text, "resume": props.resume},
-                                tags=["ag-ui", "supervisor"],
-                            ) as span:
-                                # resume=True이고 영속 체크포인트가 동일 장애(incident_code)의 미완료 다음 노드를 가진 경우에만 재개한다
-                                graph_input: dict[str, Any] | None = init_state
-                                if props.resume and graph_config is not None:
-                                    saved_state = await live_graph.aget_state(graph_config)
-                                    if saved_state is not None and getattr(saved_state, "next", None):
-                                        saved_vals = getattr(saved_state, "values", None) or {}
-                                        saved_inc = saved_vals.get("incident_code")
-                                        if saved_inc == props.incidentCode:
-                                            graph_input = None
-                                        elif self._checkpointer is not None and hasattr(self._checkpointer, "adelete_thread"):
-                                            # 다른 장애의 체크포인트가 섞이지 않도록 격리 삭제하고 새 장애 입력으로 시작한다
-                                            await self._checkpointer.adelete_thread(tid)
-                                if graph_config is not None:
-                                    result = await live_graph.ainvoke(graph_input, config=graph_config)
-                                else:
-                                    result = await live_graph.ainvoke(init_state)
-                                end_span(
-                                    span,
-                                    outputs={
-                                        "intent": result.get("intent"),
-                                        "workflowStatus": result.get("workflow_status"),
-                                        "replanCount": result.get("replan_count"),
-                                        "pulledChunkIds": result.get("pulled_chunk_ids"),
-                                        "resumed": graph_input is None,
-                                    },
-                                )
-                                return result
-                    finally:
-                        await ui_queue.put(None)
-
-                graph_task = asyncio.create_task(_run_graph())
-                try:
-                    while (ev := await ui_queue.get()) is not None:
-                        for encoded in _encode_ui_event(encoder, ev):
-                            yield encoded
-                    final_state = await graph_task
-                finally:
-                    # SSE 클라이언트가 중간에 연결을 끊으면 백그라운드 그래프 태스크를 즉시 정리한다
-                    if not graph_task.done():
-                        graph_task.cancel()
-                        with suppress(asyncio.CancelledError):
-                            await graph_task
-
-                snapshot = final_state.get("snapshot") or {"incidentCode": props.incidentCode, "workflowStatus": "IDLE", "plan": None, "approval": None, "replanHistory": []}
-                yield encoder.encode(StateSnapshotEvent(snapshot=snapshot))
-
-                reply_text = str(final_state.get("reply_text") or "")
-                msg_id = f"msg-a-{uuid.uuid4().hex[:6]}"
-                yield encoder.encode(TextMessageStartEvent(message_id=msg_id, role="assistant"))
-                yield encoder.encode(TextMessageContentEvent(message_id=msg_id, delta=reply_text))
-                yield encoder.encode(TextMessageEndEvent(message_id=msg_id))
-
-                history_msgs.append({"id": msg_id, "role": "assistant", "content": reply_text})
-                new_cache = final_state.get("cached_tool_results") or {}
-                state_timestamps = final_state.get("cached_tool_results_timestamps") or {}
-                now_ts = time.time()
-                next_timestamps = {
-                    key: (
-                        float(state_timestamps[key])
-                        if key in state_timestamps
-                        else (
-                            loaded_timestamps[key]
-                            if key in loaded_cache and loaded_cache[key] == val and key in loaded_timestamps
-                            else now_ts
-                        )
-                    )
-                    for key, val in new_cache.items()
-                }
-                next_seq = int(memory.get("lastEventSeq") or 0) + 1
-                last_step = str(final_state.get("last_completed_step") or "respond")
-                await self._store.save_thread_memory(
-                    tid,
-                    {
-                        "threadId": tid,
-                        "incidentCode": props.incidentCode,
-                        "traceId": trace_id,
-                        "a2aTaskIds": final_state.get("a2a_task_ids") or [],
-                        "lastEventSeq": next_seq,
-                        "lastCompletedStep": last_step,
-                        "messages": history_msgs[-20:],
-                        "constraints": final_state.get("constraints") or {},
-                        "evidence": final_state.get("evidence") or [],
-                        "pulledChunkIds": final_state.get("pulled_chunk_ids") or [],
-                        "remainingChunkIds": final_state.get("remaining_chunk_ids") or [],
-                        "runbookSummary": final_state.get("runbook_summary") or "",
-                        "recommendedCommand": final_state.get("recommended_command"),
-                        "cachedToolResults": new_cache,
-                        "cachedToolResultsTimestamps": next_timestamps,
-                        "snapshot": snapshot,
-                        "replanHistory": final_state.get("replan_history") or [],
-                    },
-                )
-                yield encoder.encode(
-                    CustomEvent(
-                        name="checkpoint_sync",
-                        value={
-                            "eventSeq": next_seq,
-                            "traceId": trace_id,
-                            "lastCompletedStep": last_step,
-                            "workflowStatus": snapshot.get("workflowStatus"),
-                        },
-                    )
-                )
-                yield encoder.encode(RunFinishedEvent(thread_id=tid, run_id=rid))
         except Exception:
             yield encoder.encode(RunErrorEvent(message="에이전트 실행 중 오류가 발생했습니다.", code="AGENT_EXECUTION_ERROR"))
 
-    async def _handle_approval_stream(self, encoder: EventEncoder, tid: str, rid: str, props: ForwardedPropsInput, operator_id: str, decided: dict[str, Any], memory: dict[str, Any]) -> AsyncIterator[str]:
+    async def _handle_restore_stream(self, encoder: EventEncoder, tid: str, rid: str, props: ForwardedPropsInput) -> AsyncIterator[str]:
+        """저장 스냅샷을 원장과 대조해 복원한다. 원장이 앞서 있으면 그 상태를 저장하고 보낸다."""
+        memory = _isolate_incident_memory(await self._store.get_thread_memory(tid), tid, props.incidentCode)
+        snapshot = memory.get("snapshot")
+        if snapshot:
+            current = reconcile_snapshot(snapshot, await self._ledger_detail(props.incidentCode))
+            if current is not snapshot:
+                if self._store.active_runs(tid):
+                    # 실행 중인 스레드의 저장은 해당 실행에 맡긴다
+                    snapshot = current
+                else:
+                    async with self._store.thread_lock(tid):
+                        memory = _isolate_incident_memory(await self._store.get_thread_memory(tid), tid, props.incidentCode)
+                        latest = memory.get("snapshot") or snapshot
+                        current = reconcile_snapshot(latest, await self._ledger_detail(props.incidentCode))
+                        snapshot = latest if current is latest else await self._commit_snapshot(tid, memory, props, current, "ledger_reconciled")
+        else:
+            snapshot = _idle_snapshot(props.incidentCode, memory.get("replanHistory"))
+        yield encoder.encode(StateSnapshotEvent(snapshot=snapshot))
+        yield encoder.encode(MessagesSnapshotEvent(messages=memory.get("messages") or []))
+        yield encoder.encode(_checkpoint_sync(props.incidentCode, memory, snapshot))
+        yield encoder.encode(RunFinishedEvent(thread_id=tid, run_id=rid))
+
+    async def _handle_cancel_stream(self, encoder: EventEncoder, tid: str, rid: str, props: ForwardedPropsInput, operator_id: str) -> AsyncIterator[str]:
+        """진행 중인 작업을 중단한 뒤 원장을 확인해 상태를 확정한다. 커밋된 업무 상태는 덮어쓰지 않는다."""
+        runs = self._store.active_runs(tid)
+        scope_error = RunErrorEvent(message="이 스레드의 작업은 다른 장애에 속해 있어 취소하지 않았습니다.", code="CANCEL_SCOPE_MISMATCH")
+        if any(run.incident_code != props.incidentCode for run in runs):
+            yield encoder.encode(scope_error)
+            return
+        for run in runs:
+            run.request_cancel()
+
+        async with self._store.thread_lock(tid):
+            raw = await self._store.get_thread_memory(tid)
+            bound = raw.get("incidentCode") or (raw.get("snapshot") or {}).get("incidentCode")
+            if bound and bound != props.incidentCode and not runs:
+                yield encoder.encode(scope_error)
+                return
+            memory = _isolate_incident_memory(raw, tid, props.incidentCode)
+            draft_plan = await self._checkpoint_plan(tid)
+            if self._checkpointer is not None and hasattr(self._checkpointer, "adelete_thread"):
+                await self._checkpointer.adelete_thread(tid)
+            detail = await self._ledger_detail(props.incidentCode)
+            if detail is None:
+                yield encoder.encode(RunErrorEvent(message="작업 중단은 요청했지만 승인 원장을 확인할 수 없습니다. 상태를 다시 조회해 주세요.", code="LEDGER_UNAVAILABLE"))
+                return
+
+            snapshot, text = _snapshot_after_cancel(props.incidentCode, memory.get("snapshot"), detail, draft_plan)
+            msg_id = f"msg-a-{uuid.uuid4().hex[:6]}"
+            memory.setdefault("messages", []).append({"id": msg_id, "role": "assistant", "content": text})
+            snapshot = await self._commit_snapshot(tid, memory, props, snapshot, "cancelled")
+            await publish_safe(self._bus, tid, "run_cancelled", {"incidentCode": props.incidentCode, "operatorId": operator_id, "workflowStatus": snapshot["workflowStatus"]})
+            yield encoder.encode(StateSnapshotEvent(snapshot=snapshot))
+            for chunk in _text_message(encoder, msg_id, text):
+                yield chunk
+            yield encoder.encode(_checkpoint_sync(props.incidentCode, memory, snapshot))
+            yield encoder.encode(RunFinishedEvent(thread_id=tid, run_id=rid))
+
+    async def _checkpoint_plan(self, thread_id: str) -> dict[str, Any] | None:
+        """체크포인트에 보존된 계획 초안을 읽는다(취소 후에도 승인 대상 계획을 보여 주기 위함)."""
+        if self._checkpointer is None or not hasattr(self._checkpointer, "aget_tuple"):
+            return None
+        try:
+            saved = await self._checkpointer.aget_tuple({"configurable": {"thread_id": thread_id, "checkpoint_ns": ""}})
+        except Exception:
+            return None
+        values = (saved.checkpoint.get("channel_values") or {}) if saved is not None else {}
+        draft = (values.get("remediation_result") or {}).get("planDraft")
+        return {k: v for k, v in draft.items() if k != "approvalStepNo"} if isinstance(draft, dict) else None
+
+    async def _handle_planning_stream(self, encoder: EventEncoder, run_input: RunAgentInput, props: ForwardedPropsInput, operator_id: str, memory: dict[str, Any], run: ActiveRun) -> AsyncIterator[str]:
+        """LangGraph를 실시간 스트리밍으로 실행하거나 저장된 체크포인트를 이어서 실행한다."""
+        tid, rid = run_input.thread_id, run_input.run_id
+        user_text = _extract_last_user_text(run_input)
+        history_msgs = list(memory.get("messages") or [])
+        if user_text and (not props.resume or _last_user_content(history_msgs) != user_text):
+            history_msgs.append({"id": f"msg-u-{uuid.uuid4().hex[:6]}", "role": "user", "content": user_text})
+
+        loaded_cache, loaded_timestamps = _load_fresh_tool_cache(
+            memory, self._settings.tool_cache_ttl_seconds, time.time()
+        )
+        trace_id = str(memory.get("traceId") or f"tr-{rid}")
+        init_state = {
+            "session_id": tid,
+            "run_id": rid,
+            "trace_id": trace_id,
+            "a2a_task_ids": list(memory.get("a2aTaskIds") or []),
+            "incident_code": props.incidentCode,
+            "service_name": self._settings.default_service_name,
+            "user_message": user_text,
+            "incident_started_at": props.incidentStartedAt,
+            "constraints": dict(memory.get("constraints") or {}),
+            "evidence": list(memory.get("evidence") or []),
+            "pulled_chunk_ids": list(memory.get("pulledChunkIds") or []),
+            "remaining_chunk_ids": list(memory.get("remainingChunkIds") or []),
+            "runbook_summary": str(memory.get("runbookSummary") or ""),
+            "recommended_command": memory.get("recommendedCommand"),
+            "cached_tool_results": loaded_cache,
+            "cached_tool_results_timestamps": loaded_timestamps,
+            "replan_count": 0,
+            "should_replan": False,
+            "replan_history": list(memory.get("replanHistory") or []),
+            "snapshot": memory.get("snapshot"),
+            "ui_events": [],
+        }
+        ui_queue: asyncio.Queue[dict[str, Any] | None] = asyncio.Queue()
+        ledger_writes: list[asyncio.Future[Any]] = []
+        live_graph = build_supervisor_graph(
+            self._settings,
+            self._http,
+            self._backend,
+            event_bus=self._bus,
+            a2a_caller=self._a2a_caller,
+            on_ui_event=ui_queue.put,
+            checkpointer=self._checkpointer,
+            ledger_writes=ledger_writes,
+        )
+        graph_config = {"configurable": {"thread_id": tid}} if self._checkpointer is not None else None
+
+        async def _run_graph() -> dict[str, Any]:
+            with langsmith_tracing_scope(
+                self._settings,
+                client=self._langsmith_client,
+                tags=["ag-ui", "supervisor", "resume" if props.resume else "run"],
+                metadata={
+                    "incident_code": props.incidentCode,
+                    "thread_id": tid,
+                    "run_id": rid,
+                    "trace_id": trace_id,
+                    "operator_id": operator_id,
+                    "resume": props.resume,
+                },
+            ):
+                async with traced_span(
+                    "supervisor.ag_ui_run",
+                    run_type="chain",
+                    inputs={"incidentCode": props.incidentCode, "userMessage": user_text, "resume": props.resume},
+                    tags=["ag-ui", "supervisor"],
+                ) as span:
+                    graph_input: dict[str, Any] | None = init_state
+                    replay: dict[str, Any] | None = None
+                    if props.resume and graph_config is not None:
+                        saved_state = await live_graph.aget_state(graph_config)
+                        saved_vals = dict(getattr(saved_state, "values", None) or {})
+                        same_incident = saved_vals.get("incident_code") == props.incidentCode
+                        if getattr(saved_state, "next", None):
+                            if same_incident:
+                                graph_input = None
+                            elif hasattr(self._checkpointer, "adelete_thread"):
+                                # 다른 장애의 체크포인트가 섞이지 않도록 격리 삭제하고 새 장애 입력으로 시작한다
+                                await self._checkpointer.adelete_thread(tid)
+                        elif (
+                            same_incident
+                            and saved_vals.get("last_completed_step") == "respond"
+                            and (not user_text or saved_vals.get("user_message") == user_text)
+                        ):
+                            # 이미 끝난 실행은 다시 돌리지 않고 저장된 결과를 재전송한다
+                            replay = {**saved_vals, "_replayed": True}
+                    if replay is not None:
+                        result = replay
+                    elif graph_config is not None:
+                        result = await live_graph.ainvoke(graph_input, config=graph_config)
+                    else:
+                        result = await live_graph.ainvoke(init_state)
+                    end_span(
+                        span,
+                        outputs={
+                            "intent": result.get("intent"),
+                            "workflowStatus": result.get("workflow_status"),
+                            "replanCount": result.get("replan_count"),
+                            "pulledChunkIds": result.get("pulled_chunk_ids"),
+                            "resumed": graph_input is None or replay is not None,
+                        },
+                    )
+                    return result
+
+        graph_task = asyncio.create_task(_run_graph())
+        # 시작 전에 취소되어도 대기 루프가 끝나도록 완료 콜백으로 종료 신호를 넣는다
+        graph_task.add_done_callback(lambda _: ui_queue.put_nowait(None))
+        run.attach(graph_task)
+        final_state: dict[str, Any] | None = None
+        try:
+            while (ev := await ui_queue.get()) is not None:
+                for encoded in _encode_ui_event(encoder, ev):
+                    yield encoded
+            try:
+                final_state = await graph_task
+            except asyncio.CancelledError:
+                if not was_cancelled_by_request(run):
+                    raise
+        finally:
+            run.detach()
+            # SSE 클라이언트가 중간에 연결을 끊으면 백그라운드 그래프 태스크를 즉시 정리한다
+            if not graph_task.done():
+                graph_task.cancel()
+                with suppress(asyncio.CancelledError):
+                    await graph_task
+            # 시작한 원장 쓰기는 결과가 확정된 뒤에 스레드 락을 놓는다 (wait는 재취소돼도 쓰기를 중단시키지 않는다)
+            if ledger_writes:
+                await asyncio.wait(ledger_writes)
+
+        if final_state is None:
+            # 취소된 실행의 최종 상태는 취소 요청 스트림이 원장 기준으로 확정한다
+            yield encoder.encode(RunFinishedEvent(thread_id=tid, run_id=rid))
+            return
+
+        replayed = bool(final_state.get("_replayed"))
+        if replayed and memory.get("snapshot") and memory.get("lastGraphRunId") == final_state.get("run_id"):
+            # 저장까지 끝난 실행: 이후 승인 처리가 반영된 저장본을 원장과 대조해 다시 보낸다
+            stored = memory["snapshot"]
+            current = reconcile_snapshot(stored, await self._ledger_detail(props.incidentCode))
+            snapshot = stored if current is stored else await self._commit_snapshot(tid, memory, props, current, "ledger_reconciled")
+            yield encoder.encode(StateSnapshotEvent(snapshot=snapshot))
+            yield encoder.encode(MessagesSnapshotEvent(messages=memory.get("messages") or []))
+            yield encoder.encode(_checkpoint_sync(props.incidentCode, memory, snapshot, traceId=trace_id))
+            yield encoder.encode(RunFinishedEvent(thread_id=tid, run_id=rid))
+            return
+
+        snapshot = final_state.get("snapshot") or _idle_snapshot(props.incidentCode)
+        if replayed:
+            snapshot = reconcile_snapshot(snapshot, await self._ledger_detail(props.incidentCode))
+        reply_text = str(final_state.get("reply_text") or "")
+        msg_id = f"msg-a-{uuid.uuid4().hex[:6]}"
+        history_msgs.append({"id": msg_id, "role": "assistant", "content": reply_text})
+        new_cache = final_state.get("cached_tool_results") or {}
+        state_timestamps = final_state.get("cached_tool_results_timestamps") or {}
+        now_ts = time.time()
+        next_timestamps = {
+            key: (
+                float(state_timestamps[key])
+                if key in state_timestamps
+                else (
+                    loaded_timestamps[key]
+                    if key in loaded_cache and loaded_cache[key] == val and key in loaded_timestamps
+                    else now_ts
+                )
+            )
+            for key, val in new_cache.items()
+        }
+        new_memory = {
+            "threadId": tid,
+            "traceId": trace_id,
+            "a2aTaskIds": final_state.get("a2a_task_ids") or [],
+            "lastEventSeq": memory.get("lastEventSeq"),
+            "lastGraphRunId": final_state.get("run_id"),
+            "messages": history_msgs[-20:],
+            "constraints": final_state.get("constraints") or {},
+            "evidence": final_state.get("evidence") or [],
+            "pulledChunkIds": final_state.get("pulled_chunk_ids") or [],
+            "remainingChunkIds": final_state.get("remaining_chunk_ids") or [],
+            "runbookSummary": final_state.get("runbook_summary") or "",
+            "recommendedCommand": final_state.get("recommended_command"),
+            "cachedToolResults": new_cache,
+            "cachedToolResultsTimestamps": next_timestamps,
+            "replanHistory": final_state.get("replan_history") or [],
+        }
+        last_step = str(final_state.get("last_completed_step") or "respond")
+        # 전송 중 단절에도 결과가 남도록 저장한 뒤에 보낸다
+        snapshot = await self._commit_snapshot(tid, new_memory, props, snapshot, last_step)
+        yield encoder.encode(StateSnapshotEvent(snapshot=snapshot))
+        for chunk in _text_message(encoder, msg_id, reply_text):
+            yield chunk
+        yield encoder.encode(_checkpoint_sync(props.incidentCode, new_memory, snapshot, traceId=trace_id))
+        yield encoder.encode(RunFinishedEvent(thread_id=tid, run_id=rid))
+
+    async def _handle_approval_stream(self, encoder: EventEncoder, tid: str, rid: str, props: ForwardedPropsInput, operator_id: str, decided: dict[str, Any], memory: dict[str, Any], run: ActiveRun) -> AsyncIterator[str]:
         """승인/반려 결정 이후 A2A 실행 및 Spring MCP 완료·포스트모템 반영 스트림을 처리한다."""
         decision = props.approvalDecision.decision  # type: ignore[union-attr]
         approval_id = props.approvalDecision.approvalId  # type: ignore[union-attr]
@@ -397,31 +495,45 @@ class SupervisorService:
 
         await publish_safe(self._bus, tid, "approval_decided", {"incidentCode": props.incidentCode, "approvalId": approval_id, "decision": decision, "approvedBy": operator_id})
 
-        if decision == "REJECTED":
-            snap = {**prev_snap, "workflowStatus": "REJECTED", "approval": approval_obj}
-            yield encoder.encode(StateSnapshotEvent(snapshot=snap))
+        async def _finish(workflow_status: str, text: str, last_step: str, *, step_name: str | None = None) -> AsyncIterator[str]:
             msg_id = f"msg-a-{uuid.uuid4().hex[:6]}"
-            text = f"승인 요청({approval_id})이 반려되었습니다. 조치를 실행하지 않았으며 필요 시 조건을 바꿔 계획을 다시 수립할 수 있습니다."
-            yield encoder.encode(TextMessageStartEvent(message_id=msg_id, role="assistant"))
-            yield encoder.encode(TextMessageContentEvent(message_id=msg_id, delta=text))
-            yield encoder.encode(TextMessageEndEvent(message_id=msg_id))
-            memory["incidentCode"] = props.incidentCode
-            memory["snapshot"] = snap
             memory.setdefault("messages", []).append({"id": msg_id, "role": "assistant", "content": text})
-            await self._store.save_thread_memory(tid, memory)
+            snap = await self._commit_snapshot(tid, memory, props, {**prev_snap, "workflowStatus": workflow_status, "approval": approval_obj}, last_step)
+            if step_name:
+                yield encoder.encode(StepFinishedEvent(step_name=step_name))
+            yield encoder.encode(StateSnapshotEvent(snapshot=snap))
+            for chunk in _text_message(encoder, msg_id, text):
+                yield chunk
+            yield encoder.encode(_checkpoint_sync(props.incidentCode, memory, snap))
             yield encoder.encode(RunFinishedEvent(thread_id=tid, run_id=rid))
+
+        if decision == "REJECTED":
+            text = f"승인 요청({approval_id})이 반려되었습니다. 조치를 실행하지 않았으며 필요 시 조건을 바꿔 계획을 다시 수립할 수 있습니다."
+            async for chunk in _finish("REJECTED", text, "rejected"):
+                yield chunk
+            return
+
+        # 락을 잡은 뒤 원장을 다시 본다: 실행 결과가 이미 있으면 워커 호출과 쓰기를 반복하지 않는다
+        detail = await self._ledger_detail(props.incidentCode)
+        if find_execution(detail, approval_id) is not None:
+            recorded = "RESOLVED" if is_resolved(detail) else str(approval_status(detail, approval_id))
+            text = f"승인({approval_id})의 실행 결과가 이미 원장에 기록되어 있어 다시 실행하지 않았습니다. 장애 상태: {recorded}"
+            async for chunk in _finish(recorded, text, "ledger_reconciled"):
+                yield chunk
             return
 
         # APPROVED: 실행 대기 상태를 먼저 저장해 워커 장애 시에도 재개 가능한 스냅샷을 유지한다
-        waiting_snap = {**prev_snap, "workflowStatus": "AWAITING_EXECUTION_RESULT", "approval": approval_obj}
-        memory["incidentCode"] = props.incidentCode
-        memory["snapshot"] = waiting_snap
-        await self._store.save_thread_memory(tid, memory)
+        waiting_snap = await self._commit_snapshot(tid, memory, props, {**prev_snap, "workflowStatus": "AWAITING_EXECUTION_RESULT", "approval": approval_obj}, "approved")
         yield encoder.encode(StateSnapshotEvent(snapshot=waiting_snap))
         yield encoder.encode(StepStartedEvent(step_name="execute_approved"))
 
         action_cmd = str(decided.get("actionCommand") or _find_plan_command(plan, approval_obj["stepNo"]) or f"kubectl rollout undo deployment/{self._settings.default_service_name}")
         exec_payload = {"action": "execute", "incidentCode": props.incidentCode, "approvalId": approval_id, "planId": str(approval_obj["planId"] or "PLAN-UNKNOWN"), "actionCommand": action_cmd, "verificationCriteria": str((plan or {}).get("verificationCriteria") or ""), "evidence": list((plan or {}).get("evidence") or [])}
+
+        async def _call_executor() -> dict[str, Any]:
+            if self._a2a_caller is not None:
+                return await self._a2a_caller(self._settings.remediation_agent_a2a_url, exec_payload, tid)
+            return await send_a2a_json(self._http, base_url=self._settings.remediation_agent_a2a_url, internal_token=self._settings.internal_service_token.get_secret_value(), payload=exec_payload, context_id=tid)
 
         async def _execute_and_complete() -> tuple[str, str | None, str]:
             with langsmith_tracing_scope(
@@ -442,14 +554,24 @@ class SupervisorService:
                     inputs={"incidentCode": props.incidentCode, "approvalId": approval_id, "planId": exec_payload["planId"]},
                     tags=["ag-ui", "approval-execution"],
                 ) as exec_span:
+                    # 워커 호출까지만 취소할 수 있다. 원장 완료 쓰기를 시작하면 끝까지 확인한다.
+                    worker = asyncio.create_task(_call_executor())
+                    run.attach(worker)
                     try:
-                        if self._a2a_caller is not None:
-                            exec_res = await self._a2a_caller(self._settings.remediation_agent_a2a_url, exec_payload, tid)
-                        else:
-                            exec_res = await send_a2a_json(self._http, base_url=self._settings.remediation_agent_a2a_url, internal_token=self._settings.internal_service_token.get_secret_value(), payload=exec_payload, context_id=tid)
+                        exec_res = await worker
+                    except asyncio.CancelledError:
+                        if not was_cancelled_by_request(run):
+                            raise
+                        end_span(exec_span, error="execution_cancelled")
+                        return ("CANCELLED", None, "")
                     except Exception:
                         end_span(exec_span, error="execution_interrupted")
                         return ("INTERRUPTED", None, "")
+                    finally:
+                        run.detach()
+                    if run.cancel_requested:
+                        end_span(exec_span, error="execution_cancelled")
+                        return ("CANCELLED", None, "")
 
                     try:
                         await self._backend.complete_incident_with_postmortem(
@@ -464,44 +586,96 @@ class SupervisorService:
                             timeline_markdown=exec_res.get("timelineMarkdown"),
                             prevention_items=exec_res.get("preventionItems"),
                         )
-                        status_out = "RESOLVED" if exec_res.get("executionStatus") == "SUCCESS" else "EXECUTION_FAILED"
+                        status_out = "RESOLVED" if exec_res.get("executionStatus", "SUCCESS") == "SUCCESS" else "EXECUTION_FAILED"
                         text_out = f"승인({approval_id})된 조치(`{action_cmd}`)를 실행하고 포스트모템을 반영했습니다. 장애 상태: {status_out}"
                         end_span(exec_span, outputs={"finalStatus": status_out, "executionStatus": exec_res.get("executionStatus")})
                         return ("DONE", status_out, text_out)
-                    except BackendApiError as exc:
-                        end_span(exec_span, outputs={"finalStatus": "EXECUTION_FAILED"}, error=exc.message)
-                        return ("DONE", "EXECUTION_FAILED", f"실행 결과 반영 중 백엔드 오류가 발생했습니다: {exc.message}")
+                    except Exception as exc:
+                        # 응답을 받지 못했어도 커밋됐을 수 있으므로 원장으로 확정한다
+                        after = await self._ledger_detail(props.incidentCode)
+                        if find_execution(after, approval_id) is not None:
+                            status_out = "RESOLVED" if is_resolved(after) else str(approval_status(after, approval_id))
+                            end_span(exec_span, outputs={"finalStatus": status_out, "recoveredFromLedger": True})
+                            return ("DONE", status_out, f"완료 응답은 받지 못했지만 원장에서 승인({approval_id})의 실행 결과를 확인했습니다. 장애 상태: {status_out}")
+                        if isinstance(exc, BackendApiError) and exc.status_code < 500:
+                            end_span(exec_span, outputs={"finalStatus": "EXECUTION_FAILED"}, error=exc.message)
+                            return ("DONE", "EXECUTION_FAILED", f"실행 결과 반영 중 백엔드 오류가 발생했습니다: {exc.message}")
+                        end_span(exec_span, error="completion_unconfirmed")
+                        return ("INTERRUPTED", None, "")
 
         outcome, maybe_status, reply_text = await _execute_and_complete()
-        if outcome == "INTERRUPTED":
+        if outcome == "CANCELLED":
             yield encoder.encode(StepFinishedEvent(step_name="execute_approved"))
-            await publish_safe(self._bus, tid, "execution_interrupted", {"incidentCode": props.incidentCode, "approvalId": approval_id})
-            msg_id = f"msg-a-{uuid.uuid4().hex[:6]}"
-            retry_text = f"승인({approval_id})은 기록되었으나 실행 워커 호출이 일시 중단되었습니다. 같은 승인 건으로 다시 요청하면 실행을 이어서 완료할 수 있습니다."
-            yield encoder.encode(TextMessageStartEvent(message_id=msg_id, role="assistant"))
-            yield encoder.encode(TextMessageContentEvent(message_id=msg_id, delta=retry_text))
-            yield encoder.encode(TextMessageEndEvent(message_id=msg_id))
-            memory.setdefault("messages", []).append({"id": msg_id, "role": "assistant", "content": retry_text})
-            await self._store.save_thread_memory(tid, memory)
             yield encoder.encode(RunFinishedEvent(thread_id=tid, run_id=rid))
+            return
+        if outcome == "INTERRUPTED":
+            await publish_safe(self._bus, tid, "execution_interrupted", {"incidentCode": props.incidentCode, "approvalId": approval_id})
+            retry_text = f"승인({approval_id})은 기록되었으나 실행 결과를 확정하지 못했습니다. 같은 승인 건으로 다시 요청하면 원장을 확인한 뒤 이어서 처리합니다."
+            async for chunk in _finish("AWAITING_EXECUTION_RESULT", retry_text, "execution_interrupted", step_name="execute_approved"):
+                yield chunk
             return
 
         final_status = maybe_status or "EXECUTION_FAILED"
-
-        yield encoder.encode(StepFinishedEvent(step_name="execute_approved"))
         await publish_safe(self._bus, tid, "execution_completed", {"incidentCode": props.incidentCode, "approvalId": approval_id, "finalStatus": final_status})
-        final_snap = {**prev_snap, "workflowStatus": final_status, "approval": approval_obj}
-        yield encoder.encode(StateSnapshotEvent(snapshot=final_snap))
+        async for chunk in _finish(final_status, reply_text, "executed", step_name="execute_approved"):
+            yield chunk
 
-        msg_id = f"msg-a-{uuid.uuid4().hex[:6]}"
-        yield encoder.encode(TextMessageStartEvent(message_id=msg_id, role="assistant"))
-        yield encoder.encode(TextMessageContentEvent(message_id=msg_id, delta=reply_text))
-        yield encoder.encode(TextMessageEndEvent(message_id=msg_id))
-        memory["incidentCode"] = props.incidentCode
-        memory["snapshot"] = final_snap
-        memory.setdefault("messages", []).append({"id": msg_id, "role": "assistant", "content": reply_text})
-        await self._store.save_thread_memory(tid, memory)
-        yield encoder.encode(RunFinishedEvent(thread_id=tid, run_id=rid))
+
+def _idle_snapshot(incident_code: str, replan_history: Any = None) -> dict[str, Any]:
+    return {"incidentCode": incident_code, "workflowStatus": "IDLE", "plan": None, "approval": None, "replanHistory": list(replan_history or [])}
+
+
+def _last_user_content(messages: list[dict[str, Any]]) -> str | None:
+    return next((str(m.get("content")) for m in reversed(messages) if m.get("role") == "user"), None)
+
+
+def _text_message(encoder: EventEncoder, message_id: str, text: str) -> list[str]:
+    return [
+        encoder.encode(TextMessageStartEvent(message_id=message_id, role="assistant")),
+        encoder.encode(TextMessageContentEvent(message_id=message_id, delta=text)),
+        encoder.encode(TextMessageEndEvent(message_id=message_id)),
+    ]
+
+
+def _checkpoint_sync(incident_code: str, memory: dict[str, Any], snapshot: dict[str, Any], **extra: Any) -> CustomEvent:
+    return CustomEvent(
+        name="checkpoint_sync",
+        value={
+            "incidentCode": incident_code,
+            "eventSeq": int(snapshot.get("eventSeq") or memory.get("lastEventSeq") or 0),
+            "lastCompletedStep": memory.get("lastCompletedStep"),
+            "workflowStatus": snapshot.get("workflowStatus"),
+            **extra,
+        },
+    )
+
+
+def _snapshot_after_cancel(incident_code: str, previous: dict[str, Any] | None, detail: dict[str, Any], draft_plan: dict[str, Any] | None) -> tuple[dict[str, Any], str]:
+    """취소 이후의 화면 상태를 원장에 남은 사실로 결정한다."""
+    prev = dict(previous or _idle_snapshot(incident_code))
+    if is_resolved(detail):
+        return {**prev, "workflowStatus": "RESOLVED"}, "이미 해결된 장애라 취소할 작업이 없습니다."
+
+    approval = _find_unfinished_plan_approval(detail)
+    if approval is None:
+        return (
+            {**prev, "workflowStatus": "CANCELLED", "approval": None},
+            "실행 중인 작업을 취소했습니다. 원장에 남은 승인 요청은 없습니다.",
+        )
+
+    approval_id = str(approval.get("approvalId"))
+    plan_id = approval.get("planId")
+    candidates = (prev.get("plan"), draft_plan, find_plan(detail, plan_id))
+    plan = next((p for p in candidates if isinstance(p, dict) and p.get("planId") == plan_id), None)
+    workflow_status = str(approval_status(detail, approval_id))
+    if workflow_status not in OPEN_APPROVAL_STATUSES:
+        workflow_status = "CANCELLED"
+    text = (
+        f"실행 중인 작업은 중단했습니다. 다만 승인 요청({approval_id})은 이미 원장에 등록되어 있습니다. 계획을 폐기하려면 반려해 주세요."
+        if workflow_status == "AWAITING_APPROVAL"
+        else f"실행 중인 작업은 중단했습니다. 승인({approval_id})은 기록되어 있고 실행 결과는 없습니다. 같은 승인으로 다시 실행할 수 있습니다."
+    )
+    return {**prev, "workflowStatus": workflow_status, "plan": plan, "approval": approval_view(approval)}, text
 
 
 def _find_plan_command(plan: dict[str, Any] | None, step_no: int) -> str | None:
