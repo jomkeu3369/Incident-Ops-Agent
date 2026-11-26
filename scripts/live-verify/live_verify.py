@@ -41,6 +41,9 @@ SEED_INCIDENT = "INC-2026-001"
 STARTED_AT = "2026-11-18T14:04:00+09:00"
 PROMPT = "이전 버전의 502 비율이 1% 미만이면 롤백을 제안하고 14:28~14:50 사이에서 5분 작업 창을 찾아줘."
 RESOURCE_URI = "incident://evidence-summary/v1"
+CROSS_CHUNK_REASON = "청크를 찾지 못했습니다"
+UNAPPROVED_REASON = "승인(APPROVED)되지 않은 요청"
+WORKER_CONTAINER = "iopsv-remediation-agent"
 STAMP = datetime.now().strftime("%d%H%M%S")
 VERIFY_LOG_TITLE = "v2.4.1 배포 직후 HikariPool 커넥션 타임아웃·502 급증"
 VERIFY_LOG = "2026-11-18 14:02:30 ERROR [payment-service] v2.4.1 배포 직후 HikariPool-1 커넥션 타임아웃 및 HTTP 502 급증"
@@ -119,13 +122,33 @@ class Stack:
         """실행 중인 Supervisor 프로세스를 정리 기회 없이 종료한다(SIGKILL)."""
         await asyncio.to_thread(subprocess.run, ["docker", "kill", "iopsv-supervisor"], check=True, capture_output=True)
 
-    async def start_supervisor(self) -> None:
+    async def start_supervisor(self) -> bool:
+        """종료한 Supervisor를 다시 기동한다. 컨테이너를 새로 만들어야 했으면 True."""
+        recreated = False
         await asyncio.to_thread(subprocess.run, ["docker", "start", "iopsv-supervisor"], check=False, capture_output=True)
         try:
             await self.wait_ready(f"{SUPERVISOR}/api/ag-ui/status", timeout=30)
         except TimeoutError:
+            recreated = True
             await self.recreate_supervisor()
         await self.wait_ready(f"{GATEWAY}/api/ag-ui/status")
+        return recreated
+
+    async def docker(self, *args: str) -> None:
+        await asyncio.to_thread(subprocess.run, ["docker", *args], check=True, capture_output=True)
+
+    def row_counts(self, incident: str) -> dict[str, int]:
+        """응답 객체가 아니라 DB의 실행·포스트모템 행 수를 센다."""
+        sql = (
+            f"SELECT (SELECT COUNT(*) FROM remediation_executions WHERE incident_code = '{incident}'), "
+            f"(SELECT COUNT(*) FROM post_mortems WHERE incident_code = '{incident}');"
+        )
+        done = subprocess.run(
+            ["docker", "exec", "iopsv-mysql", "mysql", "-uops_user", "-pops_password_1234", "-N", "incident_ops", "-e", sql],
+            check=True, capture_output=True, text=True,
+        )
+        executions, postmortems = (int(value) for value in done.stdout.split())
+        return {"executions": executions, "postMortems": postmortems}
 
     async def recreate_supervisor(self, env: dict[str, str] | None = None, attempts: int = 6) -> None:
         """컨테이너를 새로 만든다. Docker Desktop의 간헐적 포트 게시 실패는 다시 시도한다."""
@@ -182,8 +205,7 @@ def snapshots(result: dict[str, Any]) -> list[dict[str, Any]]:
 async def completed_log_calls(thread: str) -> int:
     async with httpx.AsyncClient(timeout=10) as client:
         response = await client.get(f"{SUPERVISOR}/api/ag-ui/sessions/{thread}")
-    if response.status_code != 200:
-        return 0
+    response.raise_for_status()
     return sum(1 for event in response.json()["events"] if "a2a:log-analyzer-agent" in json.dumps(event) and event.get("type", event.get("eventType")) == "tool_call")
 
 
@@ -213,38 +235,49 @@ async def interrupt_during_investigation(stack: Stack, index: int, transport: st
 
     first = await agui(base, thread, f"{thread}-r1", incident, {}, PROMPT, stop=on_progress)
     observed = first["disconnected"] and not snapshots(first)
-    if kill:
-        await stack.start_supervisor()
+    recreated = await stack.start_supervisor() if kill else False
     before = ledger_counts(await stack.ledger(incident))
     resumed = await agui(base, thread, f"{thread}-r2", incident, {"resume": True, "resumeRunId": f"{thread}-r1"}, PROMPT)
     detail = await stack.ledger(incident)
     after = ledger_counts(detail)
     final = snapshots(resumed)[-1] if snapshots(resumed) else {}
     approval_ids = [a["approvalId"] for a in detail["approvals"]]
+    calls = await completed_log_calls(thread)
     passed = (
-        observed and final.get("workflowStatus") == "AWAITING_APPROVAL" and after["plans"] == 1 and after["approvals"] == 1
-        and after["executions"] == 0 and (final.get("approval") or {}).get("approvalId") in approval_ids
+        observed and before["plans"] == 0 and before["approvals"] == 0
+        and final.get("workflowStatus") == "AWAITING_APPROVAL" and after["plans"] == 1 and after["approvals"] == 1
+        and after["executions"] == 0 and (final.get("approval") or {}).get("approvalId") in approval_ids and calls == 1
     )
     return {"incident": incident, "interruptObserved": observed, "ledgerBeforeResume": before, "ledgerAfter": after,
-            "finalUiStatus": final.get("workflowStatus"), "completedInvestigationCalls": await completed_log_calls(thread), "passed": passed}
+            "finalUiStatus": final.get("workflowStatus"), "completedInvestigationCalls": calls, "supervisorRecreated": recreated, "passed": passed}
 
 
 async def interrupt_while_awaiting_approval(stack: Stack, index: int, transport: str, kill: bool) -> dict[str, Any]:
     base, incident, thread = TRANSPORTS[transport], await stack.new_incident(), f"lv-p2-{STAMP}-{index}"
-    planned = await plan(stack, base, thread, incident)
+
+    async def at_approval(event: dict[str, Any]) -> bool:
+        if event["type"] != "STATE_SNAPSHOT" or event["snapshot"]["workflowStatus"] != "AWAITING_APPROVAL":
+            return False
+        if kill:
+            await stack.kill_supervisor()
+        return True
+
+    first = await agui(base, thread, f"{thread}-plan", incident, {}, PROMPT, stop=at_approval)
+    observed = first["disconnected"] and not any(e["type"] == "RUN_FINISHED" for e in first["events"])
+    planned = snapshots(first)[-1]
+    recreated = await stack.start_supervisor() if kill else False
     calls_before, before = await completed_log_calls(thread), ledger_counts(await stack.ledger(incident))
-    if kill:
-        await stack.kill_supervisor()
-        await stack.start_supervisor()
     restored = await agui(base, thread, f"{thread}-restore", incident, {"restore": True})
     after, calls_after = ledger_counts(await stack.ledger(incident)), await completed_log_calls(thread)
     final = snapshots(restored)[-1] if snapshots(restored) else {}
     passed = (
-        final.get("workflowStatus") == "AWAITING_APPROVAL" and final.get("approval") == planned["approval"]
-        and before == after and after["executions"] == 0 and calls_before == calls_after
+        observed and final.get("workflowStatus") == "AWAITING_APPROVAL" and final.get("approval") == planned["approval"]
+        and before == after and after["plans"] == 1 and after["approvals"] == 1 and after["executions"] == 0
+        and calls_before == calls_after == 1
     )
-    return {"incident": incident, "interruptObserved": True, "ledgerBeforeRestore": before, "ledgerAfter": after,
-            "finalUiStatus": final.get("workflowStatus"), "completedInvestigationCalls": [calls_before, calls_after], "passed": passed}
+    return {"incident": incident, "interruptObserved": observed, "ledgerBeforeRestore": before, "ledgerAfter": after,
+            "finalUiStatus": final.get("workflowStatus"), "completedInvestigationCalls": [calls_before, calls_after],
+            "supervisorRecreated": recreated, "passed": passed}
 
 
 async def interrupt_during_completion(stack: Stack, index: int, transport: str, kill: bool, after_commit: bool) -> dict[str, Any]:
@@ -260,15 +293,27 @@ async def interrupt_during_completion(stack: Stack, index: int, transport: str, 
             async with asyncio.timeout(30):
                 while (await stack.ledger(incident))["incident"]["status"] != "RESOLVED":
                     await asyncio.sleep(0.05)
+        else:
+            # 일시 정지한 워커를 Supervisor가 기다리는 상태에서 끊는다
+            await asyncio.sleep(1.0)
         if kill:
             await stack.kill_supervisor()
         return True
 
-    first = await agui(base, thread, f"{thread}-approve", incident, decision, stop=at_execution)
-    observed = first["disconnected"] and all(s["workflowStatus"] != "RESOLVED" for s in snapshots(first))
-    if kill:
-        await stack.start_supervisor()
+    # 원장 완료 쓰기는 워커 응답 뒤 Supervisor가 하므로, 워커를 멈추면 커밋 전 상태가 고정된다
+    if not after_commit:
+        await stack.docker("pause", WORKER_CONTAINER)
+    try:
+        first = await agui(base, thread, f"{thread}-approve", incident, decision, stop=at_execution)
+        observed = first["disconnected"] and all(s["workflowStatus"] != "RESOLVED" for s in snapshots(first))
+        at_interrupt = stack.row_counts(incident)
+    finally:
+        if not after_commit:
+            await stack.docker("unpause", WORKER_CONTAINER)
+    recreated = await stack.start_supervisor() if kill else False
     before = ledger_counts(await stack.ledger(incident))
+    rows_before = stack.row_counts(incident)
+    calls_before = await completed_log_calls(thread)
     restored = await agui(base, thread, f"{thread}-restore", incident, {"restore": True})
     restored_status = snapshots(restored)[-1]["workflowStatus"] if snapshots(restored) else None
     status, retried = restored_status, False
@@ -276,13 +321,24 @@ async def interrupt_during_completion(stack: Stack, index: int, transport: str, 
         retried = True
         again = await agui(base, thread, f"{thread}-retry", incident, decision)
         status = snapshots(again)[-1]["workflowStatus"] if snapshots(again) else None
+    # 해결된 뒤 같은 승인을 한 번 더 보내도 원장이 늘지 않아야 한다
+    resent = await agui(base, thread, f"{thread}-resend", incident, decision)
+    resend = {"http": resent["http"], "finalUiStatus": snapshots(resent)[-1]["workflowStatus"] if snapshots(resent) else None}
     after = ledger_counts(await stack.ledger(incident))
+    rows_after = stack.row_counts(incident)
+    calls_after = await completed_log_calls(thread)
+    expected_rows = 1 if after_commit else 0
     passed = (
-        observed and status == "RESOLVED" and after["incidentStatus"] == "RESOLVED"
-        and after["executions"] == 1 and after["postMortem"] and after["approvals"] == 1
+        observed and at_interrupt == rows_before == {"executions": expected_rows, "postMortems": expected_rows}
+        and restored_status == ("RESOLVED" if after_commit else "AWAITING_EXECUTION_RESULT") and retried is (not after_commit)
+        and status == "RESOLVED" and after["incidentStatus"] == "RESOLVED" and after["plans"] == 1 and after["approvals"] == 1
+        and rows_after == {"executions": 1, "postMortems": 1} and resend["finalUiStatus"] in (None, "RESOLVED")
+        and calls_before == calls_after == 1
     )
-    return {"incident": incident, "interruptObserved": observed, "disconnectAfterCommit": after_commit, "ledgerBeforeRecovery": before,
-            "restoredUiStatus": restored_status, "retriedSameApproval": retried, "finalUiStatus": status, "ledgerAfter": after, "passed": passed}
+    return {"incident": incident, "interruptObserved": observed, "disconnectAfterCommit": after_commit, "rowsAtInterrupt": at_interrupt,
+            "ledgerBeforeRecovery": before, "restoredUiStatus": restored_status, "retriedSameApproval": retried, "finalUiStatus": status,
+            "resendAfterResolved": resend, "completedInvestigationCalls": [calls_before, calls_after], "ledgerAfter": after,
+            "rowsAfter": rows_after, "supervisorRecreated": recreated, "passed": passed}
 
 
 async def cancel_during_investigation(stack: Stack, index: int, transport: str) -> dict[str, Any]:
@@ -299,8 +355,10 @@ async def cancel_during_investigation(stack: Stack, index: int, transport: str) 
     detail = await stack.ledger(incident)
     after = ledger_counts(detail)
     final = snapshots(cancelled)[-1] if snapshots(cancelled) else {}
-    expected = "AWAITING_APPROVAL" if after["approvals"] else "CANCELLED"
-    passed = "task" in outcome and final.get("workflowStatus") == expected and after["executions"] == 0
+    passed = (
+        "task" in outcome and final.get("workflowStatus") == "CANCELLED"
+        and after["plans"] == 0 and after["approvals"] == 0 and after["executions"] == 0
+    )
     return {"incident": incident, "cancelSent": "task" in outcome, "finalUiStatus": final.get("workflowStatus"), "ledgerAfter": after, "passed": passed}
 
 
@@ -409,9 +467,13 @@ async def run_a2a(stack: Stack, samples: int) -> dict[str, Any]:
     try:
         await supervisor_with("http://log-analyzer-agent-v2:8001")
         swap_incident, thread = await stack.new_incident(), f"lv-swap-{STAMP}"
-        result = await agui(SUPERVISOR, thread, f"{thread}-r1", swap_incident, {}, PROMPT)
+        await stack.docker("pause", "iopsv-log-agent")
+        try:
+            result = await agui(SUPERVISOR, thread, f"{thread}-r1", swap_incident, {}, PROMPT)
+        finally:
+            await stack.docker("unpause", "iopsv-log-agent")
         status = snapshots(result)[-1]["workflowStatus"]
-        out["workerSwapViaSupervisor"] = {"finalUiStatus": status, "passed": status == "AWAITING_APPROVAL"}
+        out["workerSwapViaSupervisor"] = {"originalWorkerPaused": True, "finalUiStatus": status, "passed": status == "AWAITING_APPROVAL"}
     finally:
         await supervisor_with(None)
     return out
@@ -428,6 +490,14 @@ async def raw_mcp_post(base: str, token: str, content: bytes, content_type: str)
                     break
             response = await client.post(f"{base}{endpoint}", content=content, headers={"X-Internal-Token": token, "Content-Type": content_type})
             return response.status_code
+
+
+def is_error(result: Any) -> bool:
+    return bool(getattr(result, "is_error", getattr(result, "isError", False)))
+
+
+def error_text(result: Any) -> str:
+    return " ".join(getattr(part, "text", "") for part in result.content)[:200] if is_error(result) else ""
 
 
 async def run_mcp(stack: Stack) -> dict[str, Any]:
@@ -448,17 +518,22 @@ async def run_mcp(stack: Stack) -> dict[str, Any]:
                 resources = [str(r.uri) for r in (await session.list_resources()).resources]
                 body = json.loads((await session.read_resource(RESOURCE_URI)).contents[0].text)
                 found = await session.call_tool("searchCorpusIndex", {"incidentCode": incident_a, "corpusType": "LOG"})
+                own_id = json.loads(found.content[0].text)[0]["chunkId"]
+                own = await session.call_tool("pullCorpusChunk", {"incidentCode": incident_a, "chunkId": own_id})
                 chunk_b = json.loads((await session.call_tool("searchCorpusIndex", {"incidentCode": incident_b, "corpusType": "LOG"})).content[0].text)[0]["chunkId"]
                 cross = await session.call_tool("pullCorpusChunk", {"incidentCode": incident_a, "chunkId": chunk_b})
                 entry = {
                     "tools": tools, "resources": resources,
                     "resourceFields": sorted({key for item in body["incidents"] for key in item}),
-                    "readOk": not getattr(found, "is_error", getattr(found, "isError", False)),
-                    "crossIncidentRejected": bool(getattr(cross, "is_error", getattr(cross, "isError", False))),
+                    "readOk": not is_error(found),
+                    "ownChunkPulled": not is_error(own) and json.loads(own.content[0].text)["chunkId"] == own_id,
+                    "crossIncidentRejected": is_error(cross),
+                    "crossIncidentError": error_text(cross),
                 }
                 if role == "shared":
                     unapproved = await session.call_tool("completeIncidentWithPostMortem", complete_args)
-                    entry["unapprovedCompletionRejected"] = bool(getattr(unapproved, "is_error", getattr(unapproved, "isError", False)))
+                    entry["unapprovedCompletionRejected"] = is_error(unapproved)
+                    entry["unapprovedCompletionError"] = error_text(unapproved)
                 record[role] = entry
 
         call = {"jsonrpc": "2.0", "id": 7, "method": "tools/call", "params": {"name": "completeIncidentWithPostMortem", "arguments": complete_args}}
@@ -477,7 +552,9 @@ async def run_mcp(stack: Stack) -> dict[str, Any]:
         record["passed"] = (
             len(shared["tools"]) == 4 and shared["tools"] == investigator["tools"] and RESOURCE_URI in shared["resources"]
             and "summary" not in shared["resourceFields"] and shared["readOk"] and investigator["readOk"]
-            and shared["crossIncidentRejected"] and investigator["crossIncidentRejected"] and shared["unapprovedCompletionRejected"]
+            and shared["ownChunkPulled"] and investigator["ownChunkPulled"]
+            and all(entry["crossIncidentRejected"] and CROSS_CHUNK_REASON in entry["crossIncidentError"] for entry in (shared, investigator))
+            and shared["unapprovedCompletionRejected"] and UNAPPROVED_REASON in shared["unapprovedCompletionError"]
             and negative["invalidTokenStatus"] == 401 and negative["investigatorMcpWriteStatus"] == 403
             and negative["investigatorCharsetSmuggleStatus"] == 403 and negative["investigatorRestWriteStatus"] == 403
             and record["ledgerAfter"]["executions"] == 0 and record["ledgerAfter"]["incidentStatus"] != "RESOLVED"
@@ -494,7 +571,7 @@ def metadata() -> dict[str, Any]:
     return {
         "recordedAt": datetime.now(timezone.utc).isoformat(timespec="seconds"),
         "commit": text("git", "rev-parse", "HEAD"),
-        "workingTreeDirty": bool(text("git", "status", "--porcelain", "--", "agent", "backend", "frontend", "infra", "docker-compose.yaml")),
+        "workingTreeDirty": bool(text("git", "status", "--porcelain", "--", "agent", "backend", "frontend", "infra", "docker-compose.yaml", "docker-compose-infra.yaml", "scripts")),
         "host": {"os": platform.platform(), "python": platform.python_version()},
         "docker": text("docker", "info", "--format", "{{.ServerVersion}} / {{.NCPU}} CPU / {{.MemTotal}} bytes"),
         "libraries": {name: version(name) for name in ("a2a-sdk", "mcp", "ag-ui-protocol", "langgraph")},
@@ -502,7 +579,8 @@ def metadata() -> dict[str, Any]:
             "real": ["MySQL 8.0", "Redis 7", "Spring Boot MCP/REST", "supervisor", "log_agent", "remediation_agent", "Caddy"],
             "substituted": ["GitHub Deployments API", "Grafana Prometheus API (fixed responses)", "local empty freeze calendar"],
             "judge": "rule_based (no LLM calls)", "execution": "simulated rollback",
-            "processKill": "docker kill (SIGKILL) of the supervisor only, while the SSE stream is open when a run is active",
+            "processKill": "docker kill (SIGKILL) of the supervisor only, while the SSE stream is still open",
+            "preCommitControl": "remediation_agent is paused (docker pause) so the supervisor cannot commit before the interruption",
             "verificationFixtures": "per-incident deploy-correlation log chunk and one shared verification runbook (seed demo data alone ends BLOCKED under rule_based)",
         },
     }

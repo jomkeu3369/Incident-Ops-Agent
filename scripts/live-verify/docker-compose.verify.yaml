@@ -34,7 +34,9 @@ services:
     ports: !reset []
   # A2A 계약이 같은 워커 구현 교체(키워드 -> 에이전틱)를 확인하는 두 번째 조사 워커
   log-analyzer-agent-v2:
-    image: iopsv-log-analyzer-agent
+    build:
+      context: ./agent
+      dockerfile: Dockerfile
     container_name: iopsv-log-agent-v2
     command: ["uvicorn", "log_agent.main:app", "--host", "0.0.0.0", "--port", "8001"]
     environment:

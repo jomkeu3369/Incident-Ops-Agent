@@ -345,7 +345,7 @@ def plot_dr_dci_budget_curve(payload: dict[str, Any], output_path: Path) -> Path
             color="#1D4ED8",
         )
         ax_right.annotate(
-            f"{y_chr:.0f}ch (-{red:.0f}%)",
+            f"{y_chr:.0f}ch ({-red:+.0f}%)",
             (x, y_chr),
             textcoords="offset points",
             xytext=(0, -16),
