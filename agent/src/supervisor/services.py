@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import asyncio
-from contextlib import suppress
+from contextlib import aclosing, suppress
 import json
 import time
 import uuid
@@ -186,14 +186,16 @@ class SupervisorService:
 
             # 1) 새로고침 복원 흐름 (restore=True, 워커 호출·원장 쓰기 없음)
             if props.restore:
-                async for chunk in self._handle_restore_stream(encoder, tid, rid, props):
-                    yield chunk
+                async with aclosing(self._handle_restore_stream(encoder, tid, rid, props)) as stream:
+                    async for chunk in stream:
+                        yield chunk
                 return
 
             # 2) 명시적 취소 흐름 (단순 연결 단절과 분리: 실행 중인 작업에 먼저 신호를 보낸다)
             if props.explicitCancel:
-                async for chunk in self._handle_cancel_stream(encoder, tid, rid, props, operator_id):
-                    yield chunk
+                async with aclosing(self._handle_cancel_stream(encoder, tid, rid, props, operator_id)) as stream:
+                    async for chunk in stream:
+                        yield chunk
                 return
 
             # 락 대기 중인 실행도 취소할 수 있도록 락보다 먼저 등록한다
@@ -210,8 +212,10 @@ class SupervisorService:
                     # 4) 일반 계획 요청 / 체크포인트 재개 흐름
                     else:
                         stream = self._handle_planning_stream(encoder, run_input, props, operator_id, memory, run)
-                    async for chunk in stream:
-                        yield chunk
+                    # 단절 시 하위 스트림의 정리(태스크 취소·원장 쓰기 대기)가 끝난 뒤 락을 놓는다
+                    async with aclosing(stream):
+                        async for chunk in stream:
+                            yield chunk
         except Exception:
             yield encoder.encode(RunErrorEvent(message="에이전트 실행 중 오류가 발생했습니다.", code="AGENT_EXECUTION_ERROR"))
 
@@ -220,17 +224,13 @@ class SupervisorService:
         memory = _isolate_incident_memory(await self._store.get_thread_memory(tid), tid, props.incidentCode)
         snapshot = memory.get("snapshot")
         if snapshot:
-            current = reconcile_snapshot(snapshot, await self._ledger_detail(props.incidentCode))
-            if current is not snapshot:
-                if self._store.active_runs(tid):
-                    # 실행 중인 스레드의 저장은 해당 실행에 맡긴다
-                    snapshot = current
-                else:
-                    async with self._store.thread_lock(tid):
-                        memory = _isolate_incident_memory(await self._store.get_thread_memory(tid), tid, props.incidentCode)
-                        latest = memory.get("snapshot") or snapshot
-                        current = reconcile_snapshot(latest, await self._ledger_detail(props.incidentCode))
-                        snapshot = latest if current is latest else await self._commit_snapshot(tid, memory, props, current, "ledger_reconciled")
+            if reconcile_snapshot(snapshot, await self._ledger_detail(props.incidentCode)) is not snapshot:
+                # 진행 중인 실행의 저장과 직렬화해야 서로 다른 상태가 같은 순번을 갖지 않는다
+                async with self._store.thread_lock(tid):
+                    memory = _isolate_incident_memory(await self._store.get_thread_memory(tid), tid, props.incidentCode)
+                    latest = memory.get("snapshot") or snapshot
+                    current = reconcile_snapshot(latest, await self._ledger_detail(props.incidentCode))
+                    snapshot = latest if current is latest else await self._commit_snapshot(tid, memory, props, current, "ledger_reconciled")
         else:
             snapshot = _idle_snapshot(props.incidentCode, memory.get("replanHistory"))
         yield encoder.encode(StateSnapshotEvent(snapshot=snapshot))

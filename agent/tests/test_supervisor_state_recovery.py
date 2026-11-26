@@ -49,6 +49,8 @@ class _World:
         self.executions: list[dict[str, Any]] = []
         self.calls = {"log": 0, "plan": 0, "execute": 0, "complete": 0}
         self.ledger_down = False
+        self.failing_reads = 0
+        self.worker_cancelled = False
         self.completion_error: BackendApiError | None = None
         self.gates = {name: _Gate() for name in ("plan_worker", "plan_written", "approval_written", "execute_worker", "completion_written")}
 
@@ -57,6 +59,9 @@ class _World:
             return httpx.Response(503, json={"message": "down"})
         path = request.url.path
         if request.method == "GET":
+            if self.failing_reads:
+                self.failing_reads -= 1
+                return httpx.Response(503, json={"message": "transient"})
             return httpx.Response(200, json={
                 "incident": {"incidentCode": INCIDENT, "serviceName": "payment-service", "status": self.status},
                 "plans": self.plans, "approvals": self.approvals, "executions": self.executions,
@@ -104,7 +109,11 @@ class _World:
             await self.gates["execute_worker"].hit()
             return {"ok": True, "executionStatus": "SUCCESS"}
         self.calls["plan"] += 1
-        await self.gates["plan_worker"].hit()
+        try:
+            await self.gates["plan_worker"].hit()
+        except asyncio.CancelledError:
+            self.worker_cancelled = True
+            raise
         return {"ok": True, "status": "READY_FOR_APPROVAL", "message": "ready", "toolCalls": [], "cachedToolResults": {},
                 "planDraft": {"planId": "PLAN-1", "approvalStepNo": 2, "verificationCriteria": "ok",
                               "steps": [{"stepNo": 1, "description": "check"}, {"stepNo": 2, "description": "rollback", "actionCommand": COMMAND}]}}
@@ -379,6 +388,66 @@ async def test_every_transition_advances_event_sequence_above_client_cursor() ->
     assert sequences == [42, 43]
     sync = [e["value"] for e in approved if e["type"] == "CUSTOM" and e["name"] == "checkpoint_sync"]
     assert sync[-1]["eventSeq"] == 43 and sync[-1]["incidentCode"] == INCIDENT
+
+
+async def test_restore_during_active_run_waits_and_commits_a_new_sequence() -> None:
+    world = _World()
+    gate = world.gates["completion_written"]
+    async with world.http() as http:
+        service = world.service(http)
+        approval_id = _last_snapshot(await _run(service, "r1", {}, PROMPT))["approval"]["approvalId"]
+        gate.armed = True
+        running = asyncio.create_task(_run(service, "r2", _approve(approval_id)))
+        await _wait(gate.entered)
+        waiting = await _stored_snapshot(world)
+        restoring = asyncio.create_task(_run(service, "r3", {"restore": True}))
+        await asyncio.sleep(0.05)
+        assert not restoring.done(), "저장되지 않은 상태를 먼저 보내면 안 된다"
+        await _drop(running)
+        restored = _last_snapshot(await asyncio.wait_for(restoring, 5))
+
+    assert restored["workflowStatus"] == "RESOLVED"
+    assert restored["eventSeq"] > waiting["eventSeq"]
+    assert await _stored_snapshot(world) == restored
+
+
+async def test_reused_approval_reports_the_ledger_status_after_a_transient_read_failure() -> None:
+    world = _World()
+    gate = world.gates["approval_written"]
+    gate.armed = True
+    async with world.http() as http:
+        service = world.service(http)
+        running = asyncio.create_task(_run(service, "r1", {}, PROMPT))
+        await _wait(gate.entered)
+        running.cancel()
+        gate.release.set()
+        with pytest.raises(asyncio.CancelledError):
+            await running
+        world.approvals[0]["decision"] = "APPROVED"
+        world.failing_reads = 1
+        snapshot = _last_snapshot(await _run(world.service(http), "r2", {"resume": True}, PROMPT))
+
+    assert snapshot["approval"]["decision"] == "APPROVED"
+    assert snapshot["workflowStatus"] == "AWAITING_EXECUTION_RESULT"
+
+
+async def test_closing_the_stream_cleans_up_before_releasing_the_thread_lock() -> None:
+    world = _World()
+    gate = world.gates["plan_worker"]
+    gate.armed = True
+    async with world.http() as http:
+        store = SupervisorRedisStore(world.redis)
+        service = world.service(http, store)
+        run_input = _input("r1", {}, PROMPT)
+        stream = service.stream_ag_ui(run_input, service.parse_forwarded_props(run_input), "op", None, "text/event-stream")
+        await anext(stream)  # RUN_STARTED
+        await anext(stream)  # 첫 단계 이벤트: 위임 스트림이 yield에서 멈춘 상태
+        await _wait(gate.entered)
+        await stream.aclose()
+
+        assert world.worker_cancelled, "락을 놓기 전에 그래프 태스크가 정리돼야 한다"
+        assert store.active_runs("thread-1") == []
+        assert store._thread_locks == {}
 
 
 def _checkpoint(index: int) -> dict[str, Any]:

@@ -157,8 +157,8 @@ def _action_signature(steps: Any) -> list[tuple[int, str]]:
 
 async def _register_plan_and_approval(
     backend: BackendClient, incident_code: str, plan_id: str, draft: dict[str, Any], approval_id: str, step_no: int
-) -> dict[str, Any]:
-    """계획과 승인을 등록한다. 이전 시도에서 이미 커밋된 행은 원장에서 확인해 재사용한다."""
+) -> tuple[dict[str, Any], str]:
+    """계획과 승인을 등록하고 (승인, 워크플로 상태)를 반환한다. 이미 커밋된 행은 원장 상태를 그대로 따른다."""
     try:
         await backend.create_plan(incident_code, {"planId": plan_id, "createdBy": "supervisor-agent", "steps": draft["steps"], "verificationCriteria": draft["verificationCriteria"]})
     except BackendApiError as exc:
@@ -168,11 +168,12 @@ async def _register_plan_and_approval(
     try:
         await backend.create_approval(incident_code, {"approvalId": approval_id, "planId": plan_id, "stepNo": step_no, "proposedBy": "supervisor-agent"})
     except BackendApiError as exc:
-        saved = find_approval(await backend.get_incident_detail(incident_code), approval_id)
+        detail = await backend.get_incident_detail(incident_code)
+        saved = find_approval(detail, approval_id)
         if saved is None or saved.get("planId") != plan_id:
             raise exc
-        return approval_view(saved)
-    return {"approvalId": approval_id, "planId": plan_id, "stepNo": step_no, "decision": "PENDING"}
+        return approval_view(saved), approval_status(detail, approval_id) or "BLOCKED"
+    return {"approvalId": approval_id, "planId": plan_id, "stepNo": step_no, "decision": "PENDING"}, "AWAITING_APPROVAL"
 
 
 def _extract_constraints(message: str, prev: dict[str, Any], incident_started_at: str | None) -> tuple[dict[str, Any], str, str]:
@@ -543,13 +544,12 @@ def build_supervisor_graph(settings: Settings, http_client: httpx.AsyncClient, b
                 ledger_writes.append(writes)
             try:
                 try:
-                    approval = await asyncio.shield(writes)
+                    approval, wf_status = await asyncio.shield(writes)
                 except asyncio.CancelledError:
                     await asyncio.wait([writes])
                     if not writes.cancelled():
                         writes.exception()  # 취소가 우선이므로 쓰기 오류는 원장 재조회로 확인한다
                     raise
-                wf_status = "AWAITING_APPROVAL"
             except BackendApiError as exc:
                 approval = None
                 wf_status = "BLOCKED"
