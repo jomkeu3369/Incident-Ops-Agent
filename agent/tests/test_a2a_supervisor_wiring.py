@@ -13,6 +13,7 @@ import pytest
 import uvicorn
 from ag_ui.core import RunAgentInput, UserMessage
 from fastapi import FastAPI, Request
+from pydantic import SecretStr
 
 from common.a2a_utils import cancel_a2a_task, send_a2a_stream
 from common.backend_client import BackendClient
@@ -83,9 +84,11 @@ async def _serve(app: FastAPI) -> AsyncIterator[str]:
 
 @asynccontextmanager
 async def _stack(
-    corpus: _Corpus, *, http_timeout: float = 10.0, worker_delay: float = 0.0, received: asyncio.Event | None = None
+    corpus: _Corpus, *, http_timeout: float = 10.0, worker_delay: float = 0.0, received: asyncio.Event | None = None,
+    investigator_token: str = "",
 ) -> AsyncIterator[tuple[Any, httpx.AsyncClient, str]]:
-    log_app = create_log_agent_app(_settings())
+    tokens = {"internal_investigator_token": SecretStr(investigator_token)}
+    log_app = create_log_agent_app(_settings(**tokens))
     if worker_delay:
         @log_app.middleware("http")
         async def slow_first_response(request: Request, call_next):
@@ -96,7 +99,7 @@ async def _stack(
             return await call_next(request)
 
     async with _serve(log_app) as log_url, _serve(_blocked_remediation_app()) as rem_url:
-        cfg = _settings(log_agent_a2a_url=log_url, remediation_agent_a2a_url=rem_url, http_timeout_seconds=http_timeout)
+        cfg = _settings(log_agent_a2a_url=log_url, remediation_agent_a2a_url=rem_url, http_timeout_seconds=http_timeout, **tokens)
         log_app.state.container.backend_client = BackendClient(cfg, log_app.state.container.http_client, mcp_caller=corpus, agent_role="investigator")
 
         def ledger(request: httpx.Request) -> httpx.Response:
@@ -296,6 +299,24 @@ async def test_unrequested_cancellation_marks_the_task_failed(monkeypatch: pytes
                 await asyncio.sleep(0.05)
 
     assert state["result"]["status"]["state"] == "TASK_STATE_FAILED"
+
+
+async def test_dedicated_investigator_token_is_the_only_log_agent_credential() -> None:
+    corpus = _Corpus()
+    events: list[dict[str, Any]] = []
+    async with _stack(corpus, investigator_token="read-only-token") as (service, http, log_url):
+        with pytest.raises(RuntimeError, match="401"):
+            await send_a2a_stream(
+                http, base_url=log_url, internal_token=_settings().internal_service_token.get_secret_value(),
+                payload={"incidentCode": INCIDENT, "keywords": ["HikariPool"]},
+            )
+        running = asyncio.create_task(_consume(service, _input("r1", {}, "14:28~14:50 5분 롤백 계획"), events))
+        await asyncio.wait_for(corpus.pull_started.wait(), 10)
+        await asyncio.wait_for(_consume(service, _input("r2", {"explicitCancel": True}), []), 10)
+        await asyncio.wait_for(running, 10)
+        await asyncio.wait_for(corpus.cancelled.wait(), 5)
+
+    assert _progress(events), "Supervisor는 전용 토큰으로 조사 워커를 호출한다"
 
 
 async def test_cancel_one_of_two_shared_waiters_keeps_the_other_running() -> None:

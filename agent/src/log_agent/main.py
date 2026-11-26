@@ -28,7 +28,7 @@ def create_log_agent_app(settings: Settings | None = None) -> FastAPI:
     cfg = settings or Settings()
     app = create_app("log-analyzer-agent", settings=cfg, enable_redis=False)
     app.include_router(router)
-    mount_a2a_agent(app, agent_card=_build_agent_card(cfg), executor=LogAgentExecutor(app))
+    mount_a2a_agent(app, agent_card=_build_agent_card(cfg), executor=LogAgentExecutor(app), expected_token=lambda s: s.log_agent_token)
     return app
 
 

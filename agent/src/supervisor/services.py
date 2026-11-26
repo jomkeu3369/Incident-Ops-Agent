@@ -304,7 +304,7 @@ class SupervisorService:
         for task_id, (base_url, _) in list(remote_tasks.items()):
             remote_tasks.pop(task_id, None)
             try:
-                await cancel_a2a_task(self._http, base_url=base_url, internal_token=self._settings.internal_service_token.get_secret_value(), task_id=task_id)
+                await cancel_a2a_task(self._http, base_url=base_url, internal_token=self._settings.log_agent_token, task_id=task_id)
                 confirmed = True
             except Exception:
                 confirmed = False

@@ -38,7 +38,7 @@ class IncidentMcpResourceAndRoleTest {
         IncidentService incidentService = mock(IncidentService.class);
         Incident inc = new Incident();
         inc.setIncidentCode("INC-2026-001");
-        inc.setTitle("결제 API 502 급증");
+        inc.setTitle("결제\nAPI\u202E 502 급증" + "x".repeat(150));
         inc.setServiceName("payment-service");
         inc.setSeverity("SEV1");
         inc.setStatus("OPEN");
@@ -63,7 +63,59 @@ class IncidentMcpResourceAndRoleTest {
         assertThat(root.get("schemaVersion").asText()).isEqualTo("v1");
         assertThat(root.get("readOnly").asBoolean()).isTrue();
         assertThat(root.get("incidentCount").asInt()).isEqualTo(1);
-        assertThat(root.get("incidents").get(0).get("incidentCode").asText()).isEqualTo("INC-2026-001");
+        JsonNode item = root.get("incidents").get(0);
+        assertThat(item.get("incidentCode").asText()).isEqualTo("INC-2026-001");
+        assertThat(item.get("title").asText()).startsWith("결제API 502 급증").hasSize(120);
+        assertThat(item.fieldNames()).toIterable()
+                .containsExactlyInAnyOrder("incidentCode", "title", "serviceName", "severity", "status");
+        assertThat(textContent.text()).doesNotContain(inc.getSummary());
+    }
+
+    @Test
+    void dedicatedInvestigatorCredentialOverridesForgedRoleForRestAndMcp() throws Exception {
+        InternalTokenFilter filter = new InternalTokenFilter("shared-token", "test-read-only-token");
+        MockHttpServletRequest read = request("GET", "/api/incidents/INC-1", "test-read-only-token", "supervisor");
+        filter.doFilter(read, new MockHttpServletResponse(), (req, res) ->
+                assertThat(InternalRoleContext.isReadOnlyInvestigator()).isTrue());
+
+        for (String path : List.of("/api/incidents/INC-1/complete", "/mcp/message")) {
+            MockHttpServletRequest write = request("POST", path, "test-read-only-token", "supervisor");
+            write.setContent("""
+                    {"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"completeIncidentWithPostMortem"}}
+                    """.getBytes(java.nio.charset.StandardCharsets.UTF_8));
+            MockHttpServletResponse response = new MockHttpServletResponse();
+            MockFilterChain chain = new MockFilterChain();
+            filter.doFilter(write, response, chain);
+            assertThat(response.getStatus()).isEqualTo(HttpServletResponse.SC_FORBIDDEN);
+            assertThat(chain.getRequest()).isNull();
+        }
+        assertThat(InternalRoleContext.getRole()).isNull();
+    }
+
+    @Test
+    void investigatorTokenMustDifferFromSharedToken() {
+        assertThatThrownBy(() -> new InternalTokenFilter("same-token", "same-token"))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("INTERNAL_INVESTIGATOR_TOKEN");
+    }
+
+    @Test
+    void sharedTokenRejectsUnrecognizedRole() throws Exception {
+        InternalTokenFilter filter = new InternalTokenFilter("shared-token", "test-read-only-token");
+        MockHttpServletRequest request = request("GET", "/api/incidents/INC-1", "shared-token", "unknown-agent");
+        MockHttpServletResponse response = new MockHttpServletResponse();
+        MockFilterChain chain = new MockFilterChain();
+        filter.doFilter(request, response, chain);
+        assertThat(response.getStatus()).isEqualTo(HttpServletResponse.SC_FORBIDDEN);
+        assertThat(chain.getRequest()).isNull();
+    }
+
+    private static MockHttpServletRequest request(String method, String path, String token, String role) {
+        MockHttpServletRequest request = new MockHttpServletRequest(method, path);
+        request.setServletPath(path);
+        request.addHeader("X-Internal-Token", token);
+        request.addHeader(InternalRoleContext.ROLE_HEADER, role);
+        return request;
     }
 
     @Test

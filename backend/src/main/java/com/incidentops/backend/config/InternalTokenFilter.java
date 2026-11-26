@@ -15,7 +15,10 @@ import java.io.IOException;
 import java.io.InputStreamReader;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
+import java.util.Collections;
+import java.util.Locale;
 import java.util.Set;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.MediaType;
 import org.springframework.stereotype.Component;
@@ -27,12 +30,26 @@ public class InternalTokenFilter extends OncePerRequestFilter {
     static final String HEADER_NAME = "X-Internal-Token";
     private static final Set<String> READ_ONLY_MCP_TOOLS =
             Set.of("searchCorpusIndex", "pullCorpusChunk", "getIncidentDetail");
+    private static final Set<String> KNOWN_ROLES = Set.of("supervisor", InternalRoleContext.ROLE_INVESTIGATOR);
     private static final ObjectMapper OBJECT_MAPPER = new ObjectMapper();
 
     private final String expectedToken;
+    private final String investigatorToken;
 
-    public InternalTokenFilter(@Value("${app.internal-service-token:}") String expectedToken) {
+    public InternalTokenFilter(String expectedToken) {
+        this(expectedToken, null);
+    }
+
+    @Autowired
+    public InternalTokenFilter(
+            @Value("${app.internal-service-token:}") String expectedToken,
+            @Value("${app.internal-investigator-token:}") String investigatorToken) {
         this.expectedToken = expectedToken == null ? "" : expectedToken;
+        this.investigatorToken = investigatorToken;
+        if (constantTimeEquals(this.expectedToken, investigatorToken)) {
+            // 같은 값이면 모든 요청이 읽기 전용이 되므로 기동 시점에 설정 오류를 알린다
+            throw new IllegalStateException("INTERNAL_INVESTIGATOR_TOKEN은 INTERNAL_SERVICE_TOKEN과 달라야 합니다.");
+        }
     }
 
     @Override
@@ -51,13 +68,27 @@ public class InternalTokenFilter extends OncePerRequestFilter {
             FilterChain filterChain) throws ServletException, IOException {
 
         String providedToken = request.getHeader(HEADER_NAME);
+        boolean dedicatedInvestigator = constantTimeEquals(investigatorToken, providedToken);
 
-        if (!constantTimeEquals(expectedToken, providedToken)) {
+        if (!dedicatedInvestigator && !constantTimeEquals(expectedToken, providedToken)) {
             writeJsonError(response, HttpServletResponse.SC_UNAUTHORIZED, "Unauthorized", "유효하지 않은 내부 서비스 토큰입니다.");
             return;
         }
 
-        InternalRoleContext.setRole(request.getHeader(InternalRoleContext.ROLE_HEADER));
+        String role = null;
+        if (dedicatedInvestigator) {
+            role = InternalRoleContext.ROLE_INVESTIGATOR;
+        } else {
+            var roles = Collections.list(request.getHeaders(InternalRoleContext.ROLE_HEADER));
+            if (!roles.isEmpty()) {
+                role = roles.getFirst().strip().toLowerCase(Locale.ROOT);
+                if (roles.size() != 1 || !KNOWN_ROLES.contains(role)) {
+                    writeJsonError(response, HttpServletResponse.SC_FORBIDDEN, "Forbidden", "알 수 없는 내부 에이전트 역할입니다.");
+                    return;
+                }
+            }
+        }
+        InternalRoleContext.setRole(role);
         try {
             String path = request.getServletPath();
             String method = request.getMethod();
