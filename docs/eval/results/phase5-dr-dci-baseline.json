@@ -21,9 +21,9 @@
       "mean_total_corpus_chars": 676.6,
       "mean_char_reduction_ratio": 0.7786,
       "mean_pull_calls": 1.0,
-      "latency_p50_ms": 0.03,
-      "latency_p95_ms": 0.05,
-      "latency_p99_ms": 0.09
+      "latency_p50_ms": 0.05,
+      "latency_p95_ms": 0.07,
+      "latency_p99_ms": 0.11
     },
     {
       "strategy": "keyword_dr_dci",
@@ -35,9 +35,9 @@
       "mean_total_corpus_chars": 676.6,
       "mean_char_reduction_ratio": 0.4645,
       "mean_pull_calls": 2.0,
-      "latency_p50_ms": 0.04,
-      "latency_p95_ms": 0.06,
-      "latency_p99_ms": 0.07
+      "latency_p50_ms": 0.06,
+      "latency_p95_ms": 0.07,
+      "latency_p99_ms": 0.09
     },
     {
       "strategy": "keyword_dr_dci",
@@ -45,13 +45,13 @@
       "scenarios": 5,
       "mean_evidence_recall": 0.9,
       "mean_citation_validity": 1.0,
-      "mean_context_chars": 424.8,
+      "mean_context_chars": 437.8,
       "mean_total_corpus_chars": 676.6,
-      "mean_char_reduction_ratio": 0.2784,
-      "mean_pull_calls": 2.8,
-      "latency_p50_ms": 0.04,
-      "latency_p95_ms": 0.06,
-      "latency_p99_ms": 0.07
+      "mean_char_reduction_ratio": 0.2464,
+      "mean_pull_calls": 3.0,
+      "latency_p50_ms": 0.06,
+      "latency_p95_ms": 0.09,
+      "latency_p99_ms": 0.11
     },
     {
       "strategy": "keyword_dr_dci",
@@ -59,13 +59,13 @@
       "scenarios": 5,
       "mean_evidence_recall": 1.0,
       "mean_citation_validity": 1.0,
-      "mean_context_chars": 488.6,
+      "mean_context_chars": 544.0,
       "mean_total_corpus_chars": 676.6,
-      "mean_char_reduction_ratio": 0.1887,
-      "mean_pull_calls": 3.2,
-      "latency_p50_ms": 0.04,
-      "latency_p95_ms": 0.06,
-      "latency_p99_ms": 0.07
+      "mean_char_reduction_ratio": 0.054,
+      "mean_pull_calls": 4.0,
+      "latency_p50_ms": 0.06,
+      "latency_p95_ms": 0.08,
+      "latency_p99_ms": 0.1
     },
     {
       "strategy": "keyword_dr_dci",
@@ -73,13 +73,13 @@
       "scenarios": 5,
       "mean_evidence_recall": 1.0,
       "mean_citation_validity": 1.0,
-      "mean_context_chars": 601.8,
+      "mean_context_chars": 608.6,
       "mean_total_corpus_chars": 676.6,
-      "mean_char_reduction_ratio": 0.1288,
-      "mean_pull_calls": 3.4,
-      "latency_p50_ms": 0.04,
-      "latency_p95_ms": 0.07,
-      "latency_p99_ms": 0.07
+      "mean_char_reduction_ratio": -0.0184,
+      "mean_pull_calls": 4.6,
+      "latency_p50_ms": 0.06,
+      "latency_p95_ms": 0.09,
+      "latency_p99_ms": 0.1
     }
   ],
   "runs": [
@@ -109,8 +109,8 @@
       "pull_calls": 1,
       "recommended_command": "kubectl rollout undo deployment/payment-service",
       "latency_p50_ms": 0.05,
-      "latency_p95_ms": 0.1,
-      "latency_p99_ms": 0.11
+      "latency_p95_ms": 0.11,
+      "latency_p99_ms": 0.13
     },
     {
       "strategy": "keyword_dr_dci",
@@ -136,9 +136,9 @@
       "search_calls": 4,
       "pull_calls": 1,
       "recommended_command": "kubectl rollout undo deployment/checkout-worker",
-      "latency_p50_ms": 0.03,
-      "latency_p95_ms": 0.04,
-      "latency_p99_ms": 0.05
+      "latency_p50_ms": 0.04,
+      "latency_p95_ms": 0.06,
+      "latency_p99_ms": 0.06
     },
     {
       "strategy": "keyword_dr_dci",
@@ -161,12 +161,12 @@
       ],
       "evidence_recall": 0.5,
       "citation_validity": 1.0,
-      "search_calls": 5,
+      "search_calls": 6,
       "pull_calls": 1,
       "recommended_command": null,
-      "latency_p50_ms": 0.03,
-      "latency_p95_ms": 0.04,
-      "latency_p99_ms": 0.04
+      "latency_p50_ms": 0.06,
+      "latency_p95_ms": 0.07,
+      "latency_p99_ms": 0.08
     },
     {
       "strategy": "keyword_dr_dci",
@@ -193,9 +193,9 @@
       "search_calls": 4,
       "pull_calls": 1,
       "recommended_command": null,
-      "latency_p50_ms": 0.03,
-      "latency_p95_ms": 0.04,
-      "latency_p99_ms": 0.04
+      "latency_p50_ms": 0.04,
+      "latency_p95_ms": 0.05,
+      "latency_p99_ms": 0.05
     },
     {
       "strategy": "keyword_dr_dci",
@@ -221,9 +221,9 @@
       "search_calls": 3,
       "pull_calls": 1,
       "recommended_command": "kubectl rollout undo deployment/search-api",
-      "latency_p50_ms": 0.03,
-      "latency_p95_ms": 0.03,
-      "latency_p99_ms": 0.03
+      "latency_p50_ms": 0.04,
+      "latency_p95_ms": 0.06,
+      "latency_p99_ms": 0.07
     },
     {
       "strategy": "keyword_dr_dci",
@@ -252,8 +252,8 @@
       "pull_calls": 2,
       "recommended_command": "kubectl rollout undo deployment/payment-service",
       "latency_p50_ms": 0.06,
-      "latency_p95_ms": 0.07,
-      "latency_p99_ms": 0.08
+      "latency_p95_ms": 0.09,
+      "latency_p99_ms": 0.09
     },
     {
       "strategy": "keyword_dr_dci",
@@ -277,12 +277,12 @@
       ],
       "evidence_recall": 1.0,
       "citation_validity": 1.0,
-      "search_calls": 4,
+      "search_calls": 5,
       "pull_calls": 2,
       "recommended_command": "kubectl rollout undo deployment/checkout-worker",
-      "latency_p50_ms": 0.04,
-      "latency_p95_ms": 0.05,
-      "latency_p99_ms": 0.05
+      "latency_p50_ms": 0.06,
+      "latency_p95_ms": 0.07,
+      "latency_p99_ms": 0.07
     },
     {
       "strategy": "keyword_dr_dci",
@@ -306,12 +306,12 @@
       ],
       "evidence_recall": 1.0,
       "citation_validity": 1.0,
-      "search_calls": 5,
+      "search_calls": 6,
       "pull_calls": 2,
       "recommended_command": null,
-      "latency_p50_ms": 0.04,
-      "latency_p95_ms": 0.04,
-      "latency_p99_ms": 0.04
+      "latency_p50_ms": 0.06,
+      "latency_p95_ms": 0.07,
+      "latency_p99_ms": 0.07
     },
     {
       "strategy": "keyword_dr_dci",
@@ -336,12 +336,12 @@
       ],
       "evidence_recall": 0.6667,
       "citation_validity": 1.0,
-      "search_calls": 4,
+      "search_calls": 5,
       "pull_calls": 2,
       "recommended_command": null,
-      "latency_p50_ms": 0.03,
-      "latency_p95_ms": 0.04,
-      "latency_p99_ms": 0.05
+      "latency_p50_ms": 0.05,
+      "latency_p95_ms": 0.07,
+      "latency_p99_ms": 0.07
     },
     {
       "strategy": "keyword_dr_dci",
@@ -368,9 +368,9 @@
       "search_calls": 4,
       "pull_calls": 2,
       "recommended_command": "kubectl rollout undo deployment/search-api",
-      "latency_p50_ms": 0.04,
-      "latency_p95_ms": 0.04,
-      "latency_p99_ms": 0.04
+      "latency_p50_ms": 0.05,
+      "latency_p95_ms": 0.06,
+      "latency_p99_ms": 0.06
     },
     {
       "strategy": "keyword_dr_dci",
@@ -396,12 +396,12 @@
       ],
       "evidence_recall": 1.0,
       "citation_validity": 1.0,
-      "search_calls": 5,
+      "search_calls": 6,
       "pull_calls": 3,
       "recommended_command": "kubectl rollout undo deployment/payment-service",
-      "latency_p50_ms": 0.06,
-      "latency_p95_ms": 0.07,
-      "latency_p99_ms": 0.08
+      "latency_p50_ms": 0.08,
+      "latency_p95_ms": 0.12,
+      "latency_p99_ms": 0.13
     },
     {
       "strategy": "keyword_dr_dci",
@@ -426,12 +426,12 @@
       ],
       "evidence_recall": 1.0,
       "citation_validity": 1.0,
-      "search_calls": 4,
+      "search_calls": 5,
       "pull_calls": 3,
       "recommended_command": "kubectl rollout undo deployment/checkout-worker",
-      "latency_p50_ms": 0.04,
-      "latency_p95_ms": 0.04,
-      "latency_p99_ms": 0.05
+      "latency_p50_ms": 0.06,
+      "latency_p95_ms": 0.07,
+      "latency_p99_ms": 0.07
     },
     {
       "strategy": "keyword_dr_dci",
@@ -443,24 +443,25 @@
       "total_corpus_chars": 406,
       "pulled_chunk_ids": [
         "EXT-103",
+        "EXT-102",
         "EXT-RB-01"
       ],
-      "pulled_count": 2,
-      "pulled_raw_chars": 243,
-      "context_summary_chars": 253,
-      "char_reduction_ratio": 0.3768,
+      "pulled_count": 3,
+      "pulled_raw_chars": 297,
+      "context_summary_chars": 318,
+      "char_reduction_ratio": 0.2167,
       "required_chunk_ids": [
         "EXT-103",
         "EXT-RB-01"
       ],
       "evidence_recall": 1.0,
       "citation_validity": 1.0,
-      "search_calls": 5,
-      "pull_calls": 2,
+      "search_calls": 6,
+      "pull_calls": 3,
       "recommended_command": null,
-      "latency_p50_ms": 0.04,
-      "latency_p95_ms": 0.04,
-      "latency_p99_ms": 0.04
+      "latency_p50_ms": 0.06,
+      "latency_p95_ms": 0.08,
+      "latency_p99_ms": 0.08
     },
     {
       "strategy": "keyword_dr_dci",
@@ -486,12 +487,12 @@
       ],
       "evidence_recall": 1.0,
       "citation_validity": 1.0,
-      "search_calls": 4,
+      "search_calls": 5,
       "pull_calls": 3,
       "recommended_command": null,
-      "latency_p50_ms": 0.03,
-      "latency_p95_ms": 0.04,
-      "latency_p99_ms": 0.04
+      "latency_p50_ms": 0.05,
+      "latency_p95_ms": 0.05,
+      "latency_p99_ms": 0.06
     },
     {
       "strategy": "keyword_dr_dci",
@@ -516,12 +517,12 @@
       ],
       "evidence_recall": 0.5,
       "citation_validity": 1.0,
-      "search_calls": 4,
+      "search_calls": 5,
       "pull_calls": 3,
       "recommended_command": "kubectl rollout undo deployment/search-api",
-      "latency_p50_ms": 0.04,
-      "latency_p95_ms": 0.04,
-      "latency_p99_ms": 0.04
+      "latency_p50_ms": 0.05,
+      "latency_p95_ms": 0.06,
+      "latency_p99_ms": 0.06
     },
     {
       "strategy": "keyword_dr_dci",
@@ -548,12 +549,12 @@
       ],
       "evidence_recall": 1.0,
       "citation_validity": 1.0,
-      "search_calls": 5,
+      "search_calls": 6,
       "pull_calls": 4,
       "recommended_command": "kubectl rollout undo deployment/payment-service",
-      "latency_p50_ms": 0.06,
-      "latency_p95_ms": 0.07,
-      "latency_p99_ms": 0.08
+      "latency_p50_ms": 0.08,
+      "latency_p95_ms": 0.1,
+      "latency_p99_ms": 0.11
     },
     {
       "strategy": "keyword_dr_dci",
@@ -566,24 +567,25 @@
       "pulled_chunk_ids": [
         "OOM-104",
         "OOM-105",
+        "OOM-102",
         "OOM-RB-01"
       ],
-      "pulled_count": 3,
-      "pulled_raw_chars": 343,
-      "context_summary_chars": 364,
-      "char_reduction_ratio": 0.3027,
+      "pulled_count": 4,
+      "pulled_raw_chars": 423,
+      "context_summary_chars": 455,
+      "char_reduction_ratio": 0.1284,
       "required_chunk_ids": [
         "OOM-104",
         "OOM-RB-01"
       ],
       "evidence_recall": 1.0,
       "citation_validity": 1.0,
-      "search_calls": 4,
-      "pull_calls": 3,
+      "search_calls": 5,
+      "pull_calls": 4,
       "recommended_command": "kubectl rollout undo deployment/checkout-worker",
-      "latency_p50_ms": 0.04,
-      "latency_p95_ms": 0.05,
-      "latency_p99_ms": 0.05
+      "latency_p50_ms": 0.06,
+      "latency_p95_ms": 0.08,
+      "latency_p99_ms": 0.08
     },
     {
       "strategy": "keyword_dr_dci",
@@ -595,24 +597,26 @@
       "total_corpus_chars": 406,
       "pulled_chunk_ids": [
         "EXT-103",
+        "EXT-102",
+        "EXT-104",
         "EXT-RB-01"
       ],
-      "pulled_count": 2,
-      "pulled_raw_chars": 243,
-      "context_summary_chars": 253,
-      "char_reduction_ratio": 0.3768,
+      "pulled_count": 4,
+      "pulled_raw_chars": 364,
+      "context_summary_chars": 396,
+      "char_reduction_ratio": 0.0246,
       "required_chunk_ids": [
         "EXT-103",
         "EXT-RB-01"
       ],
       "evidence_recall": 1.0,
       "citation_validity": 1.0,
-      "search_calls": 5,
-      "pull_calls": 2,
+      "search_calls": 6,
+      "pull_calls": 4,
       "recommended_command": null,
-      "latency_p50_ms": 0.04,
-      "latency_p95_ms": 0.04,
-      "latency_p99_ms": 0.04
+      "latency_p50_ms": 0.07,
+      "latency_p95_ms": 0.07,
+      "latency_p99_ms": 0.07
     },
     {
       "strategy": "keyword_dr_dci",
@@ -625,12 +629,13 @@
       "pulled_chunk_ids": [
         "SCH-101",
         "SCH-102",
+        "SCH-103",
         "SCH-RB-01"
       ],
-      "pulled_count": 3,
-      "pulled_raw_chars": 261,
-      "context_summary_chars": 282,
-      "char_reduction_ratio": 0.0375,
+      "pulled_count": 4,
+      "pulled_raw_chars": 293,
+      "context_summary_chars": 325,
+      "char_reduction_ratio": -0.1092,
       "required_chunk_ids": [
         "SCH-101",
         "SCH-102",
@@ -638,12 +643,12 @@
       ],
       "evidence_recall": 1.0,
       "citation_validity": 1.0,
-      "search_calls": 4,
-      "pull_calls": 3,
+      "search_calls": 5,
+      "pull_calls": 4,
       "recommended_command": null,
-      "latency_p50_ms": 0.03,
-      "latency_p95_ms": 0.04,
-      "latency_p99_ms": 0.04
+      "latency_p50_ms": 0.05,
+      "latency_p95_ms": 0.06,
+      "latency_p99_ms": 0.06
     },
     {
       "strategy": "keyword_dr_dci",
@@ -669,12 +674,12 @@
       ],
       "evidence_recall": 1.0,
       "citation_validity": 1.0,
-      "search_calls": 4,
+      "search_calls": 5,
       "pull_calls": 4,
       "recommended_command": "kubectl rollout undo deployment/search-api",
-      "latency_p50_ms": 0.04,
-      "latency_p95_ms": 0.04,
-      "latency_p99_ms": 0.04
+      "latency_p50_ms": 0.05,
+      "latency_p95_ms": 0.06,
+      "latency_p99_ms": 0.07
     },
     {
       "strategy": "keyword_dr_dci",
@@ -688,13 +693,13 @@
         "LOG-104",
         "LOG-105",
         "LOG-106",
-        "RUNBOOK-01",
-        "RUNBOOK-02"
+        "LOG-102",
+        "RUNBOOK-01"
       ],
       "pulled_count": 5,
-      "pulled_raw_chars": 1340,
-      "context_summary_chars": 1806,
-      "char_reduction_ratio": 0.0444,
+      "pulled_raw_chars": 1404,
+      "context_summary_chars": 1446,
+      "char_reduction_ratio": 0.2349,
       "required_chunk_ids": [
         "LOG-104",
         "LOG-105",
@@ -702,12 +707,12 @@
       ],
       "evidence_recall": 1.0,
       "citation_validity": 1.0,
-      "search_calls": 5,
+      "search_calls": 6,
       "pull_calls": 5,
       "recommended_command": "kubectl rollout undo deployment/payment-service",
-      "latency_p50_ms": 0.07,
-      "latency_p95_ms": 0.07,
-      "latency_p99_ms": 0.08
+      "latency_p50_ms": 0.08,
+      "latency_p95_ms": 0.1,
+      "latency_p99_ms": 0.11
     },
     {
       "strategy": "keyword_dr_dci",
@@ -720,24 +725,26 @@
       "pulled_chunk_ids": [
         "OOM-104",
         "OOM-105",
+        "OOM-102",
+        "OOM-101",
         "OOM-RB-01"
       ],
-      "pulled_count": 3,
-      "pulled_raw_chars": 343,
-      "context_summary_chars": 364,
-      "char_reduction_ratio": 0.3027,
+      "pulled_count": 5,
+      "pulled_raw_chars": 476,
+      "context_summary_chars": 519,
+      "char_reduction_ratio": 0.0057,
       "required_chunk_ids": [
         "OOM-104",
         "OOM-RB-01"
       ],
       "evidence_recall": 1.0,
       "citation_validity": 1.0,
-      "search_calls": 4,
-      "pull_calls": 3,
+      "search_calls": 5,
+      "pull_calls": 5,
       "recommended_command": "kubectl rollout undo deployment/checkout-worker",
-      "latency_p50_ms": 0.04,
-      "latency_p95_ms": 0.04,
-      "latency_p99_ms": 0.05
+      "latency_p50_ms": 0.06,
+      "latency_p95_ms": 0.07,
+      "latency_p99_ms": 0.07
     },
     {
       "strategy": "keyword_dr_dci",
@@ -749,24 +756,27 @@
       "total_corpus_chars": 406,
       "pulled_chunk_ids": [
         "EXT-103",
+        "EXT-102",
+        "EXT-104",
+        "EXT-101",
         "EXT-RB-01"
       ],
-      "pulled_count": 2,
-      "pulled_raw_chars": 243,
-      "context_summary_chars": 253,
-      "char_reduction_ratio": 0.3768,
+      "pulled_count": 5,
+      "pulled_raw_chars": 406,
+      "context_summary_chars": 449,
+      "char_reduction_ratio": -0.1059,
       "required_chunk_ids": [
         "EXT-103",
         "EXT-RB-01"
       ],
       "evidence_recall": 1.0,
       "citation_validity": 1.0,
-      "search_calls": 5,
-      "pull_calls": 2,
+      "search_calls": 6,
+      "pull_calls": 5,
       "recommended_command": null,
-      "latency_p50_ms": 0.04,
-      "latency_p95_ms": 0.04,
-      "latency_p99_ms": 0.04
+      "latency_p50_ms": 0.06,
+      "latency_p95_ms": 0.07,
+      "latency_p99_ms": 0.08
     },
     {
       "strategy": "keyword_dr_dci",
@@ -779,12 +789,13 @@
       "pulled_chunk_ids": [
         "SCH-101",
         "SCH-102",
+        "SCH-103",
         "SCH-RB-01"
       ],
-      "pulled_count": 3,
-      "pulled_raw_chars": 261,
-      "context_summary_chars": 282,
-      "char_reduction_ratio": 0.0375,
+      "pulled_count": 4,
+      "pulled_raw_chars": 293,
+      "context_summary_chars": 325,
+      "char_reduction_ratio": -0.1092,
       "required_chunk_ids": [
         "SCH-101",
         "SCH-102",
@@ -792,12 +803,12 @@
       ],
       "evidence_recall": 1.0,
       "citation_validity": 1.0,
-      "search_calls": 4,
-      "pull_calls": 3,
+      "search_calls": 5,
+      "pull_calls": 4,
       "recommended_command": null,
-      "latency_p50_ms": 0.03,
-      "latency_p95_ms": 0.04,
-      "latency_p99_ms": 0.04
+      "latency_p50_ms": 0.05,
+      "latency_p95_ms": 0.06,
+      "latency_p99_ms": 0.06
     },
     {
       "strategy": "keyword_dr_dci",
@@ -823,12 +834,12 @@
       ],
       "evidence_recall": 1.0,
       "citation_validity": 1.0,
-      "search_calls": 4,
+      "search_calls": 5,
       "pull_calls": 4,
       "recommended_command": "kubectl rollout undo deployment/search-api",
-      "latency_p50_ms": 0.04,
-      "latency_p95_ms": 0.04,
-      "latency_p99_ms": 0.04
+      "latency_p50_ms": 0.05,
+      "latency_p95_ms": 0.05,
+      "latency_p99_ms": 0.05
     }
   ]
 }

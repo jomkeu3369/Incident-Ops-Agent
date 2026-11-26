@@ -1,0 +1,30 @@
+✔ resolveAdminBaseUrl maps mock and live modes cleanly (0.6222ms)
+✔ dateLabelKst derives KST calendar date consistently across midnight boundaries (0.2735ms)
+✔ Managed plans CRUD and same-date overlap warning work end-to-end (105.0636ms)
+✔ Session logs list, detail, anomaly analysis, and delete work end-to-end (54.6379ms)
+✔ reducer handles streaming text, steps, tool calls, replan, and incident isolation (1.8138ms)
+✔ canSendPrompt allows IDLE, REJECTED, BLOCKED, EXECUTION_FAILED and blocks AWAITING_APPROVAL/RESOLVED (0.1606ms)
+✔ resuming interrupted approved execution allows APPROVED only and blocks REJECTED (0.1729ms)
+✔ resolveInitialMode honors explicit live/mock URL param over env default (0.1117ms)
+✔ STATE_SNAPSHOT normalizes Spring-hydrated plans that omit evidence and workWindow (0.9972ms)
+✔ RESOLVED does not regress to a delayed AWAITING_EXECUTION_RESULT snapshot (0.1737ms)
+✔ CANCELLED yields to a ledger approval that still needs the operator (0.2453ms)
+✔ a snapshot below lastEventSeq is ignored, but the same checkpoint cursor can supply its snapshot (0.1386ms)
+✔ HttpAgent sends resume/cancel with the cursor and consumes progress, checkpoint sync, and CANCELLED (40.0581ms)
+✔ HttpAgent SSE end-to-end against /api/mock-ag-ui (plan, restore, approve, 409, reject, error, abort) (2055.7282ms)
+✔ hydrateSnapshotFromDetail maps PENDING, APPROVED(resumable), FAILED, and RESOLVED states accurately (1.075ms)
+✔ BACKEND_DETAIL_SYNCED preserves AG-UI workWindow while attaching executions and postMortem (0.8504ms)
+✔ server-only backend fetch sends X-Internal-Token and maps 401/404 cleanly (23.2163ms)
+✔ SSR and BFF proxy serve Spring incident detail without leaking INTERNAL_SERVICE_TOKEN (95.5679ms)
+✔ restoring a stale AWAITING_APPROVAL thread preserves persisted Spring decision (0.3387ms)
+✔ BACKEND_DETAIL_SYNCED retains live BLOCKED outcome when Spring has no new approval (0.2289ms)
+✔ normalizeKstTimestamp and timeLabel treat offset-less Spring LocalDateTime as KST (0.2882ms)
+✔ hydrateSnapshotFromDetail selects the newest plan (plans[0]) when approvals are empty (0.2705ms)
+ℹ tests 22
+ℹ suites 0
+ℹ pass 22
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 2448.2324

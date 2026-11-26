@@ -28,6 +28,8 @@ FSR은 `SUPPORTED`로 판정하면 안 되는 사례 중 실제로 `SUPPORTED`�
 
 ## 2. 실험 B · 초기 Phase 6 코퍼스의 `eval` 36건
 
+> **이전 동작의 측정값:** `keyword_dr_dci` 행은 키워드에 걸린 로그가 예산 이하여도 전체 색인으로 확장하지 않던 때의 결과입니다. 라이브 실험은 다시 실행하지 않았습니다.
+
 - **데이터:** [원시 JSON](results/live-b-4way-eval.json)에 `dr-dci-corpus-v1.0`, `split_filter=eval`, 36건으로 기록됩니다. 36개 사례 ID는 `43ab8a8`에 보존된 초기 코퍼스의 평가 분할(`dev` 24 / `eval` 36)과 일치합니다. 같은 버전 문자열을 사용한 현재 [Phase 6 오프라인 결과](phase6-agentic-dr-dci-report.md)는 `dev` 30 / `eval` 30으로 분할이 다릅니다.
 - **구성:** 모든 전략은 `StructuredOutputJudge`(`gpt-6.1-terra`)를 사용합니다. `full_context`는 전체 청크를, `vector_rag`는 단어·문자 3-gram TF-IDF의 코사인 Top-3를, `keyword_dr_dci`는 색인 키워드로 선택한 청크를 판정기에 전달합니다. `agentic_dr_dci`만 `OpenAiDrDciSelector`(`gpt-6.1-terra`)로 다음 청크를 선택합니다. 인출 예산은 3회입니다.
 - **계측:** 토큰은 선택기·판정기 사용량을 합친 사례당 평균입니다. 지연은 로컬 검색과 LLM 호출을 포함해 러너에서 잰 사례별 경과 시간(`latency_scope=live_llm_api_inclusive`)입니다.

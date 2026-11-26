@@ -88,10 +88,13 @@
 | LangGraph 체크포인트 | `supervisor/checkpointer.py` | `test_phase7_protocol_resilience.py`, `test_supervisor_state_recovery.py` |
 | A2A 스트리밍·원격 취소·멱등성 | `common/a2a_utils.py`, `log_agent/routers.py`, `supervisor/graph.py` | `test_a2a_supervisor_wiring.py`(loopback HTTP) |
 | 조사 워커 읽기 전용 자격증명 | `InternalTokenFilter.java`, `common/config.py`, `docker-compose.yaml` | `IncidentMcpResourceAndRoleTest.java`, `test_a2a_supervisor_wiring.py` |
+| 실스택 중단·재개, A2A·MCP 계약 | `scripts/live-verify/` | [Phase 7 실측 리포트](eval/phase7-protocol-resilience-report.md) |
 
 ---
 
 ## 3. 대표 시나리오 5종 검증 기록
+
+> 아래 결과는 대역 기반 테스트(`test_phase2d`)의 기록입니다. 격리 실스택에서 데모 시드 장애를 `rule_based` 판정기로 실행하면 시나리오 1은 `BLOCKED`로 끝나며, 기본 `decisions_api`로는 실스택에서 확인하지 않았습니다.
 
 | # | 시나리오 | 기대 동작 | 실제 검증 결과 | 로그 샘플 / 테스트 |
 | :---: | :--- | :--- | :--- | :--- |
@@ -122,15 +125,15 @@
 2026-11-26 로컬 실행 결과입니다. 최신 통과 여부는 GitHub Actions를 기준으로 합니다.
 
 * **Backend (`backend/`):** Maven JUnit **41건 통과** (`InternalTokenFilterTest` 13, `GlobalExceptionHandlerTest` 3, `IncidentMcpResourceAndRoleTest` 9, `IncidentMcpToolsTest` 3, `IncidentServiceTest` 13)
-* **Agent (`agent/`):** `pytest` **149건 통과**. 외부 API 키와 실행 중인 서버가 필요 없으며, A2A 연결 테스트는 loopback 포트에 서버를 띄웁니다.
-* **Frontend (`frontend/`):** `tsc --noEmit`, `next build` 통과, `npm test` 22건 중 **18건 통과·4건 건너뜀**(`TEST_AG_UI_BASE_URL` 등이 필요한 실서버 통합 테스트)
+* **Agent (`agent/`):** `pytest` **150건 통과**. 외부 API 키와 실행 중인 서버가 필요 없으며, A2A 연결 테스트는 loopback 포트에 서버를 띄웁니다.
+* **Frontend (`frontend/`):** `tsc --noEmit`, `next build` 통과, `npm test`는 서버 없이 22건 중 18건 통과·4건 건너뜀이며, 격리 실스택을 `TEST_AG_UI_BASE_URL`로 지정하면 **22건 중 22건 통과**
 
 ## 6. 아직 검증하지 못한 범위
 
 | 항목 | 현재 상태 |
 | :--- | :--- |
-| 실스택 종단 실행 | 2026-11-26 격리 Compose 스택(MySQL·Spring·Redis·Caddy·Supervisor·워커 2종·Frontend)에서 `scripts/smoke-test.ps1`(REST 승인·반려·실행 실패·완료) 통과. 에이전트가 계획을 만드는 AG-UI 흐름과 프런트 실서버 통합 테스트는 이 결과에 포함하지 않음 |
-| MCP 실통신 | 독립 MCP 클라이언트로 Spring `/sse`의 도구·리소스를 조회하는 검증 없음 |
+| 기본 LLM 판정기 실스택 | 실스택 검증은 `rule_based`와 검증 전용 근거 데이터를 사용. `decisions_api`·라이브 LLM 판정을 포함한 종단 실행은 미검증 |
+| 장애 주입 범위 | 강제 종료는 `supervisor`만 수행. 워커·Spring·Redis 장애와 완료 쓰기 트랜잭션 도중의 종료는 미검증 |
 | 근거 판정 정확도 | 합성 사례 평가([리포트](eval/))만 있으며 실제 장애 데이터 검증 없음 |
 | 오프라인 평가와 실 DB의 차이 | 합성 평가의 런북 후보는 장애당 1–2건, 시드 SQL을 적재한 DB는 서비스당 14–26건 |
 | 실제 복구 실행 | 승인 후 실행은 시뮬레이션이며 실제 클러스터 명령·복구 지표 확인은 검증하지 않음 |

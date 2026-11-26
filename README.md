@@ -194,7 +194,8 @@ Copy-Item .env.example .env   # bash: cp .env.example .env
 ### 4.2 Docker Compose 전체 스택 기동
 ```powershell
 # 1) 공용 네트워크 및 MySQL·Redis·Caddy 인프라 기동
-docker compose -f docker-compose-infra.yaml up -d
+#    --wait: MySQL 최초 초기화가 끝난 뒤 다음 단계로 넘어갑니다(백엔드는 DB 접속 실패 시 종료합니다)
+docker compose -f docker-compose-infra.yaml up -d --wait
 
 # 2) Backend(demo 프로필) · Agent 3종 · Frontend 기동
 $env:SPRING_PROFILES_ACTIVE = 'docker,demo'

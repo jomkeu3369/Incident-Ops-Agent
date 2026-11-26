@@ -201,7 +201,7 @@ async def test_disconnect_keeps_remote_work_and_resume_joins_it() -> None:
         corpus.release.set()
         await asyncio.wait_for(joining, 10)
 
-    assert corpus.calls["search"] == 2, "LOG·RUNBOOK 색인 검색은 한 번씩만 실행된다"
+    assert corpus.calls["search"] == 3, "한 번의 조사(키워드·전체 LOG 색인, RUNBOOK 색인)만 실행된다"
     assert [e["snapshot"] for e in resumed if e["type"] == "STATE_SNAPSHOT"][-1]["trace"]["evidenceChunkIds"]
 
 
@@ -371,7 +371,7 @@ async def test_cancel_one_of_two_shared_waiters_keeps_the_other_running() -> Non
 
     assert cancelled.canceled is True
     assert completed.payload["ok"] is True
-    assert corpus.calls["search"] == 2
+    assert corpus.calls["search"] == 3
 
 
 @pytest.mark.parametrize(("create_app_under_test", "accepted", "rejected"), [

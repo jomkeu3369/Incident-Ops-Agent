@@ -6,7 +6,7 @@
   "max_pull_steps": 3,
   "judge": "RuleBasedJudge",
   "selector": "adaptive_agentic",
-  "vector_index_build_ms_total": 118.39,
+  "vector_index_build_ms_total": 120.77,
   "latency_scope": "offline_in_memory_preindexed_no_llm_mcp_rtt",
   "adoption_gate": {
     "passed": true,
@@ -69,9 +69,9 @@
       "mean_input_tokens": 2456.2,
       "total_output_tokens": 0,
       "token_reduction_vs_full": 0.0,
-      "latency_p50_ms": 2.1,
-      "latency_p95_ms": 3.66,
-      "latency_p99_ms": 3.89,
+      "latency_p50_ms": 2.18,
+      "latency_p95_ms": 4.15,
+      "latency_p99_ms": 5.66,
       "budget_violations": 0,
       "unauthorized_writes": 0,
       "per_category_recall": {
@@ -139,9 +139,9 @@
       "mean_input_tokens": 230.0,
       "total_output_tokens": 0,
       "token_reduction_vs_full": 0.9063,
-      "latency_p50_ms": 0.46,
-      "latency_p95_ms": 0.64,
-      "latency_p99_ms": 0.71,
+      "latency_p50_ms": 0.54,
+      "latency_p95_ms": 0.88,
+      "latency_p99_ms": 0.93,
       "budget_violations": 0,
       "unauthorized_writes": 0,
       "per_category_recall": {
@@ -187,9 +187,9 @@
       "total_cases": 60,
       "decided_cases": 60,
       "undecidable_count": 0,
-      "correct_cases": 39,
-      "accuracy": 0.65,
-      "macro_f1": 0.6503,
+      "correct_cases": 46,
+      "accuracy": 0.7667,
+      "macro_f1": 0.7549,
       "non_supported_cases": 44,
       "false_supported_count": 0,
       "false_supported_rate": 0.0,
@@ -198,37 +198,37 @@
       "prompt_injection_cases": 6,
       "prompt_injection_blocked": 6,
       "injection_resistance_rate": 1.0,
-      "mean_evidence_recall": 0.85,
-      "multi_hop_evidence_recall": 0.6667,
+      "mean_evidence_recall": 0.8667,
+      "multi_hop_evidence_recall": 0.68,
       "mean_citation_validity": 1.0,
-      "groundedness_rate": 0.9333,
-      "ungrounded_rate": 0.0667,
-      "mean_pull_calls": 2.98,
-      "mean_context_chars": 404.3,
-      "total_input_tokens": 10930,
-      "mean_input_tokens": 182.2,
+      "groundedness_rate": 0.8333,
+      "ungrounded_rate": 0.1667,
+      "mean_pull_calls": 3.0,
+      "mean_context_chars": 535.1,
+      "total_input_tokens": 13384,
+      "mean_input_tokens": 223.1,
       "total_output_tokens": 0,
-      "token_reduction_vs_full": 0.9258,
-      "latency_p50_ms": 0.2,
-      "latency_p95_ms": 0.37,
-      "latency_p99_ms": 0.39,
+      "token_reduction_vs_full": 0.9092,
+      "latency_p50_ms": 0.31,
+      "latency_p95_ms": 0.48,
+      "latency_p99_ms": 0.51,
       "budget_violations": 0,
       "unauthorized_writes": 0,
       "per_category_recall": {
         "adversarial_edge": 0.9,
-        "db_connection_pool": 0.7334,
+        "db_connection_pool": 0.8333,
         "external_dependency": 0.8667,
         "memory_oom": 0.8333,
         "schema_migration": 0.8667,
         "telemetry_gap": 0.9
       },
       "per_category_accuracy": {
-        "adversarial_edge": 0.7,
-        "db_connection_pool": 0.4,
+        "adversarial_edge": 0.8,
+        "db_connection_pool": 0.5,
         "external_dependency": 0.6,
         "memory_oom": 0.7,
-        "schema_migration": 0.6,
-        "telemetry_gap": 0.9
+        "schema_migration": 1.0,
+        "telemetry_gap": 1.0
       },
       "confusion_matrix": {
         "SUPPORTED": {
@@ -245,8 +245,8 @@
         },
         "CONTRADICTED": {
           "SUPPORTED": 0,
-          "NEED_MORE_EVIDENCE": 13,
-          "CONTRADICTED": 11,
+          "NEED_MORE_EVIDENCE": 6,
+          "CONTRADICTED": 18,
           "UNDECIDABLE": 0
         }
       }
@@ -279,9 +279,9 @@
       "mean_input_tokens": 658.3,
       "total_output_tokens": 0,
       "token_reduction_vs_full": 0.732,
-      "latency_p50_ms": 0.42,
-      "latency_p95_ms": 0.86,
-      "latency_p99_ms": 1.0,
+      "latency_p50_ms": 0.47,
+      "latency_p95_ms": 0.97,
+      "latency_p99_ms": 1.03,
       "budget_violations": 0,
       "unauthorized_writes": 0,
       "per_category_recall": {
@@ -352,9 +352,9 @@
         "mean_input_tokens": 2420.1,
         "total_output_tokens": 0,
         "token_reduction_vs_full": 0.0,
-        "latency_p50_ms": 2.16,
-        "latency_p95_ms": 3.62,
-        "latency_p99_ms": 3.82,
+        "latency_p50_ms": 2.44,
+        "latency_p95_ms": 4.07,
+        "latency_p99_ms": 5.09,
         "budget_violations": 0,
         "unauthorized_writes": 0,
         "per_category_recall": {
@@ -422,9 +422,9 @@
         "mean_input_tokens": 243.7,
         "total_output_tokens": 0,
         "token_reduction_vs_full": 0.8993,
-        "latency_p50_ms": 0.48,
-        "latency_p95_ms": 0.67,
-        "latency_p99_ms": 0.72,
+        "latency_p50_ms": 0.59,
+        "latency_p95_ms": 0.89,
+        "latency_p99_ms": 0.94,
         "budget_violations": 0,
         "unauthorized_writes": 0,
         "per_category_recall": {
@@ -481,25 +481,25 @@
         "prompt_injection_cases": 3,
         "prompt_injection_blocked": 3,
         "injection_resistance_rate": 1.0,
-        "mean_evidence_recall": 0.9556,
-        "multi_hop_evidence_recall": 0.6667,
+        "mean_evidence_recall": 0.9889,
+        "multi_hop_evidence_recall": 0.8334,
         "mean_citation_validity": 1.0,
-        "groundedness_rate": 0.9333,
-        "ungrounded_rate": 0.0667,
-        "mean_pull_calls": 2.97,
-        "mean_context_chars": 459.0,
-        "total_input_tokens": 5930,
-        "mean_input_tokens": 197.7,
+        "groundedness_rate": 0.9667,
+        "ungrounded_rate": 0.0333,
+        "mean_pull_calls": 3.0,
+        "mean_context_chars": 568.4,
+        "total_input_tokens": 6957,
+        "mean_input_tokens": 231.9,
         "total_output_tokens": 0,
-        "token_reduction_vs_full": 0.9183,
-        "latency_p50_ms": 0.21,
-        "latency_p95_ms": 0.38,
-        "latency_p99_ms": 0.4,
+        "token_reduction_vs_full": 0.9042,
+        "latency_p50_ms": 0.32,
+        "latency_p95_ms": 0.47,
+        "latency_p99_ms": 0.48,
         "budget_violations": 0,
         "unauthorized_writes": 0,
         "per_category_recall": {
           "adversarial_edge": 1.0,
-          "db_connection_pool": 0.75,
+          "db_connection_pool": 1.0,
           "external_dependency": 1.0,
           "memory_oom": 0.9333,
           "schema_migration": 1.0,
@@ -562,9 +562,9 @@
         "mean_input_tokens": 638.5,
         "total_output_tokens": 0,
         "token_reduction_vs_full": 0.7362,
-        "latency_p50_ms": 0.46,
-        "latency_p95_ms": 0.91,
-        "latency_p99_ms": 1.02,
+        "latency_p50_ms": 0.48,
+        "latency_p95_ms": 1.01,
+        "latency_p99_ms": 1.03,
         "budget_violations": 0,
         "unauthorized_writes": 0,
         "per_category_recall": {
@@ -634,9 +634,9 @@
         "mean_input_tokens": 2492.4,
         "total_output_tokens": 0,
         "token_reduction_vs_full": 0.0,
-        "latency_p50_ms": 1.71,
-        "latency_p95_ms": 3.65,
-        "latency_p99_ms": 3.88,
+        "latency_p50_ms": 2.04,
+        "latency_p95_ms": 4.18,
+        "latency_p99_ms": 5.44,
         "budget_violations": 0,
         "unauthorized_writes": 0,
         "per_category_recall": {
@@ -704,9 +704,9 @@
         "mean_input_tokens": 216.4,
         "total_output_tokens": 0,
         "token_reduction_vs_full": 0.9132,
-        "latency_p50_ms": 0.44,
-        "latency_p95_ms": 0.59,
-        "latency_p99_ms": 0.65,
+        "latency_p50_ms": 0.48,
+        "latency_p95_ms": 0.84,
+        "latency_p99_ms": 0.87,
         "budget_violations": 0,
         "unauthorized_writes": 0,
         "per_category_recall": {
@@ -752,9 +752,9 @@
         "total_cases": 30,
         "decided_cases": 30,
         "undecidable_count": 0,
-        "correct_cases": 11,
-        "accuracy": 0.3667,
-        "macro_f1": 0.3393,
+        "correct_cases": 18,
+        "accuracy": 0.6,
+        "macro_f1": 0.5119,
         "non_supported_cases": 23,
         "false_supported_count": 0,
         "false_supported_rate": 0.0,
@@ -766,17 +766,17 @@
         "mean_evidence_recall": 0.7445,
         "multi_hop_evidence_recall": 0.6667,
         "mean_citation_validity": 1.0,
-        "groundedness_rate": 0.9333,
-        "ungrounded_rate": 0.0667,
+        "groundedness_rate": 0.7,
+        "ungrounded_rate": 0.3,
         "mean_pull_calls": 3.0,
-        "mean_context_chars": 349.6,
-        "total_input_tokens": 5000,
-        "mean_input_tokens": 166.7,
+        "mean_context_chars": 501.8,
+        "total_input_tokens": 6427,
+        "mean_input_tokens": 214.2,
         "total_output_tokens": 0,
-        "token_reduction_vs_full": 0.9331,
-        "latency_p50_ms": 0.19,
-        "latency_p95_ms": 0.32,
-        "latency_p99_ms": 0.37,
+        "token_reduction_vs_full": 0.914,
+        "latency_p50_ms": 0.3,
+        "latency_p95_ms": 0.48,
+        "latency_p99_ms": 0.52,
         "budget_violations": 0,
         "unauthorized_writes": 0,
         "per_category_recall": {
@@ -788,12 +788,12 @@
           "telemetry_gap": 0.75
         },
         "per_category_accuracy": {
-          "adversarial_edge": 0.4,
-          "db_connection_pool": 0.3333,
+          "adversarial_edge": 0.6,
+          "db_connection_pool": 0.5,
           "external_dependency": 0.0,
           "memory_oom": 0.4,
-          "schema_migration": 0.3333,
-          "telemetry_gap": 0.75
+          "schema_migration": 1.0,
+          "telemetry_gap": 1.0
         },
         "confusion_matrix": {
           "SUPPORTED": {
@@ -810,8 +810,8 @@
           },
           "CONTRADICTED": {
             "SUPPORTED": 0,
-            "NEED_MORE_EVIDENCE": 13,
-            "CONTRADICTED": 4,
+            "NEED_MORE_EVIDENCE": 6,
+            "CONTRADICTED": 11,
             "UNDECIDABLE": 0
           }
         }
@@ -844,9 +844,9 @@
         "mean_input_tokens": 678.1,
         "total_output_tokens": 0,
         "token_reduction_vs_full": 0.7279,
-        "latency_p50_ms": 0.41,
-        "latency_p95_ms": 0.69,
-        "latency_p99_ms": 0.89,
+        "latency_p50_ms": 0.46,
+        "latency_p95_ms": 0.87,
+        "latency_p99_ms": 0.96,
         "budget_violations": 0,
         "unauthorized_writes": 0,
         "per_category_recall": {
@@ -898,10 +898,11 @@
       "agentic_recall": 1.0,
       "keyword_correct": true,
       "agentic_correct": true,
-      "keyword_tokens": 97,
+      "keyword_tokens": 104,
       "agentic_tokens": 190,
       "keyword_pulled": [
         "LOG-01",
+        "LOG-02",
         "RB-01"
       ],
       "agentic_pulled": [
@@ -979,7 +980,7 @@
       "judge_output_tokens": 0,
       "total_input_tokens": 2607,
       "total_output_tokens": 0,
-      "latency_ms": 2.354,
+      "latency_ms": 2.294,
       "stop_reason": "FULL_CONTEXT",
       "budget_violation": false
     },
@@ -1028,7 +1029,7 @@
       "judge_output_tokens": 0,
       "total_input_tokens": 2565,
       "total_output_tokens": 0,
-      "latency_ms": 2.162,
+      "latency_ms": 2.126,
       "stop_reason": "FULL_CONTEXT",
       "budget_violation": false
     },
@@ -1124,7 +1125,7 @@
       "judge_output_tokens": 0,
       "total_input_tokens": 2459,
       "total_output_tokens": 0,
-      "latency_ms": 2.109,
+      "latency_ms": 2.452,
       "stop_reason": "FULL_CONTEXT",
       "budget_violation": false
     },
@@ -1174,7 +1175,7 @@
       "judge_output_tokens": 0,
       "total_input_tokens": 2609,
       "total_output_tokens": 0,
-      "latency_ms": 2.171,
+      "latency_ms": 2.318,
       "stop_reason": "FULL_CONTEXT",
       "budget_violation": false
     },
@@ -1224,7 +1225,7 @@
       "judge_output_tokens": 0,
       "total_input_tokens": 2599,
       "total_output_tokens": 0,
-      "latency_ms": 2.34,
+      "latency_ms": 2.16,
       "stop_reason": "FULL_CONTEXT",
       "budget_violation": false
     },
@@ -1274,7 +1275,7 @@
       "judge_output_tokens": 0,
       "total_input_tokens": 2599,
       "total_output_tokens": 0,
-      "latency_ms": 2.356,
+      "latency_ms": 2.145,
       "stop_reason": "FULL_CONTEXT",
       "budget_violation": false
     },
@@ -1323,7 +1324,7 @@
       "judge_output_tokens": 0,
       "total_input_tokens": 2508,
       "total_output_tokens": 0,
-      "latency_ms": 1.71,
+      "latency_ms": 1.649,
       "stop_reason": "FULL_CONTEXT",
       "budget_violation": false
     },
@@ -1372,7 +1373,7 @@
       "judge_output_tokens": 0,
       "total_input_tokens": 2512,
       "total_output_tokens": 0,
-      "latency_ms": 1.479,
+      "latency_ms": 1.5,
       "stop_reason": "FULL_CONTEXT",
       "budget_violation": false
     },
@@ -1419,7 +1420,7 @@
       "judge_output_tokens": 0,
       "total_input_tokens": 2462,
       "total_output_tokens": 0,
-      "latency_ms": 2.034,
+      "latency_ms": 2.064,
       "stop_reason": "FULL_CONTEXT",
       "budget_violation": false
     },
@@ -1466,7 +1467,7 @@
       "judge_output_tokens": 0,
       "total_input_tokens": 2550,
       "total_output_tokens": 0,
-      "latency_ms": 3.784,
+      "latency_ms": 3.743,
       "stop_reason": "FULL_CONTEXT",
       "budget_violation": false
     },
@@ -1513,7 +1514,7 @@
       "judge_output_tokens": 0,
       "total_input_tokens": 2550,
       "total_output_tokens": 0,
-      "latency_ms": 3.831,
+      "latency_ms": 3.747,
       "stop_reason": "FULL_CONTEXT",
       "budget_violation": false
     },
@@ -1609,7 +1610,7 @@
       "judge_output_tokens": 0,
       "total_input_tokens": 2492,
       "total_output_tokens": 0,
-      "latency_ms": 2.159,
+      "latency_ms": 2.082,
       "stop_reason": "FULL_CONTEXT",
       "budget_violation": false
     },
@@ -1656,7 +1657,7 @@
       "judge_output_tokens": 0,
       "total_input_tokens": 2492,
       "total_output_tokens": 0,
-      "latency_ms": 2.087,
+      "latency_ms": 2.077,
       "stop_reason": "FULL_CONTEXT",
       "budget_violation": false
     },
@@ -1705,7 +1706,7 @@
       "judge_output_tokens": 0,
       "total_input_tokens": 2550,
       "total_output_tokens": 0,
-      "latency_ms": 3.635,
+      "latency_ms": 3.604,
       "stop_reason": "FULL_CONTEXT",
       "budget_violation": false
     },
@@ -1754,7 +1755,7 @@
       "judge_output_tokens": 0,
       "total_input_tokens": 2540,
       "total_output_tokens": 0,
-      "latency_ms": 3.658,
+      "latency_ms": 3.741,
       "stop_reason": "FULL_CONTEXT",
       "budget_violation": false
     },
@@ -1803,7 +1804,7 @@
       "judge_output_tokens": 0,
       "total_input_tokens": 2520,
       "total_output_tokens": 0,
-      "latency_ms": 3.966,
+      "latency_ms": 3.696,
       "stop_reason": "FULL_CONTEXT",
       "budget_violation": false
     },
@@ -1852,7 +1853,7 @@
       "judge_output_tokens": 0,
       "total_input_tokens": 2504,
       "total_output_tokens": 0,
-      "latency_ms": 1.031,
+      "latency_ms": 0.951,
       "stop_reason": "FULL_CONTEXT",
       "budget_violation": false
     },
@@ -1899,7 +1900,7 @@
       "judge_output_tokens": 0,
       "total_input_tokens": 2505,
       "total_output_tokens": 0,
-      "latency_ms": 1.756,
+      "latency_ms": 1.51,
       "stop_reason": "FULL_CONTEXT",
       "budget_violation": false
     },
@@ -1946,7 +1947,7 @@
       "judge_output_tokens": 0,
       "total_input_tokens": 2507,
       "total_output_tokens": 0,
-      "latency_ms": 1.298,
+      "latency_ms": 1.181,
       "stop_reason": "FULL_CONTEXT",
       "budget_violation": false
     },
@@ -1993,7 +1994,7 @@
       "judge_output_tokens": 0,
       "total_input_tokens": 2496,
       "total_output_tokens": 0,
-      "latency_ms": 1.248,
+      "latency_ms": 1.2,
       "stop_reason": "FULL_CONTEXT",
       "budget_violation": false
     },
@@ -2040,7 +2041,7 @@
       "judge_output_tokens": 0,
       "total_input_tokens": 2468,
       "total_output_tokens": 0,
-      "latency_ms": 1.247,
+      "latency_ms": 1.178,
       "stop_reason": "FULL_CONTEXT",
       "budget_violation": false
     },
@@ -2087,7 +2088,7 @@
       "judge_output_tokens": 0,
       "total_input_tokens": 2526,
       "total_output_tokens": 0,
-      "latency_ms": 3.359,
+      "latency_ms": 3.27,
       "stop_reason": "FULL_CONTEXT",
       "budget_violation": false
     },
@@ -2134,7 +2135,7 @@
       "judge_output_tokens": 0,
       "total_input_tokens": 2513,
       "total_output_tokens": 0,
-      "latency_ms": 2.194,
+      "latency_ms": 2.205,
       "stop_reason": "FULL_CONTEXT",
       "budget_violation": false
     },
@@ -2181,7 +2182,7 @@
       "judge_output_tokens": 0,
       "total_input_tokens": 2493,
       "total_output_tokens": 0,
-      "latency_ms": 2.409,
+      "latency_ms": 2.346,
       "stop_reason": "FULL_CONTEXT",
       "budget_violation": false
     },
@@ -2230,7 +2231,7 @@
       "judge_output_tokens": 0,
       "total_input_tokens": 2491,
       "total_output_tokens": 0,
-      "latency_ms": 1.243,
+      "latency_ms": 1.298,
       "stop_reason": "FULL_CONTEXT",
       "budget_violation": false
     },
@@ -2279,7 +2280,7 @@
       "judge_output_tokens": 0,
       "total_input_tokens": 2482,
       "total_output_tokens": 0,
-      "latency_ms": 1.181,
+      "latency_ms": 1.281,
       "stop_reason": "FULL_CONTEXT",
       "budget_violation": false
     },
@@ -2328,7 +2329,7 @@
       "judge_output_tokens": 0,
       "total_input_tokens": 2482,
       "total_output_tokens": 0,
-      "latency_ms": 1.202,
+      "latency_ms": 1.306,
       "stop_reason": "FULL_CONTEXT",
       "budget_violation": false
     },
@@ -2377,7 +2378,7 @@
       "judge_output_tokens": 0,
       "total_input_tokens": 2510,
       "total_output_tokens": 0,
-      "latency_ms": 1.199,
+      "latency_ms": 1.297,
       "stop_reason": "FULL_CONTEXT",
       "budget_violation": false
     },
@@ -2424,7 +2425,7 @@
       "judge_output_tokens": 0,
       "total_input_tokens": 2524,
       "total_output_tokens": 0,
-      "latency_ms": 1.498,
+      "latency_ms": 1.632,
       "stop_reason": "FULL_CONTEXT",
       "budget_violation": false
     },
@@ -2471,7 +2472,7 @@
       "judge_output_tokens": 0,
       "total_input_tokens": 2515,
       "total_output_tokens": 0,
-      "latency_ms": 1.558,
+      "latency_ms": 1.643,
       "stop_reason": "FULL_CONTEXT",
       "budget_violation": false
     },
@@ -2518,7 +2519,7 @@
       "judge_output_tokens": 0,
       "total_input_tokens": 2527,
       "total_output_tokens": 0,
-      "latency_ms": 3.237,
+      "latency_ms": 3.604,
       "stop_reason": "FULL_CONTEXT",
       "budget_violation": false
     },
@@ -2565,7 +2566,7 @@
       "judge_output_tokens": 0,
       "total_input_tokens": 2507,
       "total_output_tokens": 0,
-      "latency_ms": 3.424,
+      "latency_ms": 3.99,
       "stop_reason": "FULL_CONTEXT",
       "budget_violation": false
     },
@@ -2614,7 +2615,7 @@
       "judge_output_tokens": 0,
       "total_input_tokens": 2501,
       "total_output_tokens": 0,
-      "latency_ms": 1.598,
+      "latency_ms": 1.967,
       "stop_reason": "FULL_CONTEXT",
       "budget_violation": false
     },
@@ -2663,7 +2664,7 @@
       "judge_output_tokens": 0,
       "total_input_tokens": 2529,
       "total_output_tokens": 0,
-      "latency_ms": 1.522,
+      "latency_ms": 1.842,
       "stop_reason": "FULL_CONTEXT",
       "budget_violation": false
     },
@@ -2712,7 +2713,7 @@
       "judge_output_tokens": 0,
       "total_input_tokens": 2491,
       "total_output_tokens": 0,
-      "latency_ms": 1.501,
+      "latency_ms": 1.694,
       "stop_reason": "FULL_CONTEXT",
       "budget_violation": false
     },
@@ -2761,7 +2762,7 @@
       "judge_output_tokens": 0,
       "total_input_tokens": 2510,
       "total_output_tokens": 0,
-      "latency_ms": 1.469,
+      "latency_ms": 1.821,
       "stop_reason": "FULL_CONTEXT",
       "budget_violation": false
     },
@@ -2808,7 +2809,7 @@
       "judge_output_tokens": 0,
       "total_input_tokens": 2510,
       "total_output_tokens": 0,
-      "latency_ms": 2.166,
+      "latency_ms": 2.447,
       "stop_reason": "FULL_CONTEXT",
       "budget_violation": false
     },
@@ -2855,7 +2856,7 @@
       "judge_output_tokens": 0,
       "total_input_tokens": 2500,
       "total_output_tokens": 0,
-      "latency_ms": 2.079,
+      "latency_ms": 2.426,
       "stop_reason": "FULL_CONTEXT",
       "budget_violation": false
     },
@@ -2902,7 +2903,7 @@
       "judge_output_tokens": 0,
       "total_input_tokens": 2464,
       "total_output_tokens": 0,
-      "latency_ms": 2.179,
+      "latency_ms": 2.689,
       "stop_reason": "FULL_CONTEXT",
       "budget_violation": false
     },
@@ -2949,7 +2950,7 @@
       "judge_output_tokens": 0,
       "total_input_tokens": 2444,
       "total_output_tokens": 0,
-      "latency_ms": 2.325,
+      "latency_ms": 2.833,
       "stop_reason": "FULL_CONTEXT",
       "budget_violation": false
     },
@@ -2996,7 +2997,7 @@
       "judge_output_tokens": 0,
       "total_input_tokens": 2464,
       "total_output_tokens": 0,
-      "latency_ms": 2.478,
+      "latency_ms": 2.548,
       "stop_reason": "FULL_CONTEXT",
       "budget_violation": false
     },
@@ -3043,7 +3044,7 @@
       "judge_output_tokens": 0,
       "total_input_tokens": 2464,
       "total_output_tokens": 0,
-      "latency_ms": 2.281,
+      "latency_ms": 2.518,
       "stop_reason": "FULL_CONTEXT",
       "budget_violation": false
     },
@@ -3087,7 +3088,7 @@
       "judge_output_tokens": 0,
       "total_input_tokens": 2414,
       "total_output_tokens": 0,
-      "latency_ms": 2.209,
+      "latency_ms": 2.434,
       "stop_reason": "FULL_CONTEXT",
       "budget_violation": false
     },
@@ -3131,7 +3132,7 @@
       "judge_output_tokens": 0,
       "total_input_tokens": 2365,
       "total_output_tokens": 0,
-      "latency_ms": 2.141,
+      "latency_ms": 2.479,
       "stop_reason": "FULL_CONTEXT",
       "budget_violation": false
     },
@@ -3180,7 +3181,7 @@
       "judge_output_tokens": 0,
       "total_input_tokens": 2511,
       "total_output_tokens": 0,
-      "latency_ms": 2.076,
+      "latency_ms": 2.395,
       "stop_reason": "FULL_CONTEXT",
       "budget_violation": false
     },
@@ -3229,7 +3230,7 @@
       "judge_output_tokens": 0,
       "total_input_tokens": 2491,
       "total_output_tokens": 0,
-      "latency_ms": 2.054,
+      "latency_ms": 4.117,
       "stop_reason": "FULL_CONTEXT",
       "budget_violation": false
     },
@@ -3276,7 +3277,7 @@
       "judge_output_tokens": 0,
       "total_input_tokens": 2470,
       "total_output_tokens": 0,
-      "latency_ms": 3.308,
+      "latency_ms": 5.937,
       "stop_reason": "FULL_CONTEXT",
       "budget_violation": false
     },
@@ -3325,7 +3326,7 @@
       "judge_output_tokens": 0,
       "total_input_tokens": 2438,
       "total_output_tokens": 0,
-      "latency_ms": 1.31,
+      "latency_ms": 2.116,
       "stop_reason": "FULL_CONTEXT",
       "budget_violation": false
     },
@@ -3372,7 +3373,7 @@
       "judge_output_tokens": 0,
       "total_input_tokens": 2527,
       "total_output_tokens": 0,
-      "latency_ms": 2.16,
+      "latency_ms": 3.982,
       "stop_reason": "FULL_CONTEXT",
       "budget_violation": false
     },
@@ -3419,7 +3420,7 @@
       "judge_output_tokens": 0,
       "total_input_tokens": 2478,
       "total_output_tokens": 0,
-      "latency_ms": 2.147,
+      "latency_ms": 4.141,
       "stop_reason": "FULL_CONTEXT",
       "budget_violation": false
     },
@@ -3466,7 +3467,7 @@
       "judge_output_tokens": 0,
       "total_input_tokens": 2508,
       "total_output_tokens": 0,
-      "latency_ms": 2.107,
+      "latency_ms": 3.781,
       "stop_reason": "FULL_CONTEXT",
       "budget_violation": false
     },
@@ -3506,7 +3507,7 @@
       "judge_output_tokens": 0,
       "total_input_tokens": 104,
       "total_output_tokens": 0,
-      "latency_ms": 0.159,
+      "latency_ms": 0.315,
       "stop_reason": "FULL_CONTEXT",
       "budget_violation": false
     },
@@ -3553,7 +3554,7 @@
       "judge_output_tokens": 0,
       "total_input_tokens": 2500,
       "total_output_tokens": 0,
-      "latency_ms": 3.219,
+      "latency_ms": 5.474,
       "stop_reason": "FULL_CONTEXT",
       "budget_violation": false
     },
@@ -3602,7 +3603,7 @@
       "judge_output_tokens": 0,
       "total_input_tokens": 2500,
       "total_output_tokens": 0,
-      "latency_ms": 1.214,
+      "latency_ms": 2.024,
       "stop_reason": "FULL_CONTEXT",
       "budget_violation": false
     },
@@ -3651,7 +3652,7 @@
       "judge_output_tokens": 0,
       "total_input_tokens": 2502,
       "total_output_tokens": 0,
-      "latency_ms": 1.703,
+      "latency_ms": 2.657,
       "stop_reason": "FULL_CONTEXT",
       "budget_violation": false
     },
@@ -3700,7 +3701,7 @@
       "judge_output_tokens": 0,
       "total_input_tokens": 2515,
       "total_output_tokens": 0,
-      "latency_ms": 0.997,
+      "latency_ms": 1.817,
       "stop_reason": "FULL_CONTEXT",
       "budget_violation": false
     },
@@ -3745,7 +3746,7 @@
       "judge_output_tokens": 0,
       "total_input_tokens": 1783,
       "total_output_tokens": 0,
-      "latency_ms": 0.877,
+      "latency_ms": 1.488,
       "stop_reason": "FULL_CONTEXT",
       "budget_violation": false
     },
@@ -3790,7 +3791,7 @@
       "judge_output_tokens": 0,
       "total_input_tokens": 2648,
       "total_output_tokens": 0,
-      "latency_ms": 2.618,
+      "latency_ms": 4.234,
       "stop_reason": "FULL_CONTEXT",
       "budget_violation": false
     },
@@ -3831,7 +3832,7 @@
       "judge_output_tokens": 0,
       "total_input_tokens": 173,
       "total_output_tokens": 0,
-      "latency_ms": 0.605,
+      "latency_ms": 0.878,
       "stop_reason": "TOP_K_STATIC",
       "budget_violation": false
     },
@@ -3872,7 +3873,7 @@
       "judge_output_tokens": 0,
       "total_input_tokens": 264,
       "total_output_tokens": 0,
-      "latency_ms": 0.617,
+      "latency_ms": 0.898,
       "stop_reason": "TOP_K_STATIC",
       "budget_violation": false
     },
@@ -3913,7 +3914,7 @@
       "judge_output_tokens": 0,
       "total_input_tokens": 231,
       "total_output_tokens": 0,
-      "latency_ms": 0.474,
+      "latency_ms": 0.789,
       "stop_reason": "TOP_K_STATIC",
       "budget_violation": false
     },
@@ -3953,7 +3954,7 @@
       "judge_output_tokens": 0,
       "total_input_tokens": 222,
       "total_output_tokens": 0,
-      "latency_ms": 0.477,
+      "latency_ms": 0.762,
       "stop_reason": "TOP_K_STATIC",
       "budget_violation": false
     },
@@ -3994,7 +3995,7 @@
       "judge_output_tokens": 0,
       "total_input_tokens": 254,
       "total_output_tokens": 0,
-      "latency_ms": 0.511,
+      "latency_ms": 0.873,
       "stop_reason": "TOP_K_STATIC",
       "budget_violation": false
     },
@@ -4035,7 +4036,7 @@
       "judge_output_tokens": 0,
       "total_input_tokens": 160,
       "total_output_tokens": 0,
-      "latency_ms": 0.422,
+      "latency_ms": 0.83,
       "stop_reason": "TOP_K_STATIC",
       "budget_violation": false
     },
@@ -4076,7 +4077,7 @@
       "judge_output_tokens": 0,
       "total_input_tokens": 253,
       "total_output_tokens": 0,
-      "latency_ms": 0.478,
+      "latency_ms": 0.659,
       "stop_reason": "TOP_K_STATIC",
       "budget_violation": false
     },
@@ -4117,7 +4118,7 @@
       "judge_output_tokens": 0,
       "total_input_tokens": 220,
       "total_output_tokens": 0,
-      "latency_ms": 0.462,
+      "latency_ms": 0.604,
       "stop_reason": "TOP_K_STATIC",
       "budget_violation": false
     },
@@ -4158,7 +4159,7 @@
       "judge_output_tokens": 0,
       "total_input_tokens": 230,
       "total_output_tokens": 0,
-      "latency_ms": 0.261,
+      "latency_ms": 0.426,
       "stop_reason": "TOP_K_STATIC",
       "budget_violation": false
     },
@@ -4198,7 +4199,7 @@
       "judge_output_tokens": 0,
       "total_input_tokens": 226,
       "total_output_tokens": 0,
-      "latency_ms": 0.423,
+      "latency_ms": 0.619,
       "stop_reason": "TOP_K_STATIC",
       "budget_violation": false
     },
@@ -4238,7 +4239,7 @@
       "judge_output_tokens": 0,
       "total_input_tokens": 258,
       "total_output_tokens": 0,
-      "latency_ms": 0.604,
+      "latency_ms": 0.888,
       "stop_reason": "TOP_K_STATIC",
       "budget_violation": false
     },
@@ -4278,7 +4279,7 @@
       "judge_output_tokens": 0,
       "total_input_tokens": 259,
       "total_output_tokens": 0,
-      "latency_ms": 0.604,
+      "latency_ms": 0.964,
       "stop_reason": "TOP_K_STATIC",
       "budget_violation": false
     },
@@ -4319,7 +4320,7 @@
       "judge_output_tokens": 0,
       "total_input_tokens": 232,
       "total_output_tokens": 0,
-      "latency_ms": 0.477,
+      "latency_ms": 0.725,
       "stop_reason": "TOP_K_STATIC",
       "budget_violation": false
     },
@@ -4359,7 +4360,7 @@
       "judge_output_tokens": 0,
       "total_input_tokens": 230,
       "total_output_tokens": 0,
-      "latency_ms": 0.427,
+      "latency_ms": 0.573,
       "stop_reason": "TOP_K_STATIC",
       "budget_violation": false
     },
@@ -4399,7 +4400,7 @@
       "judge_output_tokens": 0,
       "total_input_tokens": 230,
       "total_output_tokens": 0,
-      "latency_ms": 0.46,
+      "latency_ms": 0.63,
       "stop_reason": "TOP_K_STATIC",
       "budget_violation": false
     },
@@ -4440,7 +4441,7 @@
       "judge_output_tokens": 0,
       "total_input_tokens": 236,
       "total_output_tokens": 0,
-      "latency_ms": 0.66,
+      "latency_ms": 0.854,
       "stop_reason": "TOP_K_STATIC",
       "budget_violation": false
     },
@@ -4481,7 +4482,7 @@
       "judge_output_tokens": 0,
       "total_input_tokens": 145,
       "total_output_tokens": 0,
-      "latency_ms": 0.538,
+      "latency_ms": 0.666,
       "stop_reason": "TOP_K_STATIC",
       "budget_violation": false
     },
@@ -4522,7 +4523,7 @@
       "judge_output_tokens": 0,
       "total_input_tokens": 143,
       "total_output_tokens": 0,
-      "latency_ms": 0.517,
+      "latency_ms": 0.599,
       "stop_reason": "TOP_K_STATIC",
       "budget_violation": false
     },
@@ -4563,7 +4564,7 @@
       "judge_output_tokens": 0,
       "total_input_tokens": 123,
       "total_output_tokens": 0,
-      "latency_ms": 0.338,
+      "latency_ms": 0.321,
       "stop_reason": "TOP_K_STATIC",
       "budget_violation": false
     },
@@ -4603,7 +4604,7 @@
       "judge_output_tokens": 0,
       "total_input_tokens": 232,
       "total_output_tokens": 0,
-      "latency_ms": 0.35,
+      "latency_ms": 0.285,
       "stop_reason": "TOP_K_STATIC",
       "budget_violation": false
     },
@@ -4643,7 +4644,7 @@
       "judge_output_tokens": 0,
       "total_input_tokens": 231,
       "total_output_tokens": 0,
-      "latency_ms": 0.302,
+      "latency_ms": 0.301,
       "stop_reason": "TOP_K_STATIC",
       "budget_violation": false
     },
@@ -4683,7 +4684,7 @@
       "judge_output_tokens": 0,
       "total_input_tokens": 230,
       "total_output_tokens": 0,
-      "latency_ms": 0.256,
+      "latency_ms": 0.312,
       "stop_reason": "TOP_K_STATIC",
       "budget_violation": false
     },
@@ -4723,7 +4724,7 @@
       "judge_output_tokens": 0,
       "total_input_tokens": 228,
       "total_output_tokens": 0,
-      "latency_ms": 0.287,
+      "latency_ms": 0.271,
       "stop_reason": "TOP_K_STATIC",
       "budget_violation": false
     },
@@ -4763,7 +4764,7 @@
       "judge_output_tokens": 0,
       "total_input_tokens": 249,
       "total_output_tokens": 0,
-      "latency_ms": 0.576,
+      "latency_ms": 0.628,
       "stop_reason": "TOP_K_STATIC",
       "budget_violation": false
     },
@@ -4803,7 +4804,7 @@
       "judge_output_tokens": 0,
       "total_input_tokens": 230,
       "total_output_tokens": 0,
-      "latency_ms": 0.432,
+      "latency_ms": 0.511,
       "stop_reason": "TOP_K_STATIC",
       "budget_violation": false
     },
@@ -4843,7 +4844,7 @@
       "judge_output_tokens": 0,
       "total_input_tokens": 228,
       "total_output_tokens": 0,
-      "latency_ms": 0.442,
+      "latency_ms": 0.48,
       "stop_reason": "TOP_K_STATIC",
       "budget_violation": false
     },
@@ -4884,7 +4885,7 @@
       "judge_output_tokens": 0,
       "total_input_tokens": 209,
       "total_output_tokens": 0,
-      "latency_ms": 0.417,
+      "latency_ms": 0.469,
       "stop_reason": "TOP_K_STATIC",
       "budget_violation": false
     },
@@ -4925,7 +4926,7 @@
       "judge_output_tokens": 0,
       "total_input_tokens": 208,
       "total_output_tokens": 0,
-      "latency_ms": 0.406,
+      "latency_ms": 0.486,
       "stop_reason": "TOP_K_STATIC",
       "budget_violation": false
     },
@@ -4966,7 +4967,7 @@
       "judge_output_tokens": 0,
       "total_input_tokens": 208,
       "total_output_tokens": 0,
-      "latency_ms": 0.449,
+      "latency_ms": 0.474,
       "stop_reason": "TOP_K_STATIC",
       "budget_violation": false
     },
@@ -5007,7 +5008,7 @@
       "judge_output_tokens": 0,
       "total_input_tokens": 212,
       "total_output_tokens": 0,
-      "latency_ms": 0.497,
+      "latency_ms": 0.469,
       "stop_reason": "TOP_K_STATIC",
       "budget_violation": false
     },
@@ -5047,7 +5048,7 @@
       "judge_output_tokens": 0,
       "total_input_tokens": 258,
       "total_output_tokens": 0,
-      "latency_ms": 0.297,
+      "latency_ms": 0.303,
       "stop_reason": "TOP_K_STATIC",
       "budget_violation": false
     },
@@ -5087,7 +5088,7 @@
       "judge_output_tokens": 0,
       "total_input_tokens": 257,
       "total_output_tokens": 0,
-      "latency_ms": 0.346,
+      "latency_ms": 0.284,
       "stop_reason": "TOP_K_STATIC",
       "budget_violation": false
     },
@@ -5127,7 +5128,7 @@
       "judge_output_tokens": 0,
       "total_input_tokens": 248,
       "total_output_tokens": 0,
-      "latency_ms": 0.688,
+      "latency_ms": 0.594,
       "stop_reason": "TOP_K_STATIC",
       "budget_violation": false
     },
@@ -5167,7 +5168,7 @@
       "judge_output_tokens": 0,
       "total_input_tokens": 246,
       "total_output_tokens": 0,
-      "latency_ms": 0.738,
+      "latency_ms": 0.625,
       "stop_reason": "TOP_K_STATIC",
       "budget_violation": false
     },
@@ -5208,7 +5209,7 @@
       "judge_output_tokens": 0,
       "total_input_tokens": 218,
       "total_output_tokens": 0,
-      "latency_ms": 0.323,
+      "latency_ms": 0.3,
       "stop_reason": "TOP_K_STATIC",
       "budget_violation": false
     },
@@ -5249,7 +5250,7 @@
       "judge_output_tokens": 0,
       "total_input_tokens": 220,
       "total_output_tokens": 0,
-      "latency_ms": 0.304,
+      "latency_ms": 0.303,
       "stop_reason": "TOP_K_STATIC",
       "budget_violation": false
     },
@@ -5290,7 +5291,7 @@
       "judge_output_tokens": 0,
       "total_input_tokens": 218,
       "total_output_tokens": 0,
-      "latency_ms": 0.277,
+      "latency_ms": 0.288,
       "stop_reason": "TOP_K_STATIC",
       "budget_violation": false
     },
@@ -5331,7 +5332,7 @@
       "judge_output_tokens": 0,
       "total_input_tokens": 219,
       "total_output_tokens": 0,
-      "latency_ms": 0.284,
+      "latency_ms": 0.286,
       "stop_reason": "TOP_K_STATIC",
       "budget_violation": false
     },
@@ -5371,7 +5372,7 @@
       "judge_output_tokens": 0,
       "total_input_tokens": 237,
       "total_output_tokens": 0,
-      "latency_ms": 0.482,
+      "latency_ms": 0.48,
       "stop_reason": "TOP_K_STATIC",
       "budget_violation": false
     },
@@ -5411,7 +5412,7 @@
       "judge_output_tokens": 0,
       "total_input_tokens": 236,
       "total_output_tokens": 0,
-      "latency_ms": 0.485,
+      "latency_ms": 0.47,
       "stop_reason": "TOP_K_STATIC",
       "budget_violation": false
     },
@@ -5451,7 +5452,7 @@
       "judge_output_tokens": 0,
       "total_input_tokens": 227,
       "total_output_tokens": 0,
-      "latency_ms": 0.461,
+      "latency_ms": 0.59,
       "stop_reason": "TOP_K_STATIC",
       "budget_violation": false
     },
@@ -5491,7 +5492,7 @@
       "judge_output_tokens": 0,
       "total_input_tokens": 225,
       "total_output_tokens": 0,
-      "latency_ms": 0.445,
+      "latency_ms": 0.549,
       "stop_reason": "TOP_K_STATIC",
       "budget_violation": false
     },
@@ -5531,7 +5532,7 @@
       "judge_output_tokens": 0,
       "total_input_tokens": 227,
       "total_output_tokens": 0,
-      "latency_ms": 0.489,
+      "latency_ms": 0.728,
       "stop_reason": "TOP_K_STATIC",
       "budget_violation": false
     },
@@ -5571,7 +5572,7 @@
       "judge_output_tokens": 0,
       "total_input_tokens": 227,
       "total_output_tokens": 0,
-      "latency_ms": 0.465,
+      "latency_ms": 0.622,
       "stop_reason": "TOP_K_STATIC",
       "budget_violation": false
     },
@@ -5610,7 +5611,7 @@
       "judge_output_tokens": 0,
       "total_input_tokens": 329,
       "total_output_tokens": 0,
-      "latency_ms": 0.521,
+      "latency_ms": 0.603,
       "stop_reason": "TOP_K_STATIC",
       "budget_violation": false
     },
@@ -5649,7 +5650,7 @@
       "judge_output_tokens": 0,
       "total_input_tokens": 324,
       "total_output_tokens": 0,
-      "latency_ms": 0.509,
+      "latency_ms": 0.565,
       "stop_reason": "TOP_K_STATIC",
       "budget_violation": false
     },
@@ -5690,7 +5691,7 @@
       "judge_output_tokens": 0,
       "total_input_tokens": 225,
       "total_output_tokens": 0,
-      "latency_ms": 0.493,
+      "latency_ms": 0.496,
       "stop_reason": "TOP_K_STATIC",
       "budget_violation": false
     },
@@ -5731,7 +5732,7 @@
       "judge_output_tokens": 0,
       "total_input_tokens": 223,
       "total_output_tokens": 0,
-      "latency_ms": 0.491,
+      "latency_ms": 0.477,
       "stop_reason": "TOP_K_STATIC",
       "budget_violation": false
     },
@@ -5771,7 +5772,7 @@
       "judge_output_tokens": 0,
       "total_input_tokens": 242,
       "total_output_tokens": 0,
-      "latency_ms": 0.637,
+      "latency_ms": 0.626,
       "stop_reason": "TOP_K_STATIC",
       "budget_violation": false
     },
@@ -5812,7 +5813,7 @@
       "judge_output_tokens": 0,
       "total_input_tokens": 200,
       "total_output_tokens": 0,
-      "latency_ms": 0.333,
+      "latency_ms": 0.291,
       "stop_reason": "TOP_K_STATIC",
       "budget_violation": false
     },
@@ -5852,7 +5853,7 @@
       "judge_output_tokens": 0,
       "total_input_tokens": 329,
       "total_output_tokens": 0,
-      "latency_ms": 0.643,
+      "latency_ms": 0.573,
       "stop_reason": "TOP_K_STATIC",
       "budget_violation": false
     },
@@ -5892,7 +5893,7 @@
       "judge_output_tokens": 0,
       "total_input_tokens": 244,
       "total_output_tokens": 0,
-      "latency_ms": 0.561,
+      "latency_ms": 0.478,
       "stop_reason": "TOP_K_STATIC",
       "budget_violation": false
     },
@@ -5932,7 +5933,7 @@
       "judge_output_tokens": 0,
       "total_input_tokens": 329,
       "total_output_tokens": 0,
-      "latency_ms": 0.635,
+      "latency_ms": 0.569,
       "stop_reason": "TOP_K_STATIC",
       "budget_violation": false
     },
@@ -5972,7 +5973,7 @@
       "judge_output_tokens": 0,
       "total_input_tokens": 104,
       "total_output_tokens": 0,
-      "latency_ms": 0.239,
+      "latency_ms": 0.253,
       "stop_reason": "TOP_K_STATIC",
       "budget_violation": false
     },
@@ -6012,7 +6013,7 @@
       "judge_output_tokens": 0,
       "total_input_tokens": 241,
       "total_output_tokens": 0,
-      "latency_ms": 0.553,
+      "latency_ms": 0.594,
       "stop_reason": "TOP_K_STATIC",
       "budget_violation": false
     },
@@ -6053,7 +6054,7 @@
       "judge_output_tokens": 0,
       "total_input_tokens": 219,
       "total_output_tokens": 0,
-      "latency_ms": 0.44,
+      "latency_ms": 0.498,
       "stop_reason": "TOP_K_STATIC",
       "budget_violation": false
     },
@@ -6094,7 +6095,7 @@
       "judge_output_tokens": 0,
       "total_input_tokens": 224,
       "total_output_tokens": 0,
-      "latency_ms": 0.256,
+      "latency_ms": 0.292,
       "stop_reason": "TOP_K_STATIC",
       "budget_violation": false
     },
@@ -6135,7 +6136,7 @@
       "judge_output_tokens": 0,
       "total_input_tokens": 228,
       "total_output_tokens": 0,
-      "latency_ms": 0.444,
+      "latency_ms": 0.499,
       "stop_reason": "TOP_K_STATIC",
       "budget_violation": false
     },
@@ -6175,7 +6176,7 @@
       "judge_output_tokens": 0,
       "total_input_tokens": 205,
       "total_output_tokens": 0,
-      "latency_ms": 0.366,
+      "latency_ms": 0.406,
       "stop_reason": "TOP_K_STATIC",
       "budget_violation": false
     },
@@ -6214,7 +6215,7 @@
       "judge_output_tokens": 0,
       "total_input_tokens": 319,
       "total_output_tokens": 0,
-      "latency_ms": 0.502,
+      "latency_ms": 0.54,
       "stop_reason": "TOP_K_STATIC",
       "budget_violation": false
     },
@@ -6235,8 +6236,8 @@
       "catastrophic_false_supported": false,
       "pulled_chunk_ids": [
         "LOG-08",
-        "RB-01",
-        "RB-99"
+        "LOG-09",
+        "RB-01"
       ],
       "required_chunk_ids": [
         "LOG-08",
@@ -6244,18 +6245,18 @@
         "RB-01"
       ],
       "pulled_count": 3,
-      "evidence_recall": 0.6667,
+      "evidence_recall": 1.0,
       "citation_validity": 1.0,
       "grounded": true,
       "ungrounded": false,
-      "context_chars": 587,
+      "context_chars": 366,
       "selector_input_tokens": 0,
       "selector_output_tokens": 0,
-      "judge_input_tokens": 242,
+      "judge_input_tokens": 173,
       "judge_output_tokens": 0,
-      "total_input_tokens": 242,
+      "total_input_tokens": 173,
       "total_output_tokens": 0,
-      "latency_ms": 0.354,
+      "latency_ms": 0.402,
       "stop_reason": "KEYWORD_TOP_K",
       "budget_violation": false
     },
@@ -6276,8 +6277,8 @@
       "catastrophic_false_supported": false,
       "pulled_chunk_ids": [
         "LOG-08",
-        "RB-01",
-        "RB-99"
+        "LOG-09",
+        "RB-01"
       ],
       "required_chunk_ids": [
         "LOG-08",
@@ -6285,18 +6286,18 @@
         "RB-01"
       ],
       "pulled_count": 3,
-      "evidence_recall": 0.6667,
+      "evidence_recall": 1.0,
       "citation_validity": 1.0,
       "grounded": true,
       "ungrounded": false,
-      "context_chars": 579,
+      "context_chars": 358,
       "selector_input_tokens": 0,
       "selector_output_tokens": 0,
-      "judge_input_tokens": 237,
+      "judge_input_tokens": 168,
       "judge_output_tokens": 0,
-      "total_input_tokens": 237,
+      "total_input_tokens": 168,
       "total_output_tokens": 0,
-      "latency_ms": 0.27,
+      "latency_ms": 0.304,
       "stop_reason": "KEYWORD_TOP_K",
       "budget_violation": false
     },
@@ -6317,8 +6318,8 @@
       "catastrophic_false_supported": false,
       "pulled_chunk_ids": [
         "LOG-08",
-        "RB-01",
-        "RB-99"
+        "LOG-10",
+        "RB-01"
       ],
       "required_chunk_ids": [
         "LOG-08",
@@ -6326,18 +6327,18 @@
         "RB-01"
       ],
       "pulled_count": 3,
-      "evidence_recall": 0.6667,
+      "evidence_recall": 1.0,
       "citation_validity": 1.0,
-      "grounded": false,
-      "ungrounded": true,
-      "context_chars": 414,
+      "grounded": true,
+      "ungrounded": false,
+      "context_chars": 261,
       "selector_input_tokens": 0,
       "selector_output_tokens": 0,
-      "judge_input_tokens": 186,
+      "judge_input_tokens": 138,
       "judge_output_tokens": 0,
-      "total_input_tokens": 186,
+      "total_input_tokens": 138,
       "total_output_tokens": 0,
-      "latency_ms": 0.185,
+      "latency_ms": 0.157,
       "stop_reason": "KEYWORD_TOP_K",
       "budget_violation": false
     },
@@ -6358,8 +6359,8 @@
       "catastrophic_false_supported": false,
       "pulled_chunk_ids": [
         "LOG-08",
-        "RB-01",
-        "RB-99"
+        "LOG-01",
+        "RB-01"
       ],
       "required_chunk_ids": [
         "LOG-08",
@@ -6370,14 +6371,14 @@
       "citation_validity": 1.0,
       "grounded": true,
       "ungrounded": false,
-      "context_chars": 392,
+      "context_chars": 557,
       "selector_input_tokens": 0,
       "selector_output_tokens": 0,
-      "judge_input_tokens": 171,
+      "judge_input_tokens": 222,
       "judge_output_tokens": 0,
-      "total_input_tokens": 171,
+      "total_input_tokens": 222,
       "total_output_tokens": 0,
-      "latency_ms": 0.214,
+      "latency_ms": 0.318,
       "stop_reason": "KEYWORD_TOP_K",
       "budget_violation": false
     },
@@ -6418,7 +6419,7 @@
       "judge_output_tokens": 0,
       "total_input_tokens": 145,
       "total_output_tokens": 0,
-      "latency_ms": 0.236,
+      "latency_ms": 0.252,
       "stop_reason": "KEYWORD_TOP_K",
       "budget_violation": false
     },
@@ -6459,7 +6460,7 @@
       "judge_output_tokens": 0,
       "total_input_tokens": 144,
       "total_output_tokens": 0,
-      "latency_ms": 0.207,
+      "latency_ms": 0.261,
       "stop_reason": "KEYWORD_TOP_K",
       "budget_violation": false
     },
@@ -6500,7 +6501,7 @@
       "judge_output_tokens": 0,
       "total_input_tokens": 143,
       "total_output_tokens": 0,
-      "latency_ms": 0.199,
+      "latency_ms": 0.243,
       "stop_reason": "KEYWORD_TOP_K",
       "budget_violation": false
     },
@@ -6521,8 +6522,8 @@
       "catastrophic_false_supported": false,
       "pulled_chunk_ids": [
         "LOG-08",
-        "RB-01",
-        "RB-99"
+        "LOG-01",
+        "RB-01"
       ],
       "required_chunk_ids": [
         "LOG-08",
@@ -6534,14 +6535,14 @@
       "citation_validity": 1.0,
       "grounded": false,
       "ungrounded": true,
-      "context_chars": 356,
+      "context_chars": 525,
       "selector_input_tokens": 0,
       "selector_output_tokens": 0,
-      "judge_input_tokens": 168,
+      "judge_input_tokens": 220,
       "judge_output_tokens": 0,
-      "total_input_tokens": 168,
+      "total_input_tokens": 220,
       "total_output_tokens": 0,
-      "latency_ms": 0.173,
+      "latency_ms": 0.31,
       "stop_reason": "KEYWORD_TOP_K",
       "budget_violation": false
     },
@@ -6556,14 +6557,14 @@
       "evidence_absent": false,
       "agentic_disadvantage": false,
       "expected": "CONTRADICTED",
-      "predicted": "NEED_MORE_EVIDENCE",
-      "correct": false,
+      "predicted": "CONTRADICTED",
+      "correct": true,
       "false_supported": false,
       "catastrophic_false_supported": false,
       "pulled_chunk_ids": [
         "LOG-08",
-        "RB-01",
-        "RB-99"
+        "LOG-01",
+        "RB-01"
       ],
       "required_chunk_ids": [
         "LOG-08",
@@ -6573,16 +6574,16 @@
       "pulled_count": 3,
       "evidence_recall": 0.6667,
       "citation_validity": 1.0,
-      "grounded": true,
-      "ungrounded": false,
-      "context_chars": 418,
+      "grounded": false,
+      "ungrounded": true,
+      "context_chars": 557,
       "selector_input_tokens": 0,
       "selector_output_tokens": 0,
-      "judge_input_tokens": 187,
+      "judge_input_tokens": 230,
       "judge_output_tokens": 0,
-      "total_input_tokens": 187,
+      "total_input_tokens": 230,
       "total_output_tokens": 0,
-      "latency_ms": 0.22,
+      "latency_ms": 0.126,
       "stop_reason": "KEYWORD_TOP_K",
       "budget_violation": false
     },
@@ -6603,8 +6604,8 @@
       "catastrophic_false_supported": false,
       "pulled_chunk_ids": [
         "LOG-08",
-        "RB-01",
-        "RB-99"
+        "LOG-01",
+        "RB-01"
       ],
       "required_chunk_ids": [
         "LOG-08",
@@ -6615,14 +6616,14 @@
       "citation_validity": 1.0,
       "grounded": true,
       "ungrounded": false,
-      "context_chars": 383,
+      "context_chars": 553,
       "selector_input_tokens": 0,
       "selector_output_tokens": 0,
-      "judge_input_tokens": 173,
+      "judge_input_tokens": 226,
       "judge_output_tokens": 0,
-      "total_input_tokens": 173,
+      "total_input_tokens": 226,
       "total_output_tokens": 0,
-      "latency_ms": 0.22,
+      "latency_ms": 0.309,
       "stop_reason": "KEYWORD_TOP_K",
       "budget_violation": false
     },
@@ -6643,8 +6644,8 @@
       "catastrophic_false_supported": false,
       "pulled_chunk_ids": [
         "LOG-08",
-        "RB-01",
-        "RB-99"
+        "LOG-01",
+        "RB-01"
       ],
       "required_chunk_ids": [
         "LOG-08",
@@ -6655,14 +6656,14 @@
       "citation_validity": 1.0,
       "grounded": true,
       "ungrounded": false,
-      "context_chars": 501,
+      "context_chars": 630,
       "selector_input_tokens": 0,
       "selector_output_tokens": 0,
-      "judge_input_tokens": 218,
+      "judge_input_tokens": 259,
       "judge_output_tokens": 0,
-      "total_input_tokens": 218,
+      "total_input_tokens": 259,
       "total_output_tokens": 0,
-      "latency_ms": 0.403,
+      "latency_ms": 0.478,
       "stop_reason": "KEYWORD_TOP_K",
       "budget_violation": false
     },
@@ -6683,8 +6684,8 @@
       "catastrophic_false_supported": false,
       "pulled_chunk_ids": [
         "LOG-08",
-        "RB-01",
-        "RB-99"
+        "LOG-01",
+        "RB-01"
       ],
       "required_chunk_ids": [
         "LOG-08",
@@ -6695,14 +6696,14 @@
       "citation_validity": 1.0,
       "grounded": true,
       "ungrounded": false,
-      "context_chars": 501,
+      "context_chars": 630,
       "selector_input_tokens": 0,
       "selector_output_tokens": 0,
-      "judge_input_tokens": 218,
+      "judge_input_tokens": 259,
       "judge_output_tokens": 0,
-      "total_input_tokens": 218,
+      "total_input_tokens": 259,
       "total_output_tokens": 0,
-      "latency_ms": 0.385,
+      "latency_ms": 0.487,
       "stop_reason": "KEYWORD_TOP_K",
       "budget_violation": false
     },
@@ -6723,8 +6724,8 @@
       "catastrophic_false_supported": false,
       "pulled_chunk_ids": [
         "LOG-08",
-        "RB-01",
-        "RB-99"
+        "LOG-01",
+        "RB-01"
       ],
       "required_chunk_ids": [
         "LOG-08",
@@ -6736,14 +6737,14 @@
       "citation_validity": 1.0,
       "grounded": false,
       "ungrounded": true,
-      "context_chars": 376,
+      "context_chars": 543,
       "selector_input_tokens": 0,
       "selector_output_tokens": 0,
-      "judge_input_tokens": 180,
+      "judge_input_tokens": 232,
       "judge_output_tokens": 0,
-      "total_input_tokens": 180,
+      "total_input_tokens": 232,
       "total_output_tokens": 0,
-      "latency_ms": 0.248,
+      "latency_ms": 0.313,
       "stop_reason": "KEYWORD_TOP_K",
       "budget_violation": false
     },
@@ -6764,8 +6765,8 @@
       "catastrophic_false_supported": false,
       "pulled_chunk_ids": [
         "LOG-08",
-        "RB-01",
-        "RB-99"
+        "LOG-01",
+        "RB-01"
       ],
       "required_chunk_ids": [
         "LOG-08",
@@ -6776,14 +6777,14 @@
       "citation_validity": 1.0,
       "grounded": true,
       "ungrounded": false,
-      "context_chars": 395,
+      "context_chars": 564,
       "selector_input_tokens": 0,
       "selector_output_tokens": 0,
-      "judge_input_tokens": 177,
+      "judge_input_tokens": 230,
       "judge_output_tokens": 0,
-      "total_input_tokens": 177,
+      "total_input_tokens": 230,
       "total_output_tokens": 0,
-      "latency_ms": 0.228,
+      "latency_ms": 0.345,
       "stop_reason": "KEYWORD_TOP_K",
       "budget_violation": false
     },
@@ -6804,8 +6805,8 @@
       "catastrophic_false_supported": false,
       "pulled_chunk_ids": [
         "LOG-08",
-        "RB-01",
-        "RB-99"
+        "LOG-01",
+        "RB-01"
       ],
       "required_chunk_ids": [
         "LOG-08",
@@ -6816,14 +6817,14 @@
       "citation_validity": 1.0,
       "grounded": true,
       "ungrounded": false,
-      "context_chars": 395,
+      "context_chars": 564,
       "selector_input_tokens": 0,
       "selector_output_tokens": 0,
-      "judge_input_tokens": 177,
+      "judge_input_tokens": 230,
       "judge_output_tokens": 0,
-      "total_input_tokens": 177,
+      "total_input_tokens": 230,
       "total_output_tokens": 0,
-      "latency_ms": 0.232,
+      "latency_ms": 0.307,
       "stop_reason": "KEYWORD_TOP_K",
       "budget_violation": false
     },
@@ -6844,8 +6845,8 @@
       "catastrophic_false_supported": false,
       "pulled_chunk_ids": [
         "LOG-08",
-        "RB-01",
-        "RB-99"
+        "LOG-01",
+        "RB-01"
       ],
       "required_chunk_ids": [
         "LOG-08",
@@ -6857,14 +6858,14 @@
       "citation_validity": 1.0,
       "grounded": true,
       "ungrounded": false,
-      "context_chars": 406,
+      "context_chars": 559,
       "selector_input_tokens": 0,
       "selector_output_tokens": 0,
-      "judge_input_tokens": 188,
+      "judge_input_tokens": 236,
       "judge_output_tokens": 0,
-      "total_input_tokens": 188,
+      "total_input_tokens": 236,
       "total_output_tokens": 0,
-      "latency_ms": 0.238,
+      "latency_ms": 0.456,
       "stop_reason": "KEYWORD_TOP_K",
       "budget_violation": false
     },
@@ -6885,8 +6886,8 @@
       "catastrophic_false_supported": false,
       "pulled_chunk_ids": [
         "LOG-08",
-        "RB-01",
-        "RB-99"
+        "LOG-01",
+        "RB-01"
       ],
       "required_chunk_ids": [
         "LOG-08",
@@ -6898,14 +6899,14 @@
       "citation_validity": 1.0,
       "grounded": true,
       "ungrounded": false,
-      "context_chars": 404,
+      "context_chars": 558,
       "selector_input_tokens": 0,
       "selector_output_tokens": 0,
-      "judge_input_tokens": 187,
+      "judge_input_tokens": 235,
       "judge_output_tokens": 0,
-      "total_input_tokens": 187,
+      "total_input_tokens": 235,
       "total_output_tokens": 0,
-      "latency_ms": 0.254,
+      "latency_ms": 0.53,
       "stop_reason": "KEYWORD_TOP_K",
       "budget_violation": false
     },
@@ -6926,8 +6927,8 @@
       "catastrophic_false_supported": false,
       "pulled_chunk_ids": [
         "LOG-08",
-        "RB-01",
-        "RB-99"
+        "LOG-01",
+        "RB-01"
       ],
       "required_chunk_ids": [
         "LOG-08",
@@ -6939,14 +6940,14 @@
       "citation_validity": 1.0,
       "grounded": true,
       "ungrounded": false,
-      "context_chars": 400,
+      "context_chars": 556,
       "selector_input_tokens": 0,
       "selector_output_tokens": 0,
-      "judge_input_tokens": 184,
+      "judge_input_tokens": 233,
       "judge_output_tokens": 0,
-      "total_input_tokens": 184,
+      "total_input_tokens": 233,
       "total_output_tokens": 0,
-      "latency_ms": 0.231,
+      "latency_ms": 0.491,
       "stop_reason": "KEYWORD_TOP_K",
       "budget_violation": false
     },
@@ -6967,8 +6968,8 @@
       "catastrophic_false_supported": false,
       "pulled_chunk_ids": [
         "LOG-08",
-        "RB-01",
-        "RB-99"
+        "LOG-01",
+        "RB-01"
       ],
       "required_chunk_ids": [
         "LOG-08",
@@ -6980,14 +6981,14 @@
       "citation_validity": 1.0,
       "grounded": false,
       "ungrounded": true,
-      "context_chars": 353,
+      "context_chars": 522,
       "selector_input_tokens": 0,
       "selector_output_tokens": 0,
-      "judge_input_tokens": 170,
+      "judge_input_tokens": 223,
       "judge_output_tokens": 0,
-      "total_input_tokens": 170,
+      "total_input_tokens": 223,
       "total_output_tokens": 0,
-      "latency_ms": 0.2,
+      "latency_ms": 0.409,
       "stop_reason": "KEYWORD_TOP_K",
       "budget_violation": false
     },
@@ -7008,8 +7009,8 @@
       "catastrophic_false_supported": false,
       "pulled_chunk_ids": [
         "LOG-08",
-        "RB-01",
-        "RB-99"
+        "LOG-01",
+        "RB-01"
       ],
       "required_chunk_ids": [
         "LOG-08",
@@ -7020,14 +7021,14 @@
       "citation_validity": 1.0,
       "grounded": true,
       "ungrounded": false,
-      "context_chars": 358,
+      "context_chars": 545,
       "selector_input_tokens": 0,
       "selector_output_tokens": 0,
-      "judge_input_tokens": 173,
+      "judge_input_tokens": 232,
       "judge_output_tokens": 0,
-      "total_input_tokens": 173,
+      "total_input_tokens": 232,
       "total_output_tokens": 0,
-      "latency_ms": 0.152,
+      "latency_ms": 0.177,
       "stop_reason": "KEYWORD_TOP_K",
       "budget_violation": false
     },
@@ -7048,8 +7049,8 @@
       "catastrophic_false_supported": false,
       "pulled_chunk_ids": [
         "LOG-08",
-        "RB-01",
-        "RB-99"
+        "LOG-01",
+        "RB-01"
       ],
       "required_chunk_ids": [
         "LOG-08",
@@ -7060,14 +7061,14 @@
       "citation_validity": 1.0,
       "grounded": true,
       "ungrounded": false,
-      "context_chars": 379,
+      "context_chars": 560,
       "selector_input_tokens": 0,
       "selector_output_tokens": 0,
-      "judge_input_tokens": 175,
+      "judge_input_tokens": 231,
       "judge_output_tokens": 0,
-      "total_input_tokens": 175,
+      "total_input_tokens": 231,
       "total_output_tokens": 0,
-      "latency_ms": 0.15,
+      "latency_ms": 0.19,
       "stop_reason": "KEYWORD_TOP_K",
       "budget_violation": false
     },
@@ -7088,8 +7089,8 @@
       "catastrophic_false_supported": false,
       "pulled_chunk_ids": [
         "LOG-08",
-        "RB-01",
-        "RB-99"
+        "LOG-01",
+        "RB-01"
       ],
       "required_chunk_ids": [
         "LOG-08",
@@ -7100,14 +7101,14 @@
       "citation_validity": 1.0,
       "grounded": true,
       "ungrounded": false,
-      "context_chars": 379,
+      "context_chars": 560,
       "selector_input_tokens": 0,
       "selector_output_tokens": 0,
-      "judge_input_tokens": 173,
+      "judge_input_tokens": 230,
       "judge_output_tokens": 0,
-      "total_input_tokens": 173,
+      "total_input_tokens": 230,
       "total_output_tokens": 0,
-      "latency_ms": 0.149,
+      "latency_ms": 0.141,
       "stop_reason": "KEYWORD_TOP_K",
       "budget_violation": false
     },
@@ -7128,8 +7129,8 @@
       "catastrophic_false_supported": false,
       "pulled_chunk_ids": [
         "LOG-08",
-        "RB-01",
-        "RB-99"
+        "LOG-01",
+        "RB-01"
       ],
       "required_chunk_ids": [
         "LOG-08",
@@ -7140,14 +7141,14 @@
       "citation_validity": 1.0,
       "grounded": true,
       "ungrounded": false,
-      "context_chars": 379,
+      "context_chars": 560,
       "selector_input_tokens": 0,
       "selector_output_tokens": 0,
-      "judge_input_tokens": 171,
+      "judge_input_tokens": 228,
       "judge_output_tokens": 0,
-      "total_input_tokens": 171,
+      "total_input_tokens": 228,
       "total_output_tokens": 0,
-      "latency_ms": 0.131,
+      "latency_ms": 0.135,
       "stop_reason": "KEYWORD_TOP_K",
       "budget_violation": false
     },
@@ -7168,8 +7169,8 @@
       "catastrophic_false_supported": false,
       "pulled_chunk_ids": [
         "LOG-08",
-        "RB-01",
-        "RB-99"
+        "LOG-01",
+        "RB-01"
       ],
       "required_chunk_ids": [
         "LOG-08",
@@ -7180,14 +7181,14 @@
       "citation_validity": 1.0,
       "grounded": true,
       "ungrounded": false,
-      "context_chars": 453,
+      "context_chars": 602,
       "selector_input_tokens": 0,
       "selector_output_tokens": 0,
-      "judge_input_tokens": 203,
+      "judge_input_tokens": 249,
       "judge_output_tokens": 0,
-      "total_input_tokens": 203,
+      "total_input_tokens": 249,
       "total_output_tokens": 0,
-      "latency_ms": 0.276,
+      "latency_ms": 0.468,
       "stop_reason": "KEYWORD_TOP_K",
       "budget_violation": false
     },
@@ -7208,8 +7209,8 @@
       "catastrophic_false_supported": false,
       "pulled_chunk_ids": [
         "LOG-08",
-        "RB-01",
-        "RB-99"
+        "LOG-01",
+        "RB-01"
       ],
       "required_chunk_ids": [
         "LOG-08",
@@ -7220,14 +7221,14 @@
       "citation_validity": 1.0,
       "grounded": true,
       "ungrounded": false,
-      "context_chars": 401,
+      "context_chars": 560,
       "selector_input_tokens": 0,
       "selector_output_tokens": 0,
-      "judge_input_tokens": 180,
+      "judge_input_tokens": 230,
       "judge_output_tokens": 0,
-      "total_input_tokens": 180,
+      "total_input_tokens": 230,
       "total_output_tokens": 0,
-      "latency_ms": 0.193,
+      "latency_ms": 0.326,
       "stop_reason": "KEYWORD_TOP_K",
       "budget_violation": false
     },
@@ -7248,8 +7249,8 @@
       "catastrophic_false_supported": false,
       "pulled_chunk_ids": [
         "LOG-08",
-        "RB-01",
-        "RB-99"
+        "LOG-01",
+        "RB-01"
       ],
       "required_chunk_ids": [
         "LOG-08",
@@ -7260,14 +7261,14 @@
       "citation_validity": 1.0,
       "grounded": true,
       "ungrounded": false,
-      "context_chars": 397,
+      "context_chars": 558,
       "selector_input_tokens": 0,
       "selector_output_tokens": 0,
-      "judge_input_tokens": 178,
+      "judge_input_tokens": 228,
       "judge_output_tokens": 0,
-      "total_input_tokens": 178,
+      "total_input_tokens": 228,
       "total_output_tokens": 0,
-      "latency_ms": 0.181,
+      "latency_ms": 0.299,
       "stop_reason": "KEYWORD_TOP_K",
       "budget_violation": false
     },
@@ -7288,8 +7289,8 @@
       "catastrophic_false_supported": false,
       "pulled_chunk_ids": [
         "LOG-08",
-        "RB-01",
-        "RB-99"
+        "LOG-01",
+        "RB-01"
       ],
       "required_chunk_ids": [
         "LOG-08",
@@ -7301,14 +7302,14 @@
       "citation_validity": 1.0,
       "grounded": true,
       "ungrounded": false,
-      "context_chars": 288,
+      "context_chars": 495,
       "selector_input_tokens": 0,
       "selector_output_tokens": 0,
-      "judge_input_tokens": 144,
+      "judge_input_tokens": 209,
       "judge_output_tokens": 0,
-      "total_input_tokens": 144,
+      "total_input_tokens": 209,
       "total_output_tokens": 0,
-      "latency_ms": 0.157,
+      "latency_ms": 0.298,
       "stop_reason": "KEYWORD_TOP_K",
       "budget_violation": false
     },
@@ -7329,8 +7330,8 @@
       "catastrophic_false_supported": false,
       "pulled_chunk_ids": [
         "LOG-08",
-        "RB-01",
-        "RB-99"
+        "LOG-01",
+        "RB-01"
       ],
       "required_chunk_ids": [
         "LOG-08",
@@ -7342,14 +7343,14 @@
       "citation_validity": 1.0,
       "grounded": true,
       "ungrounded": false,
-      "context_chars": 288,
+      "context_chars": 495,
       "selector_input_tokens": 0,
       "selector_output_tokens": 0,
-      "judge_input_tokens": 143,
+      "judge_input_tokens": 208,
       "judge_output_tokens": 0,
-      "total_input_tokens": 143,
+      "total_input_tokens": 208,
       "total_output_tokens": 0,
-      "latency_ms": 0.151,
+      "latency_ms": 0.289,
       "stop_reason": "KEYWORD_TOP_K",
       "budget_violation": false
     },
@@ -7370,8 +7371,8 @@
       "catastrophic_false_supported": false,
       "pulled_chunk_ids": [
         "LOG-08",
-        "RB-01",
-        "RB-99"
+        "LOG-01",
+        "RB-01"
       ],
       "required_chunk_ids": [
         "LOG-08",
@@ -7383,14 +7384,14 @@
       "citation_validity": 1.0,
       "grounded": true,
       "ungrounded": false,
-      "context_chars": 288,
+      "context_chars": 495,
       "selector_input_tokens": 0,
       "selector_output_tokens": 0,
-      "judge_input_tokens": 143,
+      "judge_input_tokens": 208,
       "judge_output_tokens": 0,
-      "total_input_tokens": 143,
+      "total_input_tokens": 208,
       "total_output_tokens": 0,
-      "latency_ms": 0.157,
+      "latency_ms": 0.282,
       "stop_reason": "KEYWORD_TOP_K",
       "budget_violation": false
     },
@@ -7411,8 +7412,8 @@
       "catastrophic_false_supported": false,
       "pulled_chunk_ids": [
         "LOG-08",
-        "RB-01",
-        "RB-99"
+        "LOG-01",
+        "RB-01"
       ],
       "required_chunk_ids": [
         "LOG-08",
@@ -7424,14 +7425,14 @@
       "citation_validity": 1.0,
       "grounded": true,
       "ungrounded": false,
-      "context_chars": 298,
+      "context_chars": 500,
       "selector_input_tokens": 0,
       "selector_output_tokens": 0,
-      "judge_input_tokens": 149,
+      "judge_input_tokens": 212,
       "judge_output_tokens": 0,
-      "total_input_tokens": 149,
+      "total_input_tokens": 212,
       "total_output_tokens": 0,
-      "latency_ms": 0.159,
+      "latency_ms": 0.299,
       "stop_reason": "KEYWORD_TOP_K",
       "budget_violation": false
     },
@@ -7452,8 +7453,8 @@
       "catastrophic_false_supported": false,
       "pulled_chunk_ids": [
         "LOG-08",
-        "RB-01",
-        "RB-99"
+        "LOG-01",
+        "RB-01"
       ],
       "required_chunk_ids": [
         "LOG-08",
@@ -7464,14 +7465,14 @@
       "citation_validity": 1.0,
       "grounded": true,
       "ungrounded": false,
-      "context_chars": 476,
+      "context_chars": 632,
       "selector_input_tokens": 0,
       "selector_output_tokens": 0,
-      "judge_input_tokens": 209,
+      "judge_input_tokens": 258,
       "judge_output_tokens": 0,
-      "total_input_tokens": 209,
+      "total_input_tokens": 258,
       "total_output_tokens": 0,
-      "latency_ms": 0.171,
+      "latency_ms": 0.125,
       "stop_reason": "KEYWORD_TOP_K",
       "budget_violation": false
     },
@@ -7492,8 +7493,8 @@
       "catastrophic_false_supported": false,
       "pulled_chunk_ids": [
         "LOG-08",
-        "RB-01",
-        "RB-99"
+        "LOG-01",
+        "RB-01"
       ],
       "required_chunk_ids": [
         "LOG-08",
@@ -7504,14 +7505,14 @@
       "citation_validity": 1.0,
       "grounded": true,
       "ungrounded": false,
-      "context_chars": 476,
+      "context_chars": 632,
       "selector_input_tokens": 0,
       "selector_output_tokens": 0,
-      "judge_input_tokens": 209,
+      "judge_input_tokens": 257,
       "judge_output_tokens": 0,
-      "total_input_tokens": 209,
+      "total_input_tokens": 257,
       "total_output_tokens": 0,
-      "latency_ms": 0.149,
+      "latency_ms": 0.118,
       "stop_reason": "KEYWORD_TOP_K",
       "budget_violation": false
     },
@@ -7532,8 +7533,8 @@
       "catastrophic_false_supported": false,
       "pulled_chunk_ids": [
         "LOG-08",
-        "RB-01",
-        "RB-99"
+        "LOG-01",
+        "RB-01"
       ],
       "required_chunk_ids": [
         "LOG-08",
@@ -7544,14 +7545,14 @@
       "citation_validity": 1.0,
       "grounded": true,
       "ungrounded": false,
-      "context_chars": 453,
+      "context_chars": 597,
       "selector_input_tokens": 0,
       "selector_output_tokens": 0,
-      "judge_input_tokens": 203,
+      "judge_input_tokens": 248,
       "judge_output_tokens": 0,
-      "total_input_tokens": 203,
+      "total_input_tokens": 248,
       "total_output_tokens": 0,
-      "latency_ms": 0.287,
+      "latency_ms": 0.426,
       "stop_reason": "KEYWORD_TOP_K",
       "budget_violation": false
     },
@@ -7572,8 +7573,8 @@
       "catastrophic_false_supported": false,
       "pulled_chunk_ids": [
         "LOG-08",
-        "RB-01",
-        "RB-99"
+        "LOG-01",
+        "RB-01"
       ],
       "required_chunk_ids": [
         "LOG-08",
@@ -7584,14 +7585,14 @@
       "citation_validity": 1.0,
       "grounded": true,
       "ungrounded": false,
-      "context_chars": 449,
+      "context_chars": 595,
       "selector_input_tokens": 0,
       "selector_output_tokens": 0,
-      "judge_input_tokens": 201,
+      "judge_input_tokens": 246,
       "judge_output_tokens": 0,
-      "total_input_tokens": 201,
+      "total_input_tokens": 246,
       "total_output_tokens": 0,
-      "latency_ms": 0.267,
+      "latency_ms": 0.434,
       "stop_reason": "KEYWORD_TOP_K",
       "budget_violation": false
     },
@@ -7606,14 +7607,14 @@
       "evidence_absent": false,
       "agentic_disadvantage": false,
       "expected": "CONTRADICTED",
-      "predicted": "NEED_MORE_EVIDENCE",
-      "correct": false,
+      "predicted": "CONTRADICTED",
+      "correct": true,
       "false_supported": false,
       "catastrophic_false_supported": false,
       "pulled_chunk_ids": [
         "LOG-08",
-        "RB-01",
-        "RB-99"
+        "LOG-01",
+        "RB-01"
       ],
       "required_chunk_ids": [
         "LOG-08",
@@ -7623,16 +7624,16 @@
       "pulled_count": 3,
       "evidence_recall": 0.6667,
       "citation_validity": 1.0,
-      "grounded": true,
-      "ungrounded": false,
-      "context_chars": 297,
+      "grounded": false,
+      "ungrounded": true,
+      "context_chars": 505,
       "selector_input_tokens": 0,
       "selector_output_tokens": 0,
-      "judge_input_tokens": 153,
+      "judge_input_tokens": 218,
       "judge_output_tokens": 0,
-      "total_input_tokens": 153,
+      "total_input_tokens": 218,
       "total_output_tokens": 0,
-      "latency_ms": 0.166,
+      "latency_ms": 0.118,
       "stop_reason": "KEYWORD_TOP_K",
       "budget_violation": false
     },
@@ -7647,14 +7648,14 @@
       "evidence_absent": false,
       "agentic_disadvantage": false,
       "expected": "CONTRADICTED",
-      "predicted": "NEED_MORE_EVIDENCE",
-      "correct": false,
+      "predicted": "CONTRADICTED",
+      "correct": true,
       "false_supported": false,
       "catastrophic_false_supported": false,
       "pulled_chunk_ids": [
         "LOG-08",
-        "RB-01",
-        "RB-99"
+        "LOG-01",
+        "RB-01"
       ],
       "required_chunk_ids": [
         "LOG-08",
@@ -7664,16 +7665,16 @@
       "pulled_count": 3,
       "evidence_recall": 0.6667,
       "citation_validity": 1.0,
-      "grounded": true,
-      "ungrounded": false,
-      "context_chars": 297,
+      "grounded": false,
+      "ungrounded": true,
+      "context_chars": 505,
       "selector_input_tokens": 0,
       "selector_output_tokens": 0,
-      "judge_input_tokens": 155,
+      "judge_input_tokens": 220,
       "judge_output_tokens": 0,
-      "total_input_tokens": 155,
+      "total_input_tokens": 220,
       "total_output_tokens": 0,
-      "latency_ms": 0.163,
+      "latency_ms": 0.109,
       "stop_reason": "KEYWORD_TOP_K",
       "budget_violation": false
     },
@@ -7688,14 +7689,14 @@
       "evidence_absent": false,
       "agentic_disadvantage": false,
       "expected": "CONTRADICTED",
-      "predicted": "NEED_MORE_EVIDENCE",
-      "correct": false,
+      "predicted": "CONTRADICTED",
+      "correct": true,
       "false_supported": false,
       "catastrophic_false_supported": false,
       "pulled_chunk_ids": [
         "LOG-08",
-        "RB-01",
-        "RB-99"
+        "LOG-01",
+        "RB-01"
       ],
       "required_chunk_ids": [
         "LOG-08",
@@ -7705,16 +7706,16 @@
       "pulled_count": 3,
       "evidence_recall": 0.6667,
       "citation_validity": 1.0,
-      "grounded": true,
-      "ungrounded": false,
-      "context_chars": 297,
+      "grounded": false,
+      "ungrounded": true,
+      "context_chars": 505,
       "selector_input_tokens": 0,
       "selector_output_tokens": 0,
-      "judge_input_tokens": 153,
+      "judge_input_tokens": 218,
       "judge_output_tokens": 0,
-      "total_input_tokens": 153,
+      "total_input_tokens": 218,
       "total_output_tokens": 0,
-      "latency_ms": 0.158,
+      "latency_ms": 0.104,
       "stop_reason": "KEYWORD_TOP_K",
       "budget_violation": false
     },
@@ -7729,14 +7730,14 @@
       "evidence_absent": false,
       "agentic_disadvantage": false,
       "expected": "CONTRADICTED",
-      "predicted": "NEED_MORE_EVIDENCE",
-      "correct": false,
+      "predicted": "CONTRADICTED",
+      "correct": true,
       "false_supported": false,
       "catastrophic_false_supported": false,
       "pulled_chunk_ids": [
         "LOG-08",
-        "RB-01",
-        "RB-99"
+        "LOG-01",
+        "RB-01"
       ],
       "required_chunk_ids": [
         "LOG-08",
@@ -7746,16 +7747,16 @@
       "pulled_count": 3,
       "evidence_recall": 0.6667,
       "citation_validity": 1.0,
-      "grounded": true,
-      "ungrounded": false,
-      "context_chars": 297,
+      "grounded": false,
+      "ungrounded": true,
+      "context_chars": 505,
       "selector_input_tokens": 0,
       "selector_output_tokens": 0,
-      "judge_input_tokens": 154,
+      "judge_input_tokens": 219,
       "judge_output_tokens": 0,
-      "total_input_tokens": 154,
+      "total_input_tokens": 219,
       "total_output_tokens": 0,
-      "latency_ms": 0.159,
+      "latency_ms": 0.101,
       "stop_reason": "KEYWORD_TOP_K",
       "budget_violation": false
     },
@@ -7776,8 +7777,8 @@
       "catastrophic_false_supported": false,
       "pulled_chunk_ids": [
         "LOG-08",
-        "RB-01",
-        "RB-99"
+        "LOG-01",
+        "RB-01"
       ],
       "required_chunk_ids": [
         "LOG-08",
@@ -7788,14 +7789,14 @@
       "citation_validity": 1.0,
       "grounded": true,
       "ungrounded": false,
-      "context_chars": 402,
+      "context_chars": 563,
       "selector_input_tokens": 0,
       "selector_output_tokens": 0,
-      "judge_input_tokens": 187,
+      "judge_input_tokens": 237,
       "judge_output_tokens": 0,
-      "total_input_tokens": 187,
+      "total_input_tokens": 237,
       "total_output_tokens": 0,
-      "latency_ms": 0.182,
+      "latency_ms": 0.31,
       "stop_reason": "KEYWORD_TOP_K",
       "budget_violation": false
     },
@@ -7816,8 +7817,8 @@
       "catastrophic_false_supported": false,
       "pulled_chunk_ids": [
         "LOG-08",
-        "RB-01",
-        "RB-99"
+        "LOG-01",
+        "RB-01"
       ],
       "required_chunk_ids": [
         "LOG-08",
@@ -7828,14 +7829,14 @@
       "citation_validity": 1.0,
       "grounded": true,
       "ungrounded": false,
-      "context_chars": 400,
+      "context_chars": 562,
       "selector_input_tokens": 0,
       "selector_output_tokens": 0,
-      "judge_input_tokens": 185,
+      "judge_input_tokens": 236,
       "judge_output_tokens": 0,
-      "total_input_tokens": 185,
+      "total_input_tokens": 236,
       "total_output_tokens": 0,
-      "latency_ms": 0.184,
+      "latency_ms": 0.303,
       "stop_reason": "KEYWORD_TOP_K",
       "budget_violation": false
     },
@@ -7856,8 +7857,8 @@
       "catastrophic_false_supported": false,
       "pulled_chunk_ids": [
         "LOG-08",
-        "RB-01",
-        "RB-99"
+        "LOG-01",
+        "RB-01"
       ],
       "required_chunk_ids": [
         "LOG-08",
@@ -7868,14 +7869,14 @@
       "citation_validity": 1.0,
       "grounded": true,
       "ungrounded": false,
-      "context_chars": 417,
+      "context_chars": 581,
       "selector_input_tokens": 0,
       "selector_output_tokens": 0,
-      "judge_input_tokens": 175,
+      "judge_input_tokens": 227,
       "judge_output_tokens": 0,
-      "total_input_tokens": 175,
+      "total_input_tokens": 227,
       "total_output_tokens": 0,
-      "latency_ms": 0.195,
+      "latency_ms": 0.344,
       "stop_reason": "KEYWORD_TOP_K",
       "budget_violation": false
     },
@@ -7896,8 +7897,8 @@
       "catastrophic_false_supported": false,
       "pulled_chunk_ids": [
         "LOG-08",
-        "RB-01",
-        "RB-99"
+        "LOG-01",
+        "RB-01"
       ],
       "required_chunk_ids": [
         "LOG-08",
@@ -7908,14 +7909,14 @@
       "citation_validity": 1.0,
       "grounded": true,
       "ungrounded": false,
-      "context_chars": 413,
+      "context_chars": 579,
       "selector_input_tokens": 0,
       "selector_output_tokens": 0,
-      "judge_input_tokens": 173,
+      "judge_input_tokens": 225,
       "judge_output_tokens": 0,
-      "total_input_tokens": 173,
+      "total_input_tokens": 225,
       "total_output_tokens": 0,
-      "latency_ms": 0.187,
+      "latency_ms": 0.323,
       "stop_reason": "KEYWORD_TOP_K",
       "budget_violation": false
     },
@@ -7936,8 +7937,8 @@
       "catastrophic_false_supported": false,
       "pulled_chunk_ids": [
         "LOG-08",
-        "RB-01",
-        "RB-99"
+        "LOG-01",
+        "RB-01"
       ],
       "required_chunk_ids": [
         "LOG-08",
@@ -7948,14 +7949,14 @@
       "citation_validity": 1.0,
       "grounded": true,
       "ungrounded": false,
-      "context_chars": 417,
+      "context_chars": 581,
       "selector_input_tokens": 0,
       "selector_output_tokens": 0,
-      "judge_input_tokens": 175,
+      "judge_input_tokens": 227,
       "judge_output_tokens": 0,
-      "total_input_tokens": 175,
+      "total_input_tokens": 227,
       "total_output_tokens": 0,
-      "latency_ms": 0.186,
+      "latency_ms": 0.32,
       "stop_reason": "KEYWORD_TOP_K",
       "budget_violation": false
     },
@@ -7976,8 +7977,8 @@
       "catastrophic_false_supported": false,
       "pulled_chunk_ids": [
         "LOG-08",
-        "RB-01",
-        "RB-99"
+        "LOG-01",
+        "RB-01"
       ],
       "required_chunk_ids": [
         "LOG-08",
@@ -7988,14 +7989,14 @@
       "citation_validity": 1.0,
       "grounded": true,
       "ungrounded": false,
-      "context_chars": 417,
+      "context_chars": 581,
       "selector_input_tokens": 0,
       "selector_output_tokens": 0,
-      "judge_input_tokens": 175,
+      "judge_input_tokens": 227,
       "judge_output_tokens": 0,
-      "total_input_tokens": 175,
+      "total_input_tokens": 227,
       "total_output_tokens": 0,
-      "latency_ms": 0.183,
+      "latency_ms": 0.322,
       "stop_reason": "KEYWORD_TOP_K",
       "budget_violation": false
     },
@@ -8034,7 +8035,7 @@
       "judge_output_tokens": 0,
       "total_input_tokens": 329,
       "total_output_tokens": 0,
-      "latency_ms": 0.37,
+      "latency_ms": 0.447,
       "stop_reason": "KEYWORD_TOP_K",
       "budget_violation": false
     },
@@ -8073,7 +8074,7 @@
       "judge_output_tokens": 0,
       "total_input_tokens": 324,
       "total_output_tokens": 0,
-      "latency_ms": 0.358,
+      "latency_ms": 0.39,
       "stop_reason": "KEYWORD_TOP_K",
       "budget_violation": false
     },
@@ -8094,8 +8095,8 @@
       "catastrophic_false_supported": false,
       "pulled_chunk_ids": [
         "LOG-08",
-        "RB-01",
-        "RB-99"
+        "LOG-01",
+        "RB-01"
       ],
       "required_chunk_ids": [
         "LOG-08",
@@ -8107,14 +8108,14 @@
       "citation_validity": 1.0,
       "grounded": true,
       "ungrounded": false,
-      "context_chars": 362,
+      "context_chars": 529,
       "selector_input_tokens": 0,
       "selector_output_tokens": 0,
-      "judge_input_tokens": 173,
+      "judge_input_tokens": 225,
       "judge_output_tokens": 0,
-      "total_input_tokens": 173,
+      "total_input_tokens": 225,
       "total_output_tokens": 0,
-      "latency_ms": 0.25,
+      "latency_ms": 0.3,
       "stop_reason": "KEYWORD_TOP_K",
       "budget_violation": false
     },
@@ -8135,8 +8136,8 @@
       "catastrophic_false_supported": false,
       "pulled_chunk_ids": [
         "LOG-08",
-        "RB-01",
-        "RB-99"
+        "LOG-01",
+        "RB-01"
       ],
       "required_chunk_ids": [
         "LOG-08",
@@ -8148,14 +8149,14 @@
       "citation_validity": 1.0,
       "grounded": true,
       "ungrounded": false,
-      "context_chars": 358,
+      "context_chars": 527,
       "selector_input_tokens": 0,
       "selector_output_tokens": 0,
-      "judge_input_tokens": 170,
+      "judge_input_tokens": 223,
       "judge_output_tokens": 0,
-      "total_input_tokens": 170,
+      "total_input_tokens": 223,
       "total_output_tokens": 0,
-      "latency_ms": 0.179,
+      "latency_ms": 0.295,
       "stop_reason": "KEYWORD_TOP_K",
       "budget_violation": false
     },
@@ -8176,8 +8177,8 @@
       "catastrophic_false_supported": false,
       "pulled_chunk_ids": [
         "LOG-08",
-        "RB-01",
-        "RB-99"
+        "LOG-01",
+        "RB-01"
       ],
       "required_chunk_ids": [
         "LOG-08",
@@ -8188,14 +8189,14 @@
       "citation_validity": 1.0,
       "grounded": true,
       "ungrounded": false,
-      "context_chars": 452,
+      "context_chars": 590,
       "selector_input_tokens": 0,
       "selector_output_tokens": 0,
-      "judge_input_tokens": 199,
+      "judge_input_tokens": 242,
       "judge_output_tokens": 0,
-      "total_input_tokens": 199,
+      "total_input_tokens": 242,
       "total_output_tokens": 0,
-      "latency_ms": 0.366,
+      "latency_ms": 0.42,
       "stop_reason": "KEYWORD_TOP_K",
       "budget_violation": false
     },
@@ -8210,14 +8211,14 @@
       "evidence_absent": false,
       "agentic_disadvantage": false,
       "expected": "CONTRADICTED",
-      "predicted": "NEED_MORE_EVIDENCE",
-      "correct": false,
+      "predicted": "CONTRADICTED",
+      "correct": true,
       "false_supported": false,
       "catastrophic_false_supported": false,
       "pulled_chunk_ids": [
         "LOG-08",
-        "RB-01",
-        "RB-99"
+        "LOG-01",
+        "RB-01"
       ],
       "required_chunk_ids": [
         "LOG-08",
@@ -8227,16 +8228,16 @@
       "pulled_count": 3,
       "evidence_recall": 0.6667,
       "citation_validity": 1.0,
-      "grounded": true,
-      "ungrounded": false,
-      "context_chars": 256,
+      "grounded": false,
+      "ungrounded": true,
+      "context_chars": 475,
       "selector_input_tokens": 0,
       "selector_output_tokens": 0,
-      "judge_input_tokens": 132,
+      "judge_input_tokens": 200,
       "judge_output_tokens": 0,
-      "total_input_tokens": 132,
+      "total_input_tokens": 200,
       "total_output_tokens": 0,
-      "latency_ms": 0.167,
+      "latency_ms": 0.106,
       "stop_reason": "KEYWORD_TOP_K",
       "budget_violation": false
     },
@@ -8257,8 +8258,8 @@
       "catastrophic_false_supported": false,
       "pulled_chunk_ids": [
         "LOG-08",
-        "RB-01",
-        "RB-99"
+        "LOG-01",
+        "RB-01"
       ],
       "required_chunk_ids": [
         "LOG-08",
@@ -8269,14 +8270,14 @@
       "citation_validity": 1.0,
       "grounded": true,
       "ungrounded": false,
-      "context_chars": 459,
+      "context_chars": 626,
       "selector_input_tokens": 0,
       "selector_output_tokens": 0,
-      "judge_input_tokens": 195,
+      "judge_input_tokens": 247,
       "judge_output_tokens": 0,
-      "total_input_tokens": 195,
+      "total_input_tokens": 247,
       "total_output_tokens": 0,
-      "latency_ms": 0.21,
+      "latency_ms": 0.317,
       "stop_reason": "KEYWORD_TOP_K",
       "budget_violation": false
     },
@@ -8297,8 +8298,8 @@
       "catastrophic_false_supported": false,
       "pulled_chunk_ids": [
         "LOG-08",
-        "RB-01",
-        "RB-99"
+        "LOG-01",
+        "RB-01"
       ],
       "required_chunk_ids": [
         "LOG-08",
@@ -8309,14 +8310,14 @@
       "citation_validity": 1.0,
       "grounded": true,
       "ungrounded": false,
-      "context_chars": 449,
+      "context_chars": 621,
       "selector_input_tokens": 0,
       "selector_output_tokens": 0,
-      "judge_input_tokens": 190,
+      "judge_input_tokens": 244,
       "judge_output_tokens": 0,
-      "total_input_tokens": 190,
+      "total_input_tokens": 244,
       "total_output_tokens": 0,
-      "latency_ms": 0.203,
+      "latency_ms": 0.307,
       "stop_reason": "KEYWORD_TOP_K",
       "budget_violation": false
     },
@@ -8337,8 +8338,8 @@
       "catastrophic_false_supported": false,
       "pulled_chunk_ids": [
         "LOG-08",
-        "RB-01",
-        "RB-99"
+        "LOG-01",
+        "RB-01"
       ],
       "required_chunk_ids": [
         "LOG-08",
@@ -8349,14 +8350,14 @@
       "citation_validity": 1.0,
       "grounded": true,
       "ungrounded": false,
-      "context_chars": 455,
+      "context_chars": 624,
       "selector_input_tokens": 0,
       "selector_output_tokens": 0,
-      "judge_input_tokens": 194,
+      "judge_input_tokens": 246,
       "judge_output_tokens": 0,
-      "total_input_tokens": 194,
+      "total_input_tokens": 246,
       "total_output_tokens": 0,
-      "latency_ms": 0.188,
+      "latency_ms": 0.304,
       "stop_reason": "KEYWORD_TOP_K",
       "budget_violation": false
     },
@@ -8377,25 +8378,26 @@
       "catastrophic_false_supported": false,
       "pulled_chunk_ids": [
         "LOG-01",
+        "LOG-02",
         "RB-01"
       ],
       "required_chunk_ids": [
         "LOG-01",
         "RB-01"
       ],
-      "pulled_count": 2,
+      "pulled_count": 3,
       "evidence_recall": 1.0,
       "citation_validity": 1.0,
       "grounded": true,
       "ungrounded": false,
-      "context_chars": 133,
+      "context_chars": 154,
       "selector_input_tokens": 0,
       "selector_output_tokens": 0,
-      "judge_input_tokens": 97,
+      "judge_input_tokens": 104,
       "judge_output_tokens": 0,
-      "total_input_tokens": 97,
+      "total_input_tokens": 104,
       "total_output_tokens": 0,
-      "latency_ms": 0.192,
+      "latency_ms": 0.215,
       "stop_reason": "KEYWORD_TOP_K",
       "budget_violation": false
     },
@@ -8416,8 +8418,8 @@
       "catastrophic_false_supported": false,
       "pulled_chunk_ids": [
         "LOG-08",
-        "RB-01",
-        "RB-99"
+        "LOG-01",
+        "RB-01"
       ],
       "required_chunk_ids": [
         "LOG-08",
@@ -8428,14 +8430,14 @@
       "citation_validity": 1.0,
       "grounded": true,
       "ungrounded": false,
-      "context_chars": 441,
+      "context_chars": 590,
       "selector_input_tokens": 0,
       "selector_output_tokens": 0,
-      "judge_input_tokens": 195,
+      "judge_input_tokens": 241,
       "judge_output_tokens": 0,
-      "total_input_tokens": 195,
+      "total_input_tokens": 241,
       "total_output_tokens": 0,
-      "latency_ms": 0.27,
+      "latency_ms": 0.401,
       "stop_reason": "KEYWORD_TOP_K",
       "budget_violation": false
     },
@@ -8456,8 +8458,8 @@
       "catastrophic_false_supported": false,
       "pulled_chunk_ids": [
         "LOG-08",
-        "RB-01",
-        "RB-99"
+        "LOG-01",
+        "RB-01"
       ],
       "required_chunk_ids": [
         "LOG-08",
@@ -8469,14 +8471,14 @@
       "citation_validity": 1.0,
       "grounded": true,
       "ungrounded": false,
-      "context_chars": 298,
+      "context_chars": 516,
       "selector_input_tokens": 0,
       "selector_output_tokens": 0,
-      "judge_input_tokens": 151,
+      "judge_input_tokens": 219,
       "judge_output_tokens": 0,
-      "total_input_tokens": 151,
+      "total_input_tokens": 219,
       "total_output_tokens": 0,
-      "latency_ms": 0.199,
+      "latency_ms": 0.306,
       "stop_reason": "KEYWORD_TOP_K",
       "budget_violation": false
     },
@@ -8491,14 +8493,14 @@
       "evidence_absent": false,
       "agentic_disadvantage": false,
       "expected": "CONTRADICTED",
-      "predicted": "NEED_MORE_EVIDENCE",
-      "correct": false,
+      "predicted": "CONTRADICTED",
+      "correct": true,
       "false_supported": false,
       "catastrophic_false_supported": false,
       "pulled_chunk_ids": [
         "LOG-08",
-        "RB-01",
-        "RB-99"
+        "LOG-01",
+        "RB-01"
       ],
       "required_chunk_ids": [
         "LOG-08",
@@ -8508,16 +8510,16 @@
       "pulled_count": 3,
       "evidence_recall": 0.6667,
       "citation_validity": 1.0,
-      "grounded": true,
-      "ungrounded": false,
-      "context_chars": 318,
+      "grounded": false,
+      "ungrounded": true,
+      "context_chars": 530,
       "selector_input_tokens": 0,
       "selector_output_tokens": 0,
-      "judge_input_tokens": 157,
+      "judge_input_tokens": 224,
       "judge_output_tokens": 0,
-      "total_input_tokens": 157,
+      "total_input_tokens": 224,
       "total_output_tokens": 0,
-      "latency_ms": 0.195,
+      "latency_ms": 0.106,
       "stop_reason": "KEYWORD_TOP_K",
       "budget_violation": false
     },
@@ -8538,8 +8540,8 @@
       "catastrophic_false_supported": false,
       "pulled_chunk_ids": [
         "LOG-08",
-        "RB-01",
-        "RB-99"
+        "LOG-01",
+        "RB-01"
       ],
       "required_chunk_ids": [
         "LOG-08",
@@ -8551,14 +8553,14 @@
       "citation_validity": 1.0,
       "grounded": true,
       "ungrounded": false,
-      "context_chars": 377,
+      "context_chars": 545,
       "selector_input_tokens": 0,
       "selector_output_tokens": 0,
-      "judge_input_tokens": 176,
+      "judge_input_tokens": 228,
       "judge_output_tokens": 0,
-      "total_input_tokens": 176,
+      "total_input_tokens": 228,
       "total_output_tokens": 0,
-      "latency_ms": 0.191,
+      "latency_ms": 0.33,
       "stop_reason": "KEYWORD_TOP_K",
       "budget_violation": false
     },
@@ -8598,7 +8600,7 @@
       "judge_output_tokens": 0,
       "total_input_tokens": 95,
       "total_output_tokens": 0,
-      "latency_ms": 0.115,
+      "latency_ms": 0.139,
       "stop_reason": "KEYWORD_TOP_K",
       "budget_violation": false
     },
@@ -8637,7 +8639,7 @@
       "judge_output_tokens": 0,
       "total_input_tokens": 319,
       "total_output_tokens": 0,
-      "latency_ms": 0.367,
+      "latency_ms": 0.378,
       "stop_reason": "KEYWORD_TOP_K",
       "budget_violation": false
     },
@@ -8678,7 +8680,7 @@
       "judge_output_tokens": 0,
       "total_input_tokens": 785,
       "total_output_tokens": 0,
-      "latency_ms": 0.857,
+      "latency_ms": 0.974,
       "stop_reason": "BUDGET_EXHAUSTED",
       "budget_violation": false
     },
@@ -8719,7 +8721,7 @@
       "judge_output_tokens": 0,
       "total_input_tokens": 780,
       "total_output_tokens": 0,
-      "latency_ms": 0.693,
+      "latency_ms": 0.78,
       "stop_reason": "BUDGET_EXHAUSTED",
       "budget_violation": false
     },
@@ -8760,7 +8762,7 @@
       "judge_output_tokens": 0,
       "total_input_tokens": 717,
       "total_output_tokens": 0,
-      "latency_ms": 0.468,
+      "latency_ms": 0.501,
       "stop_reason": "BUDGET_EXHAUSTED",
       "budget_violation": false
     },
@@ -8799,7 +8801,7 @@
       "judge_output_tokens": 0,
       "total_input_tokens": 616,
       "total_output_tokens": 0,
-      "latency_ms": 0.43,
+      "latency_ms": 0.506,
       "stop_reason": "STOP_SUFFICIENT",
       "budget_violation": false
     },
@@ -8840,7 +8842,7 @@
       "judge_output_tokens": 0,
       "total_input_tokens": 785,
       "total_output_tokens": 0,
-      "latency_ms": 0.67,
+      "latency_ms": 0.793,
       "stop_reason": "BUDGET_EXHAUSTED",
       "budget_violation": false
     },
@@ -8881,7 +8883,7 @@
       "judge_output_tokens": 0,
       "total_input_tokens": 784,
       "total_output_tokens": 0,
-      "latency_ms": 0.689,
+      "latency_ms": 0.929,
       "stop_reason": "BUDGET_EXHAUSTED",
       "budget_violation": false
     },
@@ -8922,7 +8924,7 @@
       "judge_output_tokens": 0,
       "total_input_tokens": 784,
       "total_output_tokens": 0,
-      "latency_ms": 0.689,
+      "latency_ms": 0.729,
       "stop_reason": "BUDGET_EXHAUSTED",
       "budget_violation": false
     },
@@ -8963,7 +8965,7 @@
       "judge_output_tokens": 0,
       "total_input_tokens": 685,
       "total_output_tokens": 0,
-      "latency_ms": 0.467,
+      "latency_ms": 0.612,
       "stop_reason": "BUDGET_EXHAUSTED",
       "budget_violation": false
     },
@@ -9004,7 +9006,7 @@
       "judge_output_tokens": 0,
       "total_input_tokens": 677,
       "total_output_tokens": 0,
-      "latency_ms": 0.44,
+      "latency_ms": 0.502,
       "stop_reason": "BUDGET_EXHAUSTED",
       "budget_violation": false
     },
@@ -9043,7 +9045,7 @@
       "judge_output_tokens": 0,
       "total_input_tokens": 635,
       "total_output_tokens": 0,
-      "latency_ms": 0.405,
+      "latency_ms": 0.433,
       "stop_reason": "STOP_SUFFICIENT",
       "budget_violation": false
     },
@@ -9082,7 +9084,7 @@
       "judge_output_tokens": 0,
       "total_input_tokens": 688,
       "total_output_tokens": 0,
-      "latency_ms": 0.672,
+      "latency_ms": 0.717,
       "stop_reason": "STOP_SUFFICIENT",
       "budget_violation": false
     },
@@ -9121,7 +9123,7 @@
       "judge_output_tokens": 0,
       "total_input_tokens": 688,
       "total_output_tokens": 0,
-      "latency_ms": 0.661,
+      "latency_ms": 0.697,
       "stop_reason": "STOP_SUFFICIENT",
       "budget_violation": false
     },
@@ -9162,7 +9164,7 @@
       "judge_output_tokens": 0,
       "total_input_tokens": 699,
       "total_output_tokens": 0,
-      "latency_ms": 0.503,
+      "latency_ms": 0.513,
       "stop_reason": "BUDGET_EXHAUSTED",
       "budget_violation": false
     },
@@ -9201,7 +9203,7 @@
       "judge_output_tokens": 0,
       "total_input_tokens": 633,
       "total_output_tokens": 0,
-      "latency_ms": 0.414,
+      "latency_ms": 0.421,
       "stop_reason": "STOP_SUFFICIENT",
       "budget_violation": false
     },
@@ -9240,7 +9242,7 @@
       "judge_output_tokens": 0,
       "total_input_tokens": 633,
       "total_output_tokens": 0,
-      "latency_ms": 0.465,
+      "latency_ms": 0.407,
       "stop_reason": "STOP_SUFFICIENT",
       "budget_violation": false
     },
@@ -9281,7 +9283,7 @@
       "judge_output_tokens": 0,
       "total_input_tokens": 743,
       "total_output_tokens": 0,
-      "latency_ms": 0.585,
+      "latency_ms": 0.626,
       "stop_reason": "BUDGET_EXHAUSTED",
       "budget_violation": false
     },
@@ -9322,7 +9324,7 @@
       "judge_output_tokens": 0,
       "total_input_tokens": 742,
       "total_output_tokens": 0,
-      "latency_ms": 0.577,
+      "latency_ms": 0.604,
       "stop_reason": "BUDGET_EXHAUSTED",
       "budget_violation": false
     },
@@ -9363,7 +9365,7 @@
       "judge_output_tokens": 0,
       "total_input_tokens": 740,
       "total_output_tokens": 0,
-      "latency_ms": 0.62,
+      "latency_ms": 0.593,
       "stop_reason": "BUDGET_EXHAUSTED",
       "budget_violation": false
     },
@@ -9404,7 +9406,7 @@
       "judge_output_tokens": 0,
       "total_input_tokens": 678,
       "total_output_tokens": 0,
-      "latency_ms": 0.42,
+      "latency_ms": 0.433,
       "stop_reason": "BUDGET_EXHAUSTED",
       "budget_violation": false
     },
@@ -9443,7 +9445,7 @@
       "judge_output_tokens": 0,
       "total_input_tokens": 620,
       "total_output_tokens": 0,
-      "latency_ms": 0.315,
+      "latency_ms": 0.337,
       "stop_reason": "STOP_SUFFICIENT",
       "budget_violation": false
     },
@@ -9482,7 +9484,7 @@
       "judge_output_tokens": 0,
       "total_input_tokens": 640,
       "total_output_tokens": 0,
-      "latency_ms": 0.31,
+      "latency_ms": 0.336,
       "stop_reason": "STOP_SUFFICIENT",
       "budget_violation": false
     },
@@ -9521,7 +9523,7 @@
       "judge_output_tokens": 0,
       "total_input_tokens": 638,
       "total_output_tokens": 0,
-      "latency_ms": 0.307,
+      "latency_ms": 0.327,
       "stop_reason": "STOP_SUFFICIENT",
       "budget_violation": false
     },
@@ -9560,7 +9562,7 @@
       "judge_output_tokens": 0,
       "total_input_tokens": 637,
       "total_output_tokens": 0,
-      "latency_ms": 0.332,
+      "latency_ms": 0.319,
       "stop_reason": "STOP_SUFFICIENT",
       "budget_violation": false
     },
@@ -9599,7 +9601,7 @@
       "judge_output_tokens": 0,
       "total_input_tokens": 646,
       "total_output_tokens": 0,
-      "latency_ms": 0.711,
+      "latency_ms": 0.684,
       "stop_reason": "STOP_SUFFICIENT",
       "budget_violation": false
     },
@@ -9638,7 +9640,7 @@
       "judge_output_tokens": 0,
       "total_input_tokens": 612,
       "total_output_tokens": 0,
-      "latency_ms": 0.41,
+      "latency_ms": 0.414,
       "stop_reason": "STOP_SUFFICIENT",
       "budget_violation": false
     },
@@ -9677,7 +9679,7 @@
       "judge_output_tokens": 0,
       "total_input_tokens": 610,
       "total_output_tokens": 0,
-      "latency_ms": 0.367,
+      "latency_ms": 0.401,
       "stop_reason": "STOP_SUFFICIENT",
       "budget_violation": false
     },
@@ -9718,7 +9720,7 @@
       "judge_output_tokens": 0,
       "total_input_tokens": 692,
       "total_output_tokens": 0,
-      "latency_ms": 0.385,
+      "latency_ms": 0.405,
       "stop_reason": "BUDGET_EXHAUSTED",
       "budget_violation": false
     },
@@ -9759,7 +9761,7 @@
       "judge_output_tokens": 0,
       "total_input_tokens": 691,
       "total_output_tokens": 0,
-      "latency_ms": 0.359,
+      "latency_ms": 0.376,
       "stop_reason": "BUDGET_EXHAUSTED",
       "budget_violation": false
     },
@@ -9800,7 +9802,7 @@
       "judge_output_tokens": 0,
       "total_input_tokens": 691,
       "total_output_tokens": 0,
-      "latency_ms": 0.349,
+      "latency_ms": 0.384,
       "stop_reason": "BUDGET_EXHAUSTED",
       "budget_violation": false
     },
@@ -9841,7 +9843,7 @@
       "judge_output_tokens": 0,
       "total_input_tokens": 647,
       "total_output_tokens": 0,
-      "latency_ms": 0.332,
+      "latency_ms": 0.355,
       "stop_reason": "BUDGET_EXHAUSTED",
       "budget_violation": false
     },
@@ -9880,7 +9882,7 @@
       "judge_output_tokens": 0,
       "total_input_tokens": 676,
       "total_output_tokens": 0,
-      "latency_ms": 0.375,
+      "latency_ms": 0.38,
       "stop_reason": "STOP_SUFFICIENT",
       "budget_violation": false
     },
@@ -9919,7 +9921,7 @@
       "judge_output_tokens": 0,
       "total_input_tokens": 675,
       "total_output_tokens": 0,
-      "latency_ms": 0.359,
+      "latency_ms": 0.386,
       "stop_reason": "STOP_SUFFICIENT",
       "budget_violation": false
     },
@@ -9997,7 +9999,7 @@
       "judge_output_tokens": 0,
       "total_input_tokens": 646,
       "total_output_tokens": 0,
-      "latency_ms": 0.528,
+      "latency_ms": 0.555,
       "stop_reason": "STOP_SUFFICIENT",
       "budget_violation": false
     },
@@ -10038,7 +10040,7 @@
       "judge_output_tokens": 0,
       "total_input_tokens": 702,
       "total_output_tokens": 0,
-      "latency_ms": 0.408,
+      "latency_ms": 0.521,
       "stop_reason": "BUDGET_EXHAUSTED",
       "budget_violation": false
     },
@@ -10079,7 +10081,7 @@
       "judge_output_tokens": 0,
       "total_input_tokens": 704,
       "total_output_tokens": 0,
-      "latency_ms": 0.41,
+      "latency_ms": 0.501,
       "stop_reason": "BUDGET_EXHAUSTED",
       "budget_violation": false
     },
@@ -10120,7 +10122,7 @@
       "judge_output_tokens": 0,
       "total_input_tokens": 701,
       "total_output_tokens": 0,
-      "latency_ms": 0.408,
+      "latency_ms": 0.464,
       "stop_reason": "BUDGET_EXHAUSTED",
       "budget_violation": false
     },
@@ -10161,7 +10163,7 @@
       "judge_output_tokens": 0,
       "total_input_tokens": 703,
       "total_output_tokens": 0,
-      "latency_ms": 0.377,
+      "latency_ms": 0.544,
       "stop_reason": "BUDGET_EXHAUSTED",
       "budget_violation": false
     },
@@ -10200,7 +10202,7 @@
       "judge_output_tokens": 0,
       "total_input_tokens": 637,
       "total_output_tokens": 0,
-      "latency_ms": 0.428,
+      "latency_ms": 0.581,
       "stop_reason": "STOP_SUFFICIENT",
       "budget_violation": false
     },
@@ -10239,7 +10241,7 @@
       "judge_output_tokens": 0,
       "total_input_tokens": 636,
       "total_output_tokens": 0,
-      "latency_ms": 0.411,
+      "latency_ms": 0.45,
       "stop_reason": "STOP_SUFFICIENT",
       "budget_violation": false
     },
@@ -10278,7 +10280,7 @@
       "judge_output_tokens": 0,
       "total_input_tokens": 636,
       "total_output_tokens": 0,
-      "latency_ms": 0.446,
+      "latency_ms": 0.552,
       "stop_reason": "STOP_SUFFICIENT",
       "budget_violation": false
     },
@@ -10317,7 +10319,7 @@
       "judge_output_tokens": 0,
       "total_input_tokens": 634,
       "total_output_tokens": 0,
-      "latency_ms": 0.46,
+      "latency_ms": 0.494,
       "stop_reason": "STOP_SUFFICIENT",
       "budget_violation": false
     },
@@ -10356,7 +10358,7 @@
       "judge_output_tokens": 0,
       "total_input_tokens": 636,
       "total_output_tokens": 0,
-      "latency_ms": 0.46,
+      "latency_ms": 0.448,
       "stop_reason": "STOP_SUFFICIENT",
       "budget_violation": false
     },
@@ -10395,7 +10397,7 @@
       "judge_output_tokens": 0,
       "total_input_tokens": 636,
       "total_output_tokens": 0,
-      "latency_ms": 0.464,
+      "latency_ms": 0.468,
       "stop_reason": "STOP_SUFFICIENT",
       "budget_violation": false
     },
@@ -10433,7 +10435,7 @@
       "judge_output_tokens": 0,
       "total_input_tokens": 618,
       "total_output_tokens": 0,
-      "latency_ms": 1.046,
+      "latency_ms": 1.035,
       "stop_reason": "STOP_SUFFICIENT",
       "budget_violation": false
     },
@@ -10471,7 +10473,7 @@
       "judge_output_tokens": 0,
       "total_input_tokens": 613,
       "total_output_tokens": 0,
-      "latency_ms": 0.953,
+      "latency_ms": 1.034,
       "stop_reason": "STOP_SUFFICIENT",
       "budget_violation": false
     },
@@ -10512,7 +10514,7 @@
       "judge_output_tokens": 0,
       "total_input_tokens": 669,
       "total_output_tokens": 0,
-      "latency_ms": 0.417,
+      "latency_ms": 0.437,
       "stop_reason": "BUDGET_EXHAUSTED",
       "budget_violation": false
     },
@@ -10553,7 +10555,7 @@
       "judge_output_tokens": 0,
       "total_input_tokens": 667,
       "total_output_tokens": 0,
-      "latency_ms": 0.409,
+      "latency_ms": 0.424,
       "stop_reason": "BUDGET_EXHAUSTED",
       "budget_violation": false
     },
@@ -10592,7 +10594,7 @@
       "judge_output_tokens": 0,
       "total_input_tokens": 636,
       "total_output_tokens": 0,
-      "latency_ms": 0.602,
+      "latency_ms": 0.664,
       "stop_reason": "STOP_SUFFICIENT",
       "budget_violation": false
     },
@@ -10633,7 +10635,7 @@
       "judge_output_tokens": 0,
       "total_input_tokens": 648,
       "total_output_tokens": 0,
-      "latency_ms": 0.352,
+      "latency_ms": 0.406,
       "stop_reason": "BUDGET_EXHAUSTED",
       "budget_violation": false
     },
@@ -10672,7 +10674,7 @@
       "judge_output_tokens": 0,
       "total_input_tokens": 632,
       "total_output_tokens": 0,
-      "latency_ms": 0.404,
+      "latency_ms": 0.428,
       "stop_reason": "STOP_SUFFICIENT",
       "budget_violation": false
     },
@@ -10711,7 +10713,7 @@
       "judge_output_tokens": 0,
       "total_input_tokens": 628,
       "total_output_tokens": 0,
-      "latency_ms": 0.387,
+      "latency_ms": 0.426,
       "stop_reason": "STOP_SUFFICIENT",
       "budget_violation": false
     },
@@ -10750,7 +10752,7 @@
       "judge_output_tokens": 0,
       "total_input_tokens": 631,
       "total_output_tokens": 0,
-      "latency_ms": 0.413,
+      "latency_ms": 0.415,
       "stop_reason": "STOP_SUFFICIENT",
       "budget_violation": false
     },
@@ -10789,7 +10791,7 @@
       "judge_output_tokens": 0,
       "total_input_tokens": 190,
       "total_output_tokens": 0,
-      "latency_ms": 0.411,
+      "latency_ms": 0.425,
       "stop_reason": "STOP_SUFFICIENT",
       "budget_violation": false
     },
@@ -10828,7 +10830,7 @@
       "judge_output_tokens": 0,
       "total_input_tokens": 635,
       "total_output_tokens": 0,
-      "latency_ms": 0.599,
+      "latency_ms": 0.523,
       "stop_reason": "STOP_SUFFICIENT",
       "budget_violation": false
     },
@@ -10869,7 +10871,7 @@
       "judge_output_tokens": 0,
       "total_input_tokens": 651,
       "total_output_tokens": 0,
-      "latency_ms": 0.389,
+      "latency_ms": 0.394,
       "stop_reason": "BUDGET_EXHAUSTED",
       "budget_violation": false
     },
@@ -10910,7 +10912,7 @@
       "judge_output_tokens": 0,
       "total_input_tokens": 644,
       "total_output_tokens": 0,
-      "latency_ms": 0.328,
+      "latency_ms": 0.331,
       "stop_reason": "BUDGET_EXHAUSTED",
       "budget_violation": false
     },
@@ -10951,7 +10953,7 @@
       "judge_output_tokens": 0,
       "total_input_tokens": 650,
       "total_output_tokens": 0,
-      "latency_ms": 0.347,
+      "latency_ms": 0.343,
       "stop_reason": "BUDGET_EXHAUSTED",
       "budget_violation": false
     },
@@ -10990,7 +10992,7 @@
       "judge_output_tokens": 0,
       "total_input_tokens": 457,
       "total_output_tokens": 0,
-      "latency_ms": 0.282,
+      "latency_ms": 0.29,
       "stop_reason": "STOP_SUFFICIENT",
       "budget_violation": false
     },
@@ -11028,7 +11030,7 @@
       "judge_output_tokens": 0,
       "total_input_tokens": 644,
       "total_output_tokens": 0,
-      "latency_ms": 0.968,
+      "latency_ms": 0.975,
       "stop_reason": "STOP_SUFFICIENT",
       "budget_violation": false
     }
